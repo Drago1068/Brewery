@@ -43,11 +43,11 @@ def test_migration_005_does_not_include_later_tables():
         assert forbidden not in text
 
 
-def test_no_008_or_later_migrations_yet():
+def test_008_exists_009_not_yet():
     names = {p.name for p in VERSIONS.glob("*.py")}
     assert any(n.startswith("006") for n in names)
     assert any(n.startswith("007") for n in names)
-    assert not any(n.startswith("008") for n in names)
+    assert any(n.startswith("008") for n in names)
     assert not any(n.startswith("009") for n in names)
 
 

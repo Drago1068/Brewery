@@ -288,6 +288,29 @@ def test_get_brew_session_side_effect_free(mock_get):
     mock_get.assert_awaited_once()
 
 
+@patch(
+    "app.api.v1.brew_day.brew_timers_service.list_session_timers", new_callable=AsyncMock
+)
+def test_get_timers_is_read_only_route(mock_list):
+    mock_list.return_value = {
+        "brew_session_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "timers": [
+            {
+                "id": "t1",
+                "status": "RUNNING",
+                "computed_past_due": True,
+                "elapsed_at": None,
+            }
+        ],
+    }
+    response = client.get("/api/v1/brew-sessions/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb/timers")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["timers"][0]["computed_past_due"] is True
+    assert body["timers"][0]["elapsed_at"] is None
+    mock_list.assert_awaited_once()
+
+
 def test_brew_plan_create_schema_requires_client_submission_id():
     with pytest.raises(Exception):
         BrewPlanCreate(client_submission_id="")

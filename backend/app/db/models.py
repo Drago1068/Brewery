@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
@@ -976,3 +977,50 @@ class MeasurementStatusHistory(Base):
     )
     client_submission_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     payload: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+
+
+class BrewTimer(Base):
+    """Timestamp-authoritative brew-day timer (ADR-006). status is a rebuildable projection."""
+
+    __tablename__ = "brew_timers"
+    __table_args__ = (
+        CheckConstraint(
+            "target_duration_seconds IS NULL OR target_duration_seconds > 0",
+            name="ck_brew_timers_positive_duration",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
+    brewery_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("breweries.id", ondelete="CASCADE"), nullable=False
+    )
+    brew_session_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("brew_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    stage_occurrence_id: Mapped[Optional[str]] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("brew_stage_occurrences.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    target_duration_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    client_started_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    elapsed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    stopped_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="RUNNING")
+    start_client_submission_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

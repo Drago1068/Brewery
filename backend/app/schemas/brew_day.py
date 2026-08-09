@@ -152,3 +152,47 @@ class MeasurementWaiveRequest(BaseModel):
     expected_session_version: int = Field(ge=1)
     reason: str
     client_occurred_at: Optional[datetime] = None
+
+
+class TimerStartRequest(BaseModel):
+    client_submission_id: str = Field(min_length=1, max_length=128)
+    expected_session_version: int = Field(ge=1)
+    label: str = Field(min_length=1, max_length=200)
+    target_duration_seconds: Optional[int] = None
+    stage_occurrence_id: Optional[str] = None
+    client_started_at: Optional[datetime] = None
+
+
+class TimerStopRequest(BaseModel):
+    client_submission_id: str = Field(min_length=1, max_length=128)
+    expected_session_version: int = Field(ge=1)
+
+
+class TimerCancelRequest(BaseModel):
+    client_submission_id: str = Field(min_length=1, max_length=128)
+    expected_session_version: int = Field(ge=1)
+
+
+class TimerObserveElapsedRequest(BaseModel):
+    client_submission_id: str = Field(min_length=1, max_length=128)
+    expected_session_version: int = Field(ge=1)
+
+
+class BrewTimerRead(BaseModel):
+    id: str
+    brewery_id: str
+    brew_session_id: str
+    stage_occurrence_id: Optional[str] = None
+    label: str
+    target_duration_seconds: Optional[int] = None
+    started_at: Optional[str] = None
+    client_started_at: Optional[str] = None
+    ends_at: Optional[str] = None
+    elapsed_at: Optional[str] = None
+    stopped_at: Optional[str] = None
+    cancelled_at: Optional[str] = None
+    status: str
+    computed_past_due: bool
+    start_client_submission_id: str
+    created_by: str
+    created_at: Optional[str] = None

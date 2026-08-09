@@ -16,9 +16,14 @@ from app.schemas.brew_day import (
     MeasurementRevisionRequest,
     MeasurementWaiveRequest,
     SessionTransitionRequest,
+    TimerCancelRequest,
+    TimerObserveElapsedRequest,
+    TimerStartRequest,
+    TimerStopRequest,
 )
 from app.services import brew_plan as brew_plan_service
 from app.services import brew_session as brew_session_service
+from app.services import brew_timers as brew_timers_service
 from app.services import brew_transitions as brew_transitions_service
 from app.services import measurements as measurement_service
 
@@ -139,3 +144,45 @@ async def observation_history(requirement_id: str, db: AsyncSession = Depends(ge
 @router.get("/measurement-requirements/{requirement_id}/status-history")
 async def status_history(requirement_id: str, db: AsyncSession = Depends(get_db)):
     return await measurement_service.list_status_history(db, requirement_id)
+
+
+@router.post("/brew-sessions/{session_id}/timers", status_code=201)
+async def start_timer(
+    session_id: str,
+    payload: TimerStartRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    return await brew_timers_service.start_timer(db, session_id, payload)
+
+
+@router.get("/brew-sessions/{session_id}/timers")
+async def list_timers(session_id: str, db: AsyncSession = Depends(get_db)):
+    """Strictly read-only. Never persists elapsed_at, events, or version changes."""
+    return await brew_timers_service.list_session_timers(db, session_id)
+
+
+@router.post("/timers/{timer_id}/stop")
+async def stop_timer(
+    timer_id: str,
+    payload: TimerStopRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    return await brew_timers_service.stop_timer(db, timer_id, payload)
+
+
+@router.post("/timers/{timer_id}/cancel")
+async def cancel_timer(
+    timer_id: str,
+    payload: TimerCancelRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    return await brew_timers_service.cancel_timer(db, timer_id, payload)
+
+
+@router.post("/timers/{timer_id}/observe-elapsed")
+async def observe_elapsed(
+    timer_id: str,
+    payload: TimerObserveElapsedRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    return await brew_timers_service.observe_elapsed(db, timer_id, payload)
