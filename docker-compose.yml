@@ -1,5 +1,7 @@
-# Brewing Intelligence & Competition OS — Epic 1
-# Persistent data uses host bind mounts (NAS-friendly). Override paths via .env.
+# Brewing Intelligence & Competition OS
+# Isolated Compose project — do not share networks/volumes with investing/AEGIS/CODEX.
+
+name: brewingos
 
 services:
   postgres:
@@ -10,10 +12,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-brewingos}
     volumes:
       - ${BREWINGOS_POSTGRES_DATA:-./data/postgres}:/var/lib/postgresql/data
-    # Not published to the host by default (Epic security).
-    # Set POSTGRES_PORT and uncomment ports for local debugging only.
-    # ports:
-    #   - "${POSTGRES_PORT:-5432}:5432"
+    # Never publish Postgres to the host for NAS/production.
+    networks:
+      - brewingos-data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-brewingos} -d ${POSTGRES_DB:-brewingos}"]
       interval: 10s
@@ -32,19 +33,23 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-brewingos}:${POSTGRES_PASSWORD:-brewingos}@postgres:5432/${POSTGRES_DB:-brewingos}
       BREWINGOS_ENV: ${BREWINGOS_ENV:-development}
       BREWINGOS_SECRET_KEY: ${BREWINGOS_SECRET_KEY:-change-me-in-production}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://127.0.0.1:18181,http://localhost:18181}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       STORAGE_PATH: /BrewingOS/storage
       LOG_PATH: /BrewingOS/logs
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      # Reserved BrewingOS bring-up ports — outside AEGIS/investing ranges.
+      # Prefer binding to loopback on NAS and exposing via Tailscale Serve.
+      - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-18182}:8000"
     volumes:
       - ${BREWINGOS_STORAGE:-./data/storage}:/BrewingOS/storage
       - ${BREWINGOS_LOGS:-./data/logs}:/BrewingOS/logs
-      - ./backend:/app
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - brewingos-app
+      - brewingos-data
     healthcheck:
       test:
         [
@@ -64,15 +69,15 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     environment:
-      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+      VITE_API_URL: ${VITE_API_URL:-http://127.0.0.1:18182}
     ports:
-      - "${FRONTEND_PORT:-5173}:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      - "${FRONTEND_BIND:-127.0.0.1}:${FRONTEND_PORT:-18181}:5173"
     depends_on:
       backend:
         condition: service_healthy
+    networks:
+      - brewingos-edge
+      - brewingos-app
     restart: unless-stopped
 
   backup:
@@ -90,6 +95,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - brewingos-data
     entrypoint: /bin/sh
     command:
       - -c
@@ -101,5 +108,10 @@ services:
       - backup
 
 networks:
-  default:
-    name: brewingos_net
+  brewingos-edge:
+    name: brewingos-edge
+  brewingos-app:
+    name: brewingos-app
+  brewingos-data:
+    name: brewingos-data
+    internal: true

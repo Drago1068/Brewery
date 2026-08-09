@@ -21,7 +21,16 @@ frontend/dist/
 frontend/.vite/
 
 # Local NAS-style data (never commit runtime data)
-data/
+data/**
+!data/.gitkeep
+!data/postgres/
+!data/postgres/.gitkeep
+!data/storage/
+!data/storage/.gitkeep
+!data/backups/
+!data/backups/.gitkeep
+!data/logs/
+!data/logs/.gitkeep
 *.dump
 *.sql.gz
 

@@ -2,10 +2,22 @@
 
 Homebrewer-first brewing application. Epic 1 — Brewery + Recipe Foundation.
 
+## Repository location
+
+Git source of truth (greenfield root):
+
+```text
+\\NazarioNAS\USB_3TB\BrewingOS
+```
+
+Mapped locally as `B:\BrewingOS`. Runtime data belongs on NAS **internal** paths under `/volume1/Apps/.../brewingos`, not on the USB git root and not under CODEX/investing shares.
+
 ## Principles
 
+- Completely separate from investing, AEGIS, and CODEX workloads
 - PostgreSQL is the authoritative operational database
 - NAS-mounted persistent storage; containers are replaceable
+- Private Tailscale access now; identity-aware external access later (ADR-001)
 - Recipe versions support immutability once locked / referenced
 - Inventory movements use a transaction ledger
 - Brewing calculations are deterministic (never AI-authoritative)
@@ -18,42 +30,32 @@ Homebrewer-first brewing application. Epic 1 — Brewery + Recipe Foundation.
 | Backend | FastAPI + SQLAlchemy (async) |
 | Database | PostgreSQL 16 |
 | Migrations | Alembic |
-| Runtime | Docker Compose (NAS-ready bind mounts) |
+| Runtime | Docker Compose project `brewingos` |
 
-## Quick start
+## Quick start (NAS)
 
-```bash
-cp .env.example .env
-docker compose up --build
-```
+See [docs/NAS_DEPLOYMENT.md](docs/NAS_DEPLOYMENT.md). Reserved ports:
 
-| Service | URL |
-|---------|-----|
-| Frontend | http://localhost:5173 |
-| API | http://localhost:8000 |
-| OpenAPI | http://localhost:8000/docs |
-| Liveness | http://localhost:8000/health |
-| Readiness | http://localhost:8000/health/ready |
+| Service | Port |
+|---------|------|
+| Frontend | 18181 |
+| API | 18182 |
+| OpenAPI | http://127.0.0.1:18182/docs |
+| Liveness | http://127.0.0.1:18182/health |
 
-## NAS persistence
+## Docs
 
-Configure host paths in `.env`:
-
-```text
-BREWINGOS_POSTGRES_DATA=./data/postgres   # or /volume1/BrewingOS/database/postgres
-BREWINGOS_STORAGE=./data/storage
-BREWINGOS_BACKUPS=./data/backups
-BREWINGOS_LOGS=./data/logs
-```
-
-Documentation drives are not runtime dependencies.
-
-## Tests
-
-```bash
-cd backend && pip install -r requirements.txt && pytest
-cd frontend && npm install && npm test
-```
+- [NAS deployment](docs/NAS_DEPLOYMENT.md)
+- [NAS persistence](docs/NAS_PERSISTENCE.md)
+- [ADR-001 access model](docs/ADR-001-access-model.md)
+- [ADR-002 orientation decisions](docs/ADR-002-epic1-orientation-decisions.md)
+- [ADR-003 calculation formulas v1](docs/ADR-003-calculation-formulas-v1.md)
+- [Isolation execution status](docs/ISOLATION_EXECUTION_STATUS.md)
+- [Increment 1](docs/INCREMENT_1.md)
+- [Increment 2](docs/INCREMENT_2.md)
+- [Increment 3](docs/INCREMENT_3.md)
+- [Increment 4](docs/INCREMENT_4.md)
+- [Increment 5](docs/INCREMENT_5.md)
 
 ## Epic 1 scope
 
