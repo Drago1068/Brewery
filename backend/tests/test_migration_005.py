@@ -48,7 +48,8 @@ def test_008_exists_009_not_yet():
     assert any(n.startswith("006") for n in names)
     assert any(n.startswith("007") for n in names)
     assert any(n.startswith("008") for n in names)
-    assert not any(n.startswith("009") for n in names)
+    assert any(n.startswith("009") for n in names)
+    assert not any(n.startswith("010") for n in names)
 
 
 @pytest.mark.asyncio

@@ -28,6 +28,11 @@ def test_migration_008_chain_and_table():
     assert "UPDATE app_meta SET value = '007'" in text
 
 
+def test_008_exists_009_not_in_008_file():
+    text = (VERSIONS / "008_brew_day_timers.py").read_text(encoding="utf-8")
+    assert "fermentation_handoffs" not in text
+
+
 def test_migrations_005_007_untouched_by_timers():
     for name in (
         "005_brew_day_plans_sessions.py",
@@ -36,3 +41,9 @@ def test_migrations_005_007_untouched_by_timers():
     ):
         text = (VERSIONS / name).read_text(encoding="utf-8")
         assert "brew_timers" not in text
+
+
+def test_009_exists_010_not_yet():
+    names = {p.name for p in VERSIONS.glob("*.py")}
+    assert any(n.startswith("009") for n in names)
+    assert not any(n.startswith("010") for n in names)

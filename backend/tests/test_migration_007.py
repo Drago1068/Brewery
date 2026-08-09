@@ -40,4 +40,5 @@ def test_migration_007_does_not_include_timers_or_handoffs():
 def test_008_exists_after_e2a4():
     names = {p.name for p in VERSIONS.glob("*.py")}
     assert any(n.startswith("008") for n in names)
-    assert not any(n.startswith("009") for n in names)
+    assert any(n.startswith("009") for n in names)
+    assert not any(n.startswith("010") for n in names)

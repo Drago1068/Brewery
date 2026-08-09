@@ -551,12 +551,13 @@ async def _close_session(
         )
     session.status = BrewSessionStatus.CLOSED
     session.closed_at = now
+    # E2A-5: CLOSE never creates fermentation handoff — that requires an explicit command.
     await _append(
         db,
         session,
         event_type=BrewEventType.SESSION_CLOSED,
         actor_id=actor,
-        payload={"brew_session_id": session.id},
+        payload={"brew_session_id": session.id, "fermentation_handoff_created": False},
         client_occurred_at=payload.client_occurred_at,
         client_submission_id=payload.client_submission_id,
     )

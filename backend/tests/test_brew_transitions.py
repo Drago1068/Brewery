@@ -436,3 +436,94 @@ async def test_idempotency_conflict_different_body():
         with pytest.raises(HTTPException) as exc:
             await transitions.apply_transition(db, "sess-1", _req("START_SESSION"))
         assert exc.value.detail["code"] == "IDEMPOTENCY_CONFLICT"
+
+
+@pytest.mark.asyncio
+async def test_close_blocked_by_required_pending():
+    db = AsyncMock()
+    session = _session(status="IN_PROGRESS", version=5, current_stage_code="YEAST_PITCH")
+    with (
+        patch(
+            "app.services.brew_transitions.idempotency_service.lookup_idempotency",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "app.services.brew_transitions.brew_session_service.get_brew_session",
+            new_callable=AsyncMock,
+            return_value=session,
+        ),
+        patch(
+            "app.services.brew_transitions.measurement_service.pending_required_blocks_close",
+            new_callable=AsyncMock,
+            return_value=["OG", "KNOCKOUT_TEMP"],
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await transitions.apply_transition(db, "sess-1", _req("CLOSE_SESSION", version=5))
+        assert exc.value.detail["code"] == "REQUIRED_MEASUREMENTS_PENDING"
+        assert "OG" in exc.value.detail["pending_codes"]
+        assert session.status == "IN_PROGRESS"
+
+
+@pytest.mark.asyncio
+async def test_close_allows_missed_waived_recommended_pending_no_handoff():
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    session = _session(status="IN_PROGRESS", version=8, current_stage_code="YEAST_PITCH")
+    with (
+        patch(
+            "app.services.brew_transitions.idempotency_service.lookup_idempotency",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "app.services.brew_transitions.idempotency_service.record_idempotency",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.brew_transitions.brew_session_service.get_brew_session",
+            new_callable=AsyncMock,
+            return_value=session,
+        ),
+        patch(
+            "app.services.brew_transitions.brew_session_service.get_brew_session_read",
+            new_callable=AsyncMock,
+            return_value={"id": "sess-1", "status": "CLOSED", "version": 9},
+        ),
+        patch(
+            "app.services.brew_transitions.measurement_service.pending_required_blocks_close",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "app.services.brew_transitions.brew_events_service.append_brew_event",
+            new_callable=AsyncMock,
+        ) as append,
+    ):
+        await transitions.apply_transition(db, "sess-1", _req("CLOSE_SESSION", version=8))
+        assert session.status == BrewSessionStatus.CLOSED
+        assert session.version == 9
+        assert append.await_args.kwargs["payload"].get("fermentation_handoff_created") is False
+
+
+@pytest.mark.asyncio
+async def test_abort_requires_reason_and_preserves_status_without_handoff():
+    db = AsyncMock()
+    session = _session(status="IN_PROGRESS", version=3)
+    with (
+        patch(
+            "app.services.brew_transitions.idempotency_service.lookup_idempotency",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "app.services.brew_transitions.brew_session_service.get_brew_session",
+            new_callable=AsyncMock,
+            return_value=session,
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await transitions.apply_transition(db, "sess-1", _req("ABORT_SESSION", version=3))
+        assert exc.value.status_code == 422
+        assert exc.value.detail["code"] == "ABORT_REASON_REQUIRED"

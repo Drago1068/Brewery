@@ -196,3 +196,8 @@ class BrewTimerRead(BaseModel):
     start_client_submission_id: str
     created_by: str
     created_at: Optional[str] = None
+
+
+class FermentationHandoffRequest(BaseModel):
+    client_submission_id: str = Field(min_length=1, max_length=128)
+    expected_session_version: int = Field(ge=1)

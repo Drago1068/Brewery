@@ -1024,3 +1024,49 @@ class BrewTimer(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class FermentationHandoff(Base):
+    """Immutable Epic 2 → Epic 3 boundary record. No FermentationSession in E2A-5."""
+
+    __tablename__ = "fermentation_handoffs"
+    __table_args__ = (
+        UniqueConstraint(
+            "brew_session_id", name="uq_fermentation_handoffs_brew_session_id"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
+    brewery_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("breweries.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    brew_session_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("brew_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    brew_plan_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("brew_plans.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    recipe_version_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("recipe_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    client_submission_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    brew_day_closed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)

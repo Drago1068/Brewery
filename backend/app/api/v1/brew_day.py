@@ -10,6 +10,7 @@ from app.schemas.brew_day import (
     BrewPlanRead,
     BrewSessionCreate,
     BrewSessionRead,
+    FermentationHandoffRequest,
     InstrumentCorrectionRequest,
     MeasurementCaptureRequest,
     MeasurementMissRequest,
@@ -21,10 +22,12 @@ from app.schemas.brew_day import (
     TimerStartRequest,
     TimerStopRequest,
 )
+from app.services import brew_day_report as brew_day_report_service
 from app.services import brew_plan as brew_plan_service
 from app.services import brew_session as brew_session_service
 from app.services import brew_timers as brew_timers_service
 from app.services import brew_transitions as brew_transitions_service
+from app.services import fermentation_handoff as fermentation_handoff_service
 from app.services import measurements as measurement_service
 
 router = APIRouter(tags=["brew-day"])
@@ -186,3 +189,26 @@ async def observe_elapsed(
     db: AsyncSession = Depends(get_db),
 ):
     return await brew_timers_service.observe_elapsed(db, timer_id, payload)
+
+
+@router.get("/brew-sessions/{session_id}/report")
+async def brew_day_report(session_id: str, db: AsyncSession = Depends(get_db)):
+    """Strictly read-only Brew-Day audit/report. Never creates handoff or events."""
+    return await brew_day_report_service.get_brew_day_report(db, session_id)
+
+
+@router.post("/brew-sessions/{session_id}/fermentation-handoff", status_code=201)
+async def create_fermentation_handoff(
+    session_id: str,
+    payload: FermentationHandoffRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Explicit CLOSED → HANDED_OFF. Never automatic on CLOSE_SESSION."""
+    return await fermentation_handoff_service.create_fermentation_handoff(
+        db, session_id, payload
+    )
+
+
+@router.get("/brew-sessions/{session_id}/fermentation-handoff")
+async def get_fermentation_handoff(session_id: str, db: AsyncSession = Depends(get_db)):
+    return await fermentation_handoff_service.get_fermentation_handoff(db, session_id)
