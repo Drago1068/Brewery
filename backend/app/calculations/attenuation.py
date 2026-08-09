@@ -16,10 +16,14 @@ from app.calculations.types import (
 
 FG_ID = "FG_ESTIMATE"
 FG_VERSION = "v1"
-FG_SOURCE = "ADR-003 — FG from OG and expected apparent attenuation"
+FG_SOURCE = (
+    "ADR-003 §B — FG = 1+(OG−1)×(1−A/100); derived from apparent attenuation"
+)
 ATT_ID = "APPARENT_ATTENUATION"
 ATT_VERSION = "v1"
-ATT_SOURCE = "ADR-003 — apparent attenuation from OG and FG"
+ATT_SOURCE = (
+    "ADR-003 §C — AA% = ((OG−FG)/(OG−1))×100 (SG form; not ASBC Plato)"
+)
 
 
 def estimate_fg(

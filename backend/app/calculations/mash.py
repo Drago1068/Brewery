@@ -17,7 +17,9 @@ from app.calculations.types import (
 
 FORMULA_ID = "STRIKE_TEMP"
 FORMULA_VERSION = "v1"
-SOURCE = "ADR-003 — infusion strike: Tw = (0.2/r)(Tmash − Tgrain) + Tmash"
+SOURCE = (
+    "ADR-003 §H — Palmer: Tw°F = (0.2/r)(Tmash−Tgrain)+Tmash; r = qt water / lb grain"
+)
 
 
 def strike_temperature(

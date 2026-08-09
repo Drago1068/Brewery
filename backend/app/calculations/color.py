@@ -17,7 +17,9 @@ from app.calculations.types import (
 
 FORMULA_ID = "COLOR"
 FORMULA_VERSION = "v1"
-SOURCE = "ADR-003 — Dan Morey MCU→SRM"
+SOURCE = (
+    "ADR-003 §F — Morey: SRM = 1.4922 × MCU^0.6859; MCU = Σ(W_lb×°L)/V_gal"
+)
 PRECISION = 1
 
 

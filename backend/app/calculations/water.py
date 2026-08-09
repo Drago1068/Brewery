@@ -17,7 +17,9 @@ from app.calculations.types import (
 
 FORMULA_ID = "WATER_REQUIREMENTS"
 FORMULA_VERSION = "v1"
-SOURCE = "ADR-003 — water from mash/sparge + recorded losses (no silent defaults)"
+SOURCE = (
+    "ADR-003 §G — V_total = V_mash + V_sparge(optional); losses NOT RECORDED if absent"
+)
 
 
 def water_requirements(

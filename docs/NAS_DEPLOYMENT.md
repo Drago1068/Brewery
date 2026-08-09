@@ -2,6 +2,8 @@
 
 Deploy BrewingOS as an isolated Compose project on NazarioNAS. Do not disturb investing, AEGIS, CODEX, or Claude Docker workspaces.
 
+> **Epic 1 posture:** This stack is **development-grade** (Vite-dev frontend, no application login, Tailscale/loopback isolation per ADR-001/002). That is acceptable for private single-user NAS bring-up and is **explicitly not** the long-term production security/deployment architecture. See `docs/SECURITY_EPIC1.md` deferred production track before labeling any environment production.
+
 ## Prerequisites
 
 - Docker Compose on NazarioNAS

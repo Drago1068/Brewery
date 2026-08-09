@@ -16,7 +16,7 @@ from app.calculations.types import (
 
 FORMULA_ID = "ABV"
 FORMULA_VERSION = "v1"
-SOURCE = "ADR-003 — ABV% = (OG − FG) × 131.25"
+SOURCE = "ADR-003 §D — ABV% = (OG−FG)×131.25; Palmer How to Brew approx."
 
 
 def calculate_abv(*, og: Optional[Decimal], fg: Optional[Decimal]) -> CalculationResult:

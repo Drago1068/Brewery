@@ -18,7 +18,9 @@ from app.calculations.types import (
 
 FORMULA_ID = "IBU"
 FORMULA_VERSION = "v1"
-SOURCE = "ADR-003 — Glenn Tinseth utilization"
+SOURCE = (
+    "ADR-003 §E — Tinseth: U=1.65·0.000125^(Gb−1)·(1−e^(−0.04t))/4.15; dry-hop=0; no pellet factor"
+)
 PRECISION = 1
 
 # Stages that contribute bitterness in v1.

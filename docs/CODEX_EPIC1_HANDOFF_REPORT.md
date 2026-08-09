@@ -87,8 +87,8 @@ Epic 1 ends **immediately before** Brew-Day execution.
 
 | ADR | Decision |
 |-----|----------|
-| ADR-001 | Private Tailscale/loopback access now; Cloudflare Access later |
-| ADR-002 | Default actor + network isolation; live NAS path `/volume1/docker/brewingos`; formula ADR deferred then resolved by ADR-003; snapshot strategy for recipes; Vite-dev frontend deferred |
+| ADR-001 | Private Tailscale/loopback **Epic interim**; Cloudflare Access + app identity later; **non-promotion** to permanent production security by inertia |
+| ADR-002 | Default actor + network isolation (**Epic 1 only**); live NAS path `/volume1/docker/brewingos`; formula ADR deferred then resolved by ADR-003; snapshot strategy; Vite-dev frontend **explicitly deferred** past Epic 1 for production packaging |
 | ADR-003 | v1 formulas: OG points, FG/attenuation, ABV×131.25, Tinseth IBU, Morey SRM, water, strike, scaling, conversions |
 
 Implementation agents must **not silently redefine** these. Formula changes require new `@vN` + fixtures + PO approval.
@@ -185,11 +185,12 @@ Domain journey: `backend/tests/test_integration_journey.py`
 
 - Secrets: `.env` gitignored; rotate example defaults before shared use
 - Postgres: not published on host; internal Compose network
-- Auth: **no login** — `default_actor_id=local-brewer` + ADR-001 network isolation
-- Frontend image: Vite **dev** server in Compose (known limitation)
+- Auth: **no login** — `default_actor_id=local-brewer` + ADR-001 network isolation (**Epic 1 interim only**; must not become permanent production IAM by inertia — ADR-001 non-promotion rule)
+- Frontend image: Vite **dev** server in Compose (**development-grade**; production static/nginx packaging explicitly deferred past Epic 1 — ADR-002 §E)
 - Live NAS runtime: `/volume1/docker/brewingos/{stack,data,logs,secrets,backups}`
 - Git may live on USB; runtime DB must not
 - Backup/restore procedure: `docs/BACKUP_RESTORE.md` (restore-into-isolated-env required for proof)
+- Deferred production track: `docs/SECURITY_EPIC1.md` (login, production frontend image, Access gate, PO “production” label)
 
 ---
 
@@ -204,6 +205,7 @@ The receiving Codex/review agent must **NOT**:
 5. Silently change formula behavior without version bump
 6. Deploy automatically to production
 7. Treat TARGET / PLANNED / CALCULATED / ESTIMATED / MEASURED / MISSING as interchangeable
+8. Treat Vite-dev + no-login + network-isolation as the approved long-term production security/deployment architecture (they remain deferred per ADR-001/002 and `docs/SECURITY_EPIC1.md`)
 
 ---
 
@@ -226,17 +228,19 @@ The receiving Codex/review agent must **NOT**:
 - Tinseth vs alternatives
 - Simple ABV vs high-gravity models
 - Morey color sufficiency for Epic 1
+- Provenance: ADR-003 §§A–J now pin exact equations/constants and runtime `source_reference` strings (no formula behavior change)
 
 ### D. Security acceptance
 
-- Default-actor model acceptable for private NAS only?
-- Vite-dev frontend acceptable until production image?
+- Default-actor model acceptable for **private NAS Epic 1 only** (not permanent production auth)?
+- Vite-dev frontend acceptable for Epic 1 with **explicit** post–Epic 1 production packaging deferral?
+- Confirm reviewers do **not** treat network-isolation + no-login + Vite-dev as the finished production security/deployment architecture
 
 ### E. Ops acceptance
 
-- Commit/push gap for Increments 6–7
 - NAS path deviation acceptance (ADR-002)
 - Persistence recreate + backup restore drill still needs live evidence on NAS
+- Deferred production track remains open (`docs/SECURITY_EPIC1.md`)
 
 ---
 
@@ -248,7 +252,7 @@ The receiving Codex/review agent must **NOT**:
 | H2 | Accept ADR-003 formulas as Epic 1 baseline | Blocks formula change control clarity |
 | H3 | Accept inventory shortage as WARNING not BLOCKER | Readiness UX policy |
 | H4 | Schedule isolated backup restore drill | Release gate incomplete until evidenced |
-| H5 | Authorize production frontend image work (post-Epic 1 or ops) | Security hardening |
+| H5 | Authorize production frontend image + app login / IAM (post–Epic 1); do not promote Vite-dev + network-isolation to production architecture | Security/deployment hardening |
 
 ---
 

@@ -109,7 +109,7 @@ See ADR-003: OG points, FG from attenuation, ABV linear, apparent attenuation, T
 
 ## 14. Formula sources/references
 
-Documented per result `source_reference` and in `docs/ADR-003-calculation-formulas-v1.md`.
+ADR-003 §§A–J document **exact equations, constants, units, and bibliographic references** for each formula identity. Runtime `source_reference` strings on calculation modules are aligned to those sections (not generic labels). See also `test_source_reference_provenance` in golden fixtures.
 
 ## 15. Formula versions
 
@@ -175,7 +175,9 @@ Env-driven bind mounts; USB git root is not runtime DB storage; sibling workload
 
 ## 29. Security implementation
 
-ADR-001 private access; no public Postgres; server-side validation; secrets out of git; Epic 1 auth = default actor + network isolation. Details: `docs/SECURITY_EPIC1.md`.
+ADR-001 private access (Epic **interim** only); no public Postgres; server-side validation; secrets out of git; Epic 1 auth = default actor + network isolation. Details: `docs/SECURITY_EPIC1.md`.
+
+**Explicit:** Vite-dev frontend + no application login + network-isolation-only are **development-grade / deferred production hardening**. Epic 1 acceptance must not promote them to the long-term production security/deployment architecture (ADR-001 non-promotion rule; ADR-002 §§A/E).
 
 ## 30. Audit implementation
 
@@ -183,8 +185,8 @@ Append-oriented `audit_events` for brewery/equipment changes, inventory movement
 
 ## 31. Known limitations
 
-- No login/multi-user IAM
-- Vite dev frontend image in Compose
+- No login/multi-user IAM (**deferred** production hardening — not closed by Epic 1)
+- Vite dev frontend image in Compose (**deferred** production packaging — Increment 7 did not deliver nginx/static image)
 - Inventory unit conversion not automatic across mismatched units
 - Browser E2E not automated
 - Strike temp requires grain temp + mash water (often WARNING)
@@ -194,27 +196,37 @@ Append-oriented `audit_events` for brewery/equipment changes, inventory movement
 
 Epic 2–5 domains (brew session, fermentation, packaging, sensory). Purchasing/WMS/CIP/commercial. Redis. Alternate IBU models. Water laboratory. AI recipe mutation.
 
+**Deferred production security/deployment (must remain explicit):**
+
+- Application login / IAM (beyond `default_actor_id`)
+- Production frontend packaging (retire Vite-dev Compose service for production-labeled deploys)
+- Cloudflare Access / identity-aware edge when exposure expands (ADR-001 later gate)
+- Formal PO label of any environment as **production**
+
 ## 33. Technical debt introduced
 
 - Monolithic `App.tsx` + growing `RecipesPanel.tsx` (candidate split)
-- Frontend not production-hardened image
+- Frontend not production-hardened image (**tracked deferral**, not silent acceptance of Vite-dev as prod)
 - Availability list omits zero-stock library-only ingredients (name match gaps)
 - Increment 6/7 changes may still be uncommitted relative to `30fa30f` at package authoring time — verify `git status` before review sign-off
 
 ## 34. Architecture deviations
 
 - Live NAS path `/volume1/docker/brewingos` vs aspirational `/volume1/Apps` (ADR-002 accepted)
-- Auth “per existing architecture” interpreted as network isolation + default actor (ADR-002)
+- Auth “per existing architecture” interpreted as network isolation + default actor for **Epic 1 only** (ADR-002 §A; not permanent production architecture)
 
 ## 35. Assumptions
 
 - Single homebrewer brewery per deployment for Epic 1
 - US gallon conversions for calc internals when needed
 - Tinseth + Morey acceptable as v1 (ADR-003 PO-authorized via proceed)
+- Development-grade deploy is acceptable for Epic 1 private NAS and remains explicitly out of production scope until hardened
 
 ## 36. Deployment implications
 
 Deploy via NAS Compose with secrets env file; do not mount CODEX/AEGIS/claude paths; do not overwrite POS Tailscale Serve; migrate with `alembic upgrade head` on backend start.
+
+Treat the current Compose stack as **Epic 1 / private bring-up**, not a production-grade deployment architecture. See `docs/SECURITY_EPIC1.md` deferred production track.
 
 ## 37. Git branch
 
@@ -236,11 +248,12 @@ Epic 1 adds full backend domain/API/calc/readiness stack, React UI flows, Alembi
 
 1. ADR-003 formula choices (Tinseth, Morey, simple ABV)
 2. Readiness severity policy (inventory shortage = WARNING not BLOCKER)
-3. Auth deferral acceptability for private NAS
+3. Auth deferral acceptability for private NAS **as Epic 1 interim only** (must not silently become production IAM)
 4. Snapshot strategy sufficiency for historical recipe integrity
-5. Frontend Vite-dev image acceptability until production packaging
+5. Frontend Vite-dev image acceptability for Epic 1 **with explicit deferral** of production packaging (ADR-002 §E)
 6. Confirm migrations applied on live NAS and persistence recreate test with representative recipe/inventory rows
 7. Backup restore drill evidence (isolated environment)
+8. Confirm deferred production track in `docs/SECURITY_EPIC1.md` remains open (login, production frontend image, Access gate)
 
 ---
 

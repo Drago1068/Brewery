@@ -17,7 +17,9 @@ from app.calculations.types import (
 
 FORMULA_ID = "OG_ESTIMATE"
 FORMULA_VERSION = "v1"
-SOURCE = "ADR-003 — brewhouse-efficiency points method"
+SOURCE = (
+    "ADR-003 §A — OG = 1 + Σ(W_lb×(P−1)×1000×E/100) / (V_gal×1000); Palmer/Daniels PPG"
+)
 PRECISION = 3
 
 

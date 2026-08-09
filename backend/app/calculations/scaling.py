@@ -17,7 +17,9 @@ from app.calculations.types import (
 
 FORMULA_ID = "RECIPE_SCALING"
 FORMULA_VERSION = "v1"
-SOURCE = "ADR-003 — linear batch-size scaling of ingredient amounts"
+SOURCE = (
+    "ADR-003 §I — scale factor f = V_to_gal / V_from_gal; a′ = a×f (linear)"
+)
 
 
 def scale_recipe(

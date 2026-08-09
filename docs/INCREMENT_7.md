@@ -24,10 +24,14 @@
 
 - Epic 2 BrewPlan / BrewSession execution
 - Playwright browser E2E harness (API/domain journey covered; UI E2E deferred)
-- Production nginx frontend image (ADR-002 §E)
-- Full identity authentication
+- **Production-grade deployment/security** (must stay deferred — do not promote by silence):
+  - Production nginx/static frontend image (ADR-002 §E; Vite-dev remains Epic 1 only)
+  - Application login / IAM (ADR-002 §A; network isolation is interim per ADR-001)
+  - Cloudflare Access / identity-aware edge (ADR-001 later gate)
 - Automated restore-into-isolated-env CI job (documented procedure)
 
 ## Stop
 
 Do **not** begin Epic 2. Await independent architecture review + Human Product Owner approval.
+
+Do **not** treat Epic 1 Compose (Vite-dev + no login + Tailscale/loopback) as the long-term production architecture — see `docs/SECURITY_EPIC1.md`.

@@ -154,3 +154,38 @@ def test_invalid_og_zero_batch():
     )
     assert result.status == CalculationStatus.INVALID
     assert result.value is None
+
+
+def test_source_reference_provenance():
+    """Runtime source_reference must cite ADR-003 section + equation/constants (not generic labels)."""
+    from app.calculations.registry import list_formulas
+
+    expected = {
+        "OG_ESTIMATE@v1": "ADR-003 §A —",
+        "FG_ESTIMATE@v1": "ADR-003 §B —",
+        "APPARENT_ATTENUATION@v1": "ADR-003 §C —",
+        "ABV@v1": "ADR-003 §D —",
+        "IBU@v1": "ADR-003 §E —",
+        "COLOR@v1": "ADR-003 §F —",
+        "WATER_REQUIREMENTS@v1": "ADR-003 §G —",
+        "STRIKE_TEMP@v1": "ADR-003 §H —",
+        "RECIPE_SCALING@v1": "ADR-003 §I —",
+        "UNIT_CONVERSION@v1": "ADR-003 §J —",
+    }
+    banned_fragments = (
+        "standard homebrew gravity points method",
+        "Palmer / standard infusion equation",
+        "NIST / conventional brewing factors",
+        "conventional brewing conversion factors",
+    )
+    by_key = {s["key"]: s for s in list_formulas()}
+    for key, prefix in expected.items():
+        assert key in by_key, f"missing registry entry {key}"
+        ref = by_key[key]["source_reference"]
+        assert ref.startswith(prefix), f"{key} source_reference missing section prefix: {ref!r}"
+        assert any(ch in ref for ch in ("=", "×", "·", "Σ", "f =", "Tw", "SRM", "U=", "NIST")), (
+            f"{key} source_reference lacks equation/constant markers: {ref!r}"
+        )
+        lower = ref.lower()
+        for banned in banned_fragments:
+            assert banned not in lower, f"{key} still uses generic provenance: {banned!r}"

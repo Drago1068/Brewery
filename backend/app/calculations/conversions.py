@@ -15,7 +15,9 @@ from app.calculations.types import (
 
 FORMULA_ID = "UNIT_CONVERSION"
 FORMULA_VERSION = "v1"
-SOURCE = "ADR-003 / conventional brewing conversion factors"
+SOURCE = (
+    "ADR-003 §J — NIST factors: lb=453.59237 g; oz=28.349523125 g; US gal=3.785411784 L"
+)
 
 # Mass to grams
 _MASS_TO_G = {
