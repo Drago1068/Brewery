@@ -61,7 +61,9 @@ Architecture decisions in these ADRs are locked. This package does not redesign 
 
 ## 4. Final Schema Sketch
 
-Additive UUID PKs. Brewery ownership via `brewery_id` on plans (denormalized on sessions). Not applied.
+Additive UUID PKs. Brewery ownership via `brewery_id` on plans (denormalized on sessions).
+
+**Migration sequencing amendment (pre–E2A-2):** canonical `brew_events` ships in `006` before stage transitions. See [`E2A2_ENTRY_AMENDMENT.md`](E2A2_ENTRY_AMENDMENT.md). Domain behavior unchanged.
 
 ### 005_brew_day_plans_sessions
 
@@ -73,7 +75,18 @@ Additive UUID PKs. Brewery ownership via `brewery_id` on plans (denormalized on 
 | `brew_actions` | Optional checklist steps on a stage |
 | `idempotency_records` | Append-only replay ledger; UNIQUE `(scope_type, scope_id, client_submission_id)` |
 
-### 006_brew_day_measurements
+**Status:** Implemented in E2A-1.
+
+### 006_brew_day_events_stage_machine
+
+| Table | Purpose |
+|-------|---------|
+| `brew_events` | Append-only brew-day domain event stream (plan- and session-scoped); required before stage transitions |
+
+Includes indexes/constraints for append-only history and deterministic E2A-1 backfill of `PLAN_CREATED` / `READINESS_ACKNOWLEDGED`.  
+`audit_events` is **not** a substitute for this stream in E2A-2+.
+
+### 007_brew_day_measurements
 
 | Table | Purpose |
 |-------|---------|
@@ -83,14 +96,13 @@ Additive UUID PKs. Brewery ownership via `brewery_id` on plans (denormalized on 
 | `measurement_observation_history` | Append-only scientific value history |
 | `measurement_status_history` | Append-only lifecycle history |
 
-### 007_brew_day_timers_events
+### 008_brew_day_timers
 
 | Table | Purpose |
 |-------|---------|
 | `brew_timers` | Timestamp-authoritative timers; status is projection; immutable label/target after create |
-| `brew_events` | Append-only brew-day audit stream |
 
-### 008_fermentation_handoffs
+### 009_fermentation_handoffs
 
 | Table | Purpose |
 |-------|---------|
@@ -166,13 +178,25 @@ New command with stale version: `409 CONCURRENCY_CONFLICT`.
 
 ### Session
 
-- `PLANNED` → `IN_PROGRESS`  
+- `PLANNED` → `IN_PROGRESS` via locked `START_SESSION` (see below)  
 - `IN_PROGRESS` ↔ `PAUSED`  
 - `IN_PROGRESS` → `CLOSED`  
 - `IN_PROGRESS` → `ABORTED`  
 - `CLOSED` → `HANDED_OFF`  
 
 `ABORTED` is terminal. Close is rejected while any REQUIRED measurement remains `PENDING`.
+
+#### START_SESSION (locked)
+
+Atomic one-transaction command:
+
+- Session: `PLANNED` → `IN_PROGRESS`; set `started_at`; `current_stage_code = PRE_BREW`  
+- PRE_BREW stage: `PENDING` → `ACTIVE`; set `entered_at`  
+- Append `SESSION_STARTED` and `STAGE_ENTERED` to `brew_events`  
+- Increment `BrewSession.version` exactly once  
+- Persist idempotency result in the same transaction  
+
+Any write failure rolls back the entire command.
 
 ### Stage
 
@@ -223,12 +247,13 @@ No CRDT. No automatic multi-writer merge. No silent loss. No duplicate side effe
 
 ## 10. Migration Order
 
-1. `005_brew_day_plans_sessions`  
-2. `006_brew_day_measurements`  
-3. `007_brew_day_timers_events`  
-4. `008_fermentation_handoffs`  
+1. `005_brew_day_plans_sessions` (E2A-1 — done)  
+2. `006_brew_day_events_stage_machine` (E2A-2 — `brew_events` + backfill before transitions)  
+3. `007_brew_day_measurements`  
+4. `008_brew_day_timers`  
+5. `009_fermentation_handoffs`  
 
-Apply starting **E2A-1** only. No migrations created or applied in E2A-0.
+Amended pre–E2A-2: [`E2A2_ENTRY_AMENDMENT.md`](E2A2_ENTRY_AMENDMENT.md).
 
 ---
 
@@ -237,11 +262,13 @@ Apply starting **E2A-1** only. No migrations created or applied in E2A-0.
 | Increment | Scope |
 |-----------|--------|
 | E2A-1 | Migration 005 + BrewPlan/BrewSession APIs + idempotency ledger |
-| E2A-2 | Stage transitions + brew_events |
-| E2A-3 | Migration 006 + measurement capture/history/miss/waive |
-| E2A-4 | Migration 007 timers + observe-elapsed; read-only GET |
-| E2A-5 | Reports; close/abort hardening; migration 008 handoff |
+| E2A-2 | Migration 006 (`brew_events` + E2A-1 backfill) + stage transitions including locked START_SESSION |
+| E2A-3 | Migration 007 + measurement capture/history/miss/waive |
+| E2A-4 | Migration 008 timers + observe-elapsed; read-only GET |
+| E2A-5 | Reports; close/abort hardening; migration 009 handoff |
 | E2A-6 | Offline replay hardening/tests; journey test; guided UI shell |
+
+U1 measurement seed catalog is deferred until before measurement implementation (not an E2A-2 blocker).
 
 ---
 

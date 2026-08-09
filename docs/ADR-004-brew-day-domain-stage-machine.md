@@ -1,8 +1,9 @@
 # ADR-004 — Brew Day Domain & Stage State Machine
 
-**Status:** Accepted (E2A-0; refined before E2A-1)  
+**Status:** Accepted (E2A-0; refined before E2A-1; sequencing amendment pre–E2A-2)  
 **Date:** 2026-08-09  
 **Amended:** 2026-08-09 — session handoff semantics, skip/close rules, integer optimistic concurrency, command atomicity, separate readiness event  
+**Amended:** 2026-08-09 — pre–E2A-2: `brew_events` ships in migration `006_brew_day_events_stage_machine` before stage transitions; `START_SESSION` atomicity locked; `audit_events` is not a Brew-Day event substitute ([`E2A2_ENTRY_AMENDMENT.md`](E2A2_ENTRY_AMENDMENT.md)). Domain behavior otherwise unchanged.  
 **Context:** Epic 2A Guided Brew Day requires an explicit process model that consumes immutable Epic 1 RecipeVersions without rewriting historical recipe or calculation truth. Product Owner authorized E2A-0 with decisions P1–P5 locked in the Epic 2 handoff.
 
 ## Decision
@@ -102,7 +103,7 @@ All process movement is via explicit API commands (never timer-driven):
 
 | Command | Effect |
 |---------|--------|
-| `START_SESSION` | `PLANNED` → `IN_PROGRESS`; enter first stage `PRE_BREW` |
+| `START_SESSION` | Atomic: `PLANNED` → `IN_PROGRESS`; PRE_BREW `PENDING` → `ACTIVE`; `current_stage_code=PRE_BREW`; set `started_at` and PRE_BREW `entered_at`; append `SESSION_STARTED` + `STAGE_ENTERED`; increment `version` once; persist idempotency in same transaction |
 | `ADVANCE_STAGE` | Complete current stage; activate next in order |
 | `SKIP_STAGE` | Mark stage `SKIPPED` with reason; apply skip measurement policy; activate next per rules |
 | `PAUSE_SESSION` | `IN_PROGRESS` → `PAUSED` |
@@ -112,6 +113,8 @@ All process movement is via explicit API commands (never timer-driven):
 | `CREATE_FERMENTATION_HANDOFF` | `CLOSED` → `HANDED_OFF` (or attach handoff while remaining conceptually closed); never from `ABORTED` |
 
 Illegal transitions return `409`/`422` with structured reason; no partial silent apply.
+
+**BrewEvent persistence (pre–E2A-2 amendment):** Canonical brew-day events live in `brew_events` (migration `006`). E2A-2+ mutating commands must write `brew_events` in the same transaction as domain changes. Epic 1 `audit_events` must not be used as a temporary substitute for this stream. E2A-1 plan events are backfilled into `brew_events` by migration `006` using durable BrewPlan columns and existing `audit_events` as evidence only.
 
 ### H. Skip semantics (locked)
 

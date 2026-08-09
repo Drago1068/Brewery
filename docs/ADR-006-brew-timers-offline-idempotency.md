@@ -5,7 +5,8 @@
 **Status:** Accepted  
 **Date:** 2026-08-09  
 **Context:** Epic 2A requires durable brew-day timers and offline-safe mutating APIs without Redis and without letting timers drive process state (ADR-004).  
-**Amendment:** 2026-08-09 — canonical timer, idempotency, OCC, and offline contract locked for E2A-0; `idempotency_records` ships in migration `005`.
+**Amendment:** 2026-08-09 — canonical timer, idempotency, OCC, and offline contract locked for E2A-0; `idempotency_records` ships in migration `005`.  
+**Amendment:** 2026-08-09 — pre–E2A-2 sequencing: `brew_events` moves to migration `006_brew_day_events_stage_machine`; timers remain in future `008_brew_day_timers` ([`E2A2_ENTRY_AMENDMENT.md`](E2A2_ENTRY_AMENDMENT.md)). Timer/idempotency domain behavior unchanged.
 
 ## Decision
 
@@ -181,7 +182,9 @@ Server timestamps (`occurred_at`, `started_at`, `elapsed_at`, and related fields
 
 E2A-1 creates `idempotency_records` in migration `005`.
 
-E2A-4 implements timers with observe-elapsed POST and read-only GET.
+E2A-2 creates canonical `brew_events` in migration `006` (before stage transitions). Timers are **not** in that migration.
+
+E2A-4 implements timers (migration `008`) with observe-elapsed POST and read-only GET.
 
 E2A-6 hardens offline replay tests against this contract.
 

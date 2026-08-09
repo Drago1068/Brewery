@@ -122,7 +122,7 @@ Distinct durable facts:
 1. Immutable BrewPlan acknowledgement columns  
 2. Separate `audit_events` rows: `PLAN_CREATED` and `READINESS_ACKNOWLEDGED`  
 
-Canonical `brew_events` deferred to migration 007 — see [`E2A1_BREW_EVENT_DEFERMENT.md`](E2A1_BREW_EVENT_DEFERMENT.md).
+Canonical `brew_events` deferred to migration 006 — resolved by [`E2A2_ENTRY_AMENDMENT.md`](E2A2_ENTRY_AMENDMENT.md) (backfill + no `audit_events` substitute for E2A-2).
 
 ## 15. Idempotency behavior
 
@@ -159,8 +159,8 @@ All pre-existing Epic 1 tests remain green, including ADR-003 golden calculation
 ## 20. Known limitations
 
 - No stage transitions, measurements, timers, reports, handoff, or offline UI (E2A-2+)
-- `brew_events` not yet persisted (migration 007)
-- PRE_BREW not activated at session create (PLANNED; start is E2A-2)
+- `brew_events` not yet persisted (arrives in migration `006` at E2A-2 start)
+- PRE_BREW not activated at session create (PLANNED; START_SESSION locked for E2A-2)
 - No Redis / CRDT (by design)
 
 ## 21. Architecture deviations
@@ -169,9 +169,11 @@ None against ADR decisions. Migration-order packaging of BrewEvents reconciled v
 
 ## 22. Decisions required before E2A-2
 
-1. BrewEvent backfill strategy for E2A-1 plans (options A/B/C in `E2A1_BREW_EVENT_DEFERMENT.md`)
-2. Confirm START_SESSION activates PRE_BREW and moves session `PLANNED → IN_PROGRESS`
-3. U1 measurement seed catalog (still unresolved from E2A-0)
+Resolved by [`E2A2_ENTRY_AMENDMENT.md`](E2A2_ENTRY_AMENDMENT.md):
+
+1. BrewEvent backfill from E2A-1 plan columns + audit evidence (locked)  
+2. START_SESSION activates PRE_BREW and moves `PLANNED → IN_PROGRESS` (locked)  
+3. U1 measurement seed catalog remains deferred (not an E2A-2 blocker)
 
 ---
 

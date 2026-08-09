@@ -375,8 +375,15 @@ Validation failures return structured errors; never substitute fabricated measur
 - Continue Alembic additive migrations from Epic 1 (`005+`).  
 - Prefer new tables for brew-day aggregates; do not widen RecipeVersion mutability.  
 - Append-only: `brew_events` has no update/delete API.  
-- Indexes: `(brew_session_id, occurred_at)`, unique `client_submission_id` where used.  
-- NAS persistence rules unchanged (ADR-002 paths; DB not on USB git volume).
+- **Sequencing (pre–E2A-2 amendment):**  
+  - `005` plans/sessions/actions/idempotency (done)  
+  - `006` `brew_events` + E2A-1 backfill (before stage transitions)  
+  - `007` measurements  
+  - `008` timers  
+  - `009` fermentation handoffs  
+- Indexes: `(brew_session_id, occurred_at)`, unique backfill `correlation_key`, unique idempotency scope tuple.  
+- NAS persistence rules unchanged (ADR-002 paths; DB not on USB git volume).  
+- Detail: [`E2A2_ENTRY_AMENDMENT.md`](E2A2_ENTRY_AMENDMENT.md).
 
 ---
 
@@ -385,11 +392,11 @@ Validation failures return structured errors; never substitute fabricated measur
 | Increment | Scope | Exit criteria |
 |-----------|-------|---------------|
 | **E2A-0** | ADRs: brew-day domain, stage machine, measurement integrity, timers-do-not-control-state, offline idempotency; schema sketch; freeze checklist | PO accepts handoff/ADRs |
-| **E2A-1** | Migrations + BrewPlan from RecipeVersion + snapshots + session create/start | Plan/session API green; cannot plan from DRAFT |
-| **E2A-2** | Stage state machine + transitions + BrewEvent audit | Illegal transitions rejected; events append-only |
-| **E2A-3** | MeasurementRequirements seed per stage + MeasurementRecord capture/miss/waive + validation | Statuses correct; no fabrication |
-| **E2A-4** | Persisted timers + elapsed events; UI warnings only | Expiry does not auto-transition |
-| **E2A-5** | Planned-vs-actual + three report axes; close session; fermentation handoff stub | Close honest with MISSED/WAIVED; handoff row created |
+| **E2A-1** | Migration 005 + BrewPlan from RecipeVersion + snapshots + session create (PLANNED) | Plan/session API green; cannot plan from DRAFT |
+| **E2A-2** | Migration 006 (`brew_events` + E2A-1 backfill) + stage state machine/transitions including locked START_SESSION | Illegal transitions rejected; events append-only on `brew_events` |
+| **E2A-3** | Migration 007 MeasurementRequirements seed per stage + MeasurementRecord capture/miss/waive + validation | Statuses correct; no fabrication |
+| **E2A-4** | Migration 008 persisted timers + elapsed events; UI warnings only | Expiry does not auto-transition |
+| **E2A-5** | Planned-vs-actual + three report axes; close session; migration 009 fermentation handoff stub | Close honest with MISSED/WAIVED; handoff row created |
 | **E2A-6** | Idempotent client_submission_id; basic offline contract tests; journey test RecipeVersion→…→handoff; UI shell for guided day | Journey green; no Redis |
 
 **Stop after each increment** for review unless PO authorizes continuous 2A execution against this handoff.
@@ -458,5 +465,6 @@ Unchanged from Epic 1 interim: `default_actor_id` + ADR-001 network isolation. R
 | 1.1 | 2026-08-09 | P1–P5 locked; E2A-0 ADRs + review package authorized |
 | 1.2 | 2026-08-09 | Pre–E2A-1 refinements: handoff semantics, skip/close locks, integer OCC, command atomicity, separate readiness event |
 | 1.3 | 2026-08-09 | ADR-005/006 history-first strengthening (measurements + timers/idempotency) |
+| 1.4 | 2026-08-09 | Pre–E2A-2: migration sequencing amendment — `brew_events` in 006 before transitions; START_SESSION locked; U1 deferred |
 
-**E2A-0 ARCHITECTURE PACKAGE SUBMITTED — NO E2A-1 UNTIL REVIEW ACCEPTANCE**
+**E2A-1 ACCEPTED — PRE–E2A-2 ENTRY AMENDMENT REQUIRED BEFORE E2A-2 AUTHORIZATION**
