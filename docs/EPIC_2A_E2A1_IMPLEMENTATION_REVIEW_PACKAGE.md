@@ -9,7 +9,7 @@
 
 ## 1. Commit SHA
 
-_(filled at commit time)_
+`1a0b21f120f4798c401475c22af4bfef327e465b`
 
 ## 2. Working-tree status
 
