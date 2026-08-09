@@ -1,12 +1,13 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import RecipesPanel from "./RecipesPanel";
+import BrewDayPanel from "./brewDay/BrewDayPanel";
 import "./App.css";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 type PreferredUnits = "US" | "METRIC";
 type VolumeUnit = "gal" | "L";
-type View = "home" | "brewery" | "equipment" | "inventory" | "recipes";
+type View = "home" | "brewery" | "equipment" | "inventory" | "recipes" | "brewday";
 
 type Brewery = {
   id: string;
@@ -119,6 +120,9 @@ function defaultUnitFor(category: IngredientCategory, preferred: PreferredUnits)
 
 export default function App() {
   const [view, setView] = useState<View>("home");
+  const [brewSessionId, setBrewSessionId] = useState<string | null>(
+    () => localStorage.getItem("brewingos.e2a6.activeBrewSessionId"),
+  );
   const [brewery, setBrewery] = useState<Brewery | null>(null);
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [inventory, setInventory] = useState<InventoryRow[]>([]);
@@ -485,6 +489,14 @@ export default function App() {
           disabled={!brewery}
         >
           Recipes
+        </button>
+        <button
+          type="button"
+          className={view === "brewday" ? "active" : ""}
+          onClick={() => setView("brewday")}
+          disabled={!brewery}
+        >
+          Brew Day
         </button>
       </nav>
 
@@ -1021,6 +1033,18 @@ export default function App() {
           breweryId={brewery.id}
           preferredUnits={brewery.preferred_units}
           equipment={equipment.map((e) => ({ id: e.id, name: e.name }))}
+          onError={setError}
+          onBrewSessionReady={(sessionId) => {
+            setBrewSessionId(sessionId);
+            setView("brewday");
+          }}
+        />
+      )}
+
+      {view === "brewday" && brewery && (
+        <BrewDayPanel
+          breweryId={brewery.id}
+          initialSessionId={brewSessionId}
           onError={setError}
         />
       )}

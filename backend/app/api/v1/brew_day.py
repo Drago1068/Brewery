@@ -59,6 +59,12 @@ async def create_brew_session(
     return await brew_session_service.create_brew_session(db, plan_id, payload)
 
 
+@router.get("/brew-plans/{plan_id}", response_model=BrewPlanRead)
+async def get_brew_plan(plan_id: str, db: AsyncSession = Depends(get_db)):
+    """Side-effect free BrewPlan read (E2A-6 UI refresh recovery)."""
+    return await brew_plan_service.get_brew_plan_read(db, plan_id)
+
+
 @router.get("/brew-sessions/{session_id}", response_model=BrewSessionRead)
 async def get_brew_session(session_id: str, db: AsyncSession = Depends(get_db)):
     """Side-effect free BrewSession read."""

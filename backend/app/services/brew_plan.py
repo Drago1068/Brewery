@@ -273,3 +273,8 @@ async def get_brew_plan(db: AsyncSession, plan_id: str) -> BrewPlan:
     if plan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="BrewPlan not found")
     return plan
+
+
+async def get_brew_plan_read(db: AsyncSession, plan_id: str) -> dict:
+    plan = await get_brew_plan(db, plan_id)
+    return _plan_to_read(plan).model_dump(mode="json")

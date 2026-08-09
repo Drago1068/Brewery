@@ -191,12 +191,15 @@ async def list_recipes(db: AsyncSession, brewery_id: str) -> list[Recipe]:
 
 async def get_recipe_detail(db: AsyncSession, recipe_id: str) -> dict:
     recipe = await get_recipe(db, recipe_id)
+    await db.refresh(recipe)
     versions_result = await db.execute(
         select(RecipeVersion)
         .where(RecipeVersion.recipe_id == recipe_id)
         .order_by(RecipeVersion.version_number.asc())
     )
     versions = list(versions_result.scalars().all())
+    for version in versions:
+        await db.refresh(version)
     current = None
     if recipe.current_version_id:
         current = await get_version(db, recipe.current_version_id)

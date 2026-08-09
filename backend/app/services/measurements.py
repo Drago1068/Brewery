@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Any, Optional
 
 from fastapi import HTTPException, status
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -54,6 +55,15 @@ def _illegal(code: str, message: str, **extra: Any) -> HTTPException:
     )
 
 
+def _iso_attr(obj: Any, attr: str) -> Optional[str]:
+    """Read datetime attrs without triggering async lazy IO on expired columns."""
+    insp = sa_inspect(obj)
+    if attr in insp.unloaded:
+        return None
+    value = getattr(obj, attr)
+    return value.isoformat() if value is not None else None
+
+
 def _record_to_dict(record: MeasurementRecord) -> dict:
     display, display_unit = measurement_domain.display_value(record)
     return {
@@ -74,12 +84,10 @@ def _record_to_dict(record: MeasurementRecord) -> dict:
         "validation_class": record.validation_class,
         "validation_notes": record.validation_notes,
         "latest_observation_history_id": record.latest_observation_history_id,
-        "first_captured_at": record.first_captured_at.isoformat()
-        if record.first_captured_at
-        else None,
+        "first_captured_at": _iso_attr(record, "first_captured_at"),
         "captured_by": record.captured_by,
         "client_submission_id": record.client_submission_id,
-        "updated_at": record.updated_at.isoformat() if record.updated_at else None,
+        "updated_at": _iso_attr(record, "updated_at"),
     }
 
 
@@ -97,7 +105,7 @@ def _requirement_to_dict(req: MeasurementRequirement) -> dict:
         "validation_min": str(req.validation_min) if req.validation_min is not None else None,
         "validation_max": str(req.validation_max) if req.validation_max is not None else None,
         "status": req.status,
-        "created_at": req.created_at.isoformat() if req.created_at else None,
+        "created_at": _iso_attr(req, "created_at"),
         "record": _record_to_dict(req.record) if req.record is not None else None,
     }
 
@@ -367,6 +375,7 @@ async def capture_measurement(
         first_captured_at=now,
         captured_by=actor,
         client_submission_id=payload.client_submission_id,
+        updated_at=now,
     )
     db.add(record)
     await db.flush()
@@ -465,11 +474,7 @@ async def capture_measurement(
         session_version_after=session.version,
     )
     await db.commit()
-    return {
-        "requirement": _requirement_to_dict(req),
-        "record": _record_to_dict(record),
-        "session_version": session.version,
-    }
+    return response
 
 
 async def instrument_correction(
@@ -563,8 +568,7 @@ async def instrument_correction(
         session_version_after=session.version,
     )
     await db.commit()
-    await db.refresh(record)
-    return {"record": _record_to_dict(record), "session_version": session.version}
+    return response
 
 
 async def user_revision(
@@ -668,8 +672,7 @@ async def user_revision(
         session_version_after=session.version,
     )
     await db.commit()
-    await db.refresh(record)
-    return {"record": _record_to_dict(record), "session_version": session.version}
+    return response
 
 
 async def miss_requirement(
@@ -791,8 +794,7 @@ async def _lifecycle_transition(
         session_version_after=session.version,
     )
     await db.commit()
-    req = await _load_requirement(db, req.id)
-    return {"requirement": _requirement_to_dict(req), "session_version": session.version}
+    return response
 
 
 async def auto_miss_required_for_skipped_stage(

@@ -81,6 +81,7 @@ type Props = {
   preferredUnits: "US" | "METRIC";
   equipment: Equipment[];
   onError: (message: string | null) => void;
+  onBrewSessionReady?: (sessionId: string) => void;
 };
 
 export default function RecipesPanel({
@@ -88,10 +89,13 @@ export default function RecipesPanel({
   preferredUnits,
   equipment,
   onError,
+  onBrewSessionReady,
 }: Props) {
   const [recipes, setRecipes] = useState<RecipeSummary[]>([]);
   const [detail, setDetail] = useState<RecipeDetail | null>(null);
   const [mode, setMode] = useState<"list" | "create" | "edit">("list");
+  const [ackNote, setAckNote] = useState("");
+  const [ackChecked, setAckChecked] = useState(false);
   const [calc, setCalc] = useState<{
     results: Record<
       string,
@@ -303,8 +307,69 @@ export default function RecipesPanel({
       );
       if (!res.ok) throw new Error(await readError(res));
       setReadiness(await res.json());
+      setAckChecked(false);
+      setAckNote("");
     } catch (err) {
       onError(err instanceof Error ? err.message : "Readiness check failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createBrewPlanAndSession() {
+    if (!detail?.current_version) return;
+    const status = detail.current_version.status;
+    if (status !== "ACTIVE" && status !== "LOCKED") {
+      onError("Only ACTIVE or LOCKED recipe versions can create a Brew Plan. DRAFT is not eligible.");
+      return;
+    }
+    if (!readiness) {
+      onError("Run Ready to Brew first.");
+      return;
+    }
+    if ((readiness.overall === "YELLOW" || readiness.overall === "RED") && !ackChecked) {
+      onError("YELLOW/RED readiness requires explicit acknowledgement before creating a Brew Plan.");
+      return;
+    }
+    onError(null);
+    setBusy(true);
+    try {
+      const client_submission_id = `plan-${crypto.randomUUID()}`;
+      const body: Record<string, unknown> = { client_submission_id };
+      if (readiness.overall === "YELLOW" || readiness.overall === "RED") {
+        body.readiness_acknowledgement = {
+          acknowledged: true,
+          note: ackNote || `Acknowledged ${readiness.overall} readiness`,
+        };
+      }
+      const planRes = await fetch(
+        `${API_URL}/api/v1/recipe-versions/${detail.current_version.id}/brew-plans`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      if (!planRes.ok) throw new Error(await readError(planRes));
+      const plan = await planRes.json();
+      if (
+        plan.readiness_status === "GREEN" &&
+        (readiness.overall === "YELLOW" || readiness.overall === "RED")
+      ) {
+        throw new Error("Server returned GREEN after YELLOW/RED acknowledgement — refusing to continue");
+      }
+      const sessRes = await fetch(`${API_URL}/api/v1/brew-plans/${plan.id}/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_submission_id: `sess-${crypto.randomUUID()}` }),
+      });
+      if (!sessRes.ok) throw new Error(await readError(sessRes));
+      const session = await sessRes.json();
+      localStorage.setItem("brewingos.e2a6.activeBrewSessionId", session.id);
+      localStorage.setItem("brewingos.e2a6.activeBrewPlanId", plan.id);
+      onBrewSessionReady?.(session.id);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Brew plan creation failed");
     } finally {
       setBusy(false);
     }
@@ -767,7 +832,43 @@ export default function RecipesPanel({
                   Add inventory
                 </button>
               </div>
-              <p className="muted">Future: Create Brew Plan (Epic 2).</p>
+              {(readiness.overall === "YELLOW" || readiness.overall === "RED") && (
+                <div className="ack-box">
+                  <p className={`readiness-overall ${readiness.overall.toLowerCase()}`}>
+                    Original readiness remains {readiness.overall} — acknowledgement does not turn this GREEN.
+                  </p>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={ackChecked}
+                      onChange={(e) => setAckChecked(e.target.checked)}
+                    />{" "}
+                    I acknowledge these readiness findings and want to proceed.
+                  </label>
+                  <label>
+                    Acknowledgement note
+                    <input value={ackNote} onChange={(e) => setAckNote(e.target.value)} />
+                  </label>
+                </div>
+              )}
+              <div className="actions">
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={
+                    busy ||
+                    (detail.current_version?.status !== "ACTIVE" &&
+                      detail.current_version?.status !== "LOCKED") ||
+                    ((readiness.overall === "YELLOW" || readiness.overall === "RED") && !ackChecked)
+                  }
+                  onClick={() => void createBrewPlanAndSession()}
+                >
+                  Create Brew Plan & Start Brew Day
+                </button>
+              </div>
+              {detail.current_version?.status === "DRAFT" && (
+                <p className="muted">DRAFT versions cannot create a Brew Plan. Activate or lock first.</p>
+              )}
             </div>
           )}
           {calc && (

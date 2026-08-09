@@ -22,14 +22,15 @@ def _to_detail(payload: dict) -> RecipeDetail:
     recipe = payload["recipe"]
     versions = payload["versions"]
     current = payload["current_version"]
+    # Copy scalars explicitly (async SQLAlchemy forbids implicit lazy IO later).
     return RecipeDetail(
-        id=recipe.id,
-        brewery_id=recipe.brewery_id,
+        id=str(recipe.id),
+        brewery_id=str(recipe.brewery_id),
         name=recipe.name,
         style=recipe.style,
         description=recipe.description,
         status=recipe.status,
-        current_version_id=recipe.current_version_id,
+        current_version_id=str(recipe.current_version_id) if recipe.current_version_id else None,
         created_by=recipe.created_by,
         created_at=recipe.created_at,
         updated_at=recipe.updated_at,
