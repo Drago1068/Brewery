@@ -426,23 +426,22 @@ Unchanged from Epic 1 interim: `default_actor_id` + ADR-001 network isolation. R
 
 ## 17. Recommended immediate next actions
 
-1. PO accepts this handoff (or annotates deltas).  
-2. Implementer drafts **ADR-004** (Brew Day domain & stage machine), **ADR-005** (Measurement integrity & value kinds), **ADR-006** (Timers do not control process state; offline idempotency) as Increment **E2A-0**.  
-3. Only then start E2A-1 schema/API code.  
+1. Architecture review of E2A-0 package (`docs/EPIC_2A_E2A0_ARCHITECTURE_REVIEW_PACKAGE.md`).  
+2. On approval, begin **E2A-1** only (plans/sessions schema + API) — not a full Epic 2 dump.  
 
-**Forbidden next action:** “Build all of Epic 2” in one undifferentiated change set.
+**Forbidden:** Undifferentiated “build all of Epic 2.”
 
 ---
 
-## 18. Open PO decisions (resolve in E2A-0 if possible)
+## 18. Product Owner decisions (locked E2A-0)
 
-| ID | Decision | Default if PO silent |
-|----|----------|----------------------|
-| P1 | Allow BrewPlan from YELLOW/RED readiness with acknowledgement? | Yes, with event |
-| P2 | Allow BrewPlan from DRAFT if immediately locked? | No — require ACTIVE/LOCKED |
-| P3 | Confidence model enum vs 0–1 float | Enum HIGH/MEDIUM/LOW |
-| P4 | Abort vs close-with-gaps UX | Both; abort terminal |
-| P5 | Inventory auto-consume on close vs explicit consume actions | Explicit actions in 2A |
+| ID | Decision | Status |
+|----|----------|--------|
+| P1 | BrewPlan from YELLOW/RED only with explicit acknowledgement (status, warnings/blockers, ack, actor, timestamp, optional note); no silent readiness conversion | **Locked** |
+| P2 | BrewPlan requires ACTIVE or LOCKED RecipeVersion; DRAFT forbidden; no lock-on-plan in 2A | **Locked** |
+| P3 | Confidence: HIGH / MEDIUM / LOW only | **Locked** |
+| P4 | Support CLOSED and ABORTED; neither fabricates missing measurements | **Locked** |
+| P5 | Inventory consumption only via explicit confirmed action; never implied by stage/timer/close | **Locked** |
 
 ---
 
@@ -451,5 +450,6 @@ Unchanged from Epic 1 interim: `default_actor_id` + ADR-001 network isolation. R
 | Version | Date | Notes |
 |---------|------|-------|
 | 1.0 | 2026-08-09 | Initial Epic 2A handoff after Epic 1 freeze |
+| 1.1 | 2026-08-09 | P1–P5 locked; E2A-0 ADRs + review package authorized |
 
-**EPIC 2A HANDOFF READY FOR PO / ARCHITECTURE REVIEW — NO PRODUCTION BREW-DAY CODE UNTIL E2A-0**
+**E2A-0 ARCHITECTURE PACKAGE SUBMITTED — NO E2A-1 UNTIL REVIEW ACCEPTANCE**
