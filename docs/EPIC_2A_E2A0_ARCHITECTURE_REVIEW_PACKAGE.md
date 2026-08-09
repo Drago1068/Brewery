@@ -39,7 +39,7 @@ Summary: History-first measurement ledger — append-only observation history (c
 
 See [`ADR-006-brew-timers-offline-idempotency.md`](ADR-006-brew-timers-offline-idempotency.md).
 
-Summary: Persisted timers; TIMER_ELAPSED ≠ transition; no Redis; `client_submission_id` idempotency; server vs client timestamps; limited offline replay contract.
+Summary: History-safe timer timeline (one-way timestamps; status is projection); **no GET side effects** — `OBSERVE_TIMER_ELAPSED` persists elapsed once; TIMER_ELAPSED ≠ process transition; **idempotency_records** ledger with request fingerprints; no Redis; limited offline replay with server-wins conflicts.
 
 ---
 
@@ -203,12 +203,37 @@ Requirement `status` is a projection of the latest status-history head.
 | `id` | UUID PK | |
 | `brew_session_id` | UUID FK | |
 | `stage_occurrence_id` | UUID NULL | |
-| `label` | TEXT | |
-| `target_duration_seconds` | INT NULL | |
-| `started_at`, `ends_at`, `stopped_at` | TIMESTAMPTZ | |
-| `status` | TEXT | RUNNING/ELAPSED/STOPPED/CANCELLED |
-| `elapsed_event_emitted` | BOOLEAN DEFAULT FALSE | Idempotent TIMER_ELAPSED |
-| `client_submission_id` | TEXT NULL | On start |
+| `label` | TEXT | Immutable after create |
+| `target_duration_seconds` | INT NULL | Immutable after create |
+| `started_at` | TIMESTAMPTZ | Immutable |
+| `client_started_at` | TIMESTAMPTZ NULL | Immutable |
+| `ends_at` | TIMESTAMPTZ NULL | Immutable when set at start |
+| `elapsed_at` | TIMESTAMPTZ NULL | **Set at most once** via OBSERVE |
+| `stopped_at` | TIMESTAMPTZ NULL | Set at most once |
+| `cancelled_at` | TIMESTAMPTZ NULL | Set at most once |
+| `status` | TEXT | Projection cache only (rebuildable) |
+| `start_client_submission_id` | TEXT NOT NULL | |
+
+GET timers is read-only (may include `computed_past_due` boolean). Persisting elapsed requires POST observe.
+
+### 4.9b `idempotency_records` (append-only replay ledger)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | UUID PK | |
+| `scope_type` | TEXT | BREWERY / BREW_PLAN / BREW_SESSION |
+| `scope_id` | UUID | |
+| `client_submission_id` | TEXT | |
+| `operation_type` | TEXT | |
+| `request_fingerprint` | TEXT | Canonical body hash |
+| `resource_type`, `resource_id` | TEXT/UUID NULL | |
+| `http_status` | INT | |
+| `response_snapshot` | JSONB | Immutable |
+| `session_version_before`, `session_version_after` | INT NULL | |
+| `actor_id` | TEXT | |
+| `occurred_at` | TIMESTAMPTZ | |
+
+**UNIQUE** `(scope_type, scope_id, client_submission_id)`. No UPDATE/DELETE.
 
 ### 4.10 `brew_events` (append-only)
 
@@ -347,9 +372,10 @@ Both require `client_submission_id`; waive requires `reason`.
 
 ### 5.8 Timers
 
-`POST /brew-sessions/{id}/timers` — start (`client_submission_id`, label, target_duration_seconds?)  
-`POST /timers/{id}/stop` | `/cancel` — `client_submission_id`  
-`GET /brew-sessions/{id}/timers` — computes elapsed; may emit TIMER_ELAPSED once
+`POST /brew-sessions/{id}/timers` — start (`client_submission_id`, `session_version`, label, target_duration_seconds?)  
+`POST /timers/{id}/stop` | `/cancel` — `client_submission_id`, `session_version`  
+`POST /timers/{id}/observe-elapsed` — `client_submission_id`, `session_version`; sets `elapsed_at` once + `TIMER_ELAPSED` once  
+`GET /brew-sessions/{id}/timers` — **read-only**; may return `computed_past_due` without persisting
 
 ### 5.9 Report
 
@@ -379,7 +405,7 @@ Via transitions (`CLOSE_SESSION` / `ABORT_SESSION`).
 
 ### 5.12 Operations requiring `client_submission_id`
 
-Capture, instrument correction, user revision, miss, waive, all transition commands, timer start/stop/cancel, fermentation handoff, explicit inventory consume (future 2A endpoint). Plan create: required if client retries.
+BrewPlan create, session start, all transition commands, measurement capture/correction/revision/miss/waive, timer start/stop/cancel/**observe-elapsed**, fermentation handoff, explicit inventory consume (future). GETs never require it and never persist.
 
 ---
 
@@ -479,25 +505,27 @@ History tables are authoritative; record/requirement status fields are projectio
 
 ## 10. Idempotency model
 
-- Key: `client_submission_id` scoped to session (or brewery/plan pre-session).  
-- Same key + same logical op → original result (**no second `version` increment**).  
-- Same key + different body → 409.  
-- Server timestamps authoritative.  
-- Session mutations also require matching integer `session_version` on first apply.
+- Append-only `idempotency_records` ledger is the replay source of truth.  
+- Key: `(scope_type, scope_id, client_submission_id)`.  
+- Store `operation_type` + `request_fingerprint` + response snapshot in the same transaction as the domain commit.  
+- Same key + same fingerprint → original result (**no** second domain write / event / version bump).  
+- Same key + different fingerprint/op → `409`.  
+- Session mutations also require matching integer `session_version` on first apply.  
+- Server timestamps authoritative.
 
 ## 10a. Command atomicity
 
-Domain mutation + measurement status side effects + all BrewEvents for the command commit in **one** DB transaction. Failed event append rolls back domain changes.
+Domain mutation + measurement/timer side effects + BrewEvents + idempotency ledger row commit in **one** DB transaction. Failed event/ledger append rolls back domain changes.
 
 ---
 
 ## 11. Offline contract (2A)
 
-- Queue locally → replay with client_submission_id.  
-- Server legality still enforced.  
-- Server wins conflicts; client marks REJECTED.  
-- No multi-writer merge / CRDT.  
-- Sync status foundation is client-side + ack via normal responses.
+- Queue locally with pre-generated `client_submission_id` → replay on reconnect.  
+- Server legality still enforced; illegal ops → `REJECTED` (new id required for a different action).  
+- Server wins conflicts; no CRDT merge.  
+- Sync authority: idempotency ledger ack + session `version` / events for reconcile.  
+- Timer past-due may be shown from GET computation; client must POST observe-elapsed to persist.
 
 ---
 
@@ -521,9 +549,11 @@ Domain mutation + measurement status side effects + all BrewEvents for the comma
 | Miss / waive history | `measurement_status_history` append; no fabricated values |
 | Unusual value | Persisted on observation-history row + warning; not overwrite-only notes |
 | Invalid input | 422; still PENDING |
-| Timer persistence | Restart process/read still shows RUNNING/ELAPSED |
-| Timer expiry | ELAPSED event; stage unchanged |
-| Duplicate submission | Same id returns same resource; no double version bump |
+| Timer persistence | Restart/read still shows timeline; GET does not set `elapsed_at` |
+| Timer expiry | POST observe-elapsed sets `elapsed_at` once + one event; stage unchanged |
+| Timer GET side effect | GET past-due must not write DB rows |
+| Duplicate submission | Same id+fingerprint returns same resource; no double version bump |
+| Idempotency fingerprint conflict | Same id different body → 409 |
 | Command atomicity | Forced event-write failure rolls back domain mutation |
 | Optimistic concurrency | Stale `session_version` → 409; success increments integer version |
 | Offline delayed capture | Capture after delay still valid if stage allows |
@@ -542,7 +572,7 @@ Domain mutation + measurement status side effects + all BrewEvents for the comma
 |-----------|---------|
 | `005_brew_day_plans_sessions` | brew_plans, brew_sessions, brew_stage_occurrences, brew_actions |
 | `006_brew_day_measurements` | definitions, requirements, records (projection), observation_history, status_history |
-| `007_brew_day_timers_events` | brew_timers, brew_events |
+| `007_brew_day_timers_events` | brew_timers, brew_events, idempotency_records (if not earlier) |
 | `008_fermentation_handoffs` | fermentation_handoffs stub |
 
 Apply only starting **E2A-1** (not in E2A-0).
@@ -553,12 +583,12 @@ Apply only starting **E2A-1** (not in E2A-0).
 
 | Increment | Expected modules |
 |-----------|------------------|
-| E2A-1 | `alembic/versions/005_*`; `db/models` brew plan/session; `domain/brew_day_rules.py`; `services/brew_plan.py`, `brew_session.py`; `api/v1/brew_plans.py`; tests |
+| E2A-1 | `alembic/versions/005_*`; brew plan/session models; `idempotency_records`; plan/session services + APIs; tests |
 | E2A-2 | Stage transition service; brew_events writer; transition API; illegal-path tests |
-| E2A-3 | Measurement services; validation; history; miss/waive APIs; seed definitions |
-| E2A-4 | Timer service; elapsed observer; UI warning hooks |
+| E2A-3 | Measurement services; observation/status history; miss/waive APIs; seed definitions |
+| E2A-4 | Timer service; **observe-elapsed POST**; read-only GET; UI warning hooks |
 | E2A-5 | Report service; close/abort hardening; fermentation_handoff service/API |
-| E2A-6 | Idempotency middleware/helpers; offline contract tests; journey test; guided UI shell (`BrewDayPanel` or similar) |
+| E2A-6 | Idempotency ledger hardening; offline contract tests; journey test; guided UI shell |
 
 Frontend remains Vite-dev interim (ADR-001/002).
 
@@ -580,6 +610,8 @@ Frontend remains Vite-dev interim (ADR-001/002).
 | U3 | Skip → REQUIRED | **Auto-MISS** remaining REQUIRED in same transaction + events |
 | U4 | Abort PENDING | **Leave PENDING**; report incomplete; no handoff |
 | U6 | Observation/status history | **Dedicated append-only tables** required; record fields are projections only |
+| U8 | Timer elapsed persistence | **POST observe-elapsed only**; GET read-only; one-way `elapsed_at` |
+| U9 | Idempotency authority | **`idempotency_records` ledger** + fingerprint; not ad-hoc unique indexes alone |
 
 ---
 
@@ -588,6 +620,8 @@ Frontend remains Vite-dev interim (ADR-001/002).
 | Risk | Mitigation |
 |------|------------|
 | Timer misuse auto-advances stages | ADR-004/006 invariant + tests |
+| GET persists timer elapsed | Forbidden; observe-elapsed POST only |
+| Idempotency without ledger | `idempotency_records` + fingerprint required |
 | Mutable measurement fields without history | ADR-005 history-first invariant + projection-only records |
 | Fabrication on close | Reject close with REQUIRED PENDING; explicit miss/waive |
 | Partial commit without audit | Command atomicity: event failure rolls back domain mutation |

@@ -184,7 +184,9 @@ Measurement lifecycle statuses (orthogonal to value kind):
 
 - A timer expiry emits a `BrewEvent` (e.g. `TIMER_ELAPSED`) and may surface a UI warning.  
 - Stage remains unchanged until the brewer issues an explicit transition.  
-- Timers are persisted as start/end timestamps (and optional duration targets) in Postgres — **no Redis**.
+- Timers are persisted as start/end timestamps (and optional duration targets) in Postgres — **no Redis**.  
+- GET timers is read-only; persisting elapsed requires explicit observe command (ADR-006).  
+- Offline retries use an idempotency ledger with request fingerprints (ADR-006).
 
 ---
 
@@ -455,5 +457,6 @@ Unchanged from Epic 1 interim: `default_actor_id` + ADR-001 network isolation. R
 | 1.0 | 2026-08-09 | Initial Epic 2A handoff after Epic 1 freeze |
 | 1.1 | 2026-08-09 | P1–P5 locked; E2A-0 ADRs + review package authorized |
 | 1.2 | 2026-08-09 | Pre–E2A-1 refinements: handoff semantics, skip/close locks, integer OCC, command atomicity, separate readiness event |
+| 1.3 | 2026-08-09 | ADR-005/006 history-first strengthening (measurements + timers/idempotency) |
 
 **E2A-0 ARCHITECTURE PACKAGE SUBMITTED — NO E2A-1 UNTIL REVIEW ACCEPTANCE**
