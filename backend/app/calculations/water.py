@@ -141,7 +141,7 @@ def water_requirements(
         inputs={**inputs, "related": related},
         assumptions=assumptions,
         explanation=(
-            f"Total brewing water {total_r} {output_unit} = mash"
+            f"Recorded mash+sparge water {total_r} {output_unit} = mash"
             + (" + sparge" if sparge_water is not None else "")
             + f". Boil-off: {related['boil_off']}; trub loss: {related['trub_loss']}."
         ),
