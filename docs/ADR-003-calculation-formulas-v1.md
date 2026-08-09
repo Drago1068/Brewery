@@ -343,6 +343,8 @@ Volumes in the caller’s unit after §J conversion when needed; totals reported
 V_{\mathrm{total}} = V_{\mathrm{mash}} + V_{\mathrm{sparge}}
 \]
 
+\(V_{\mathrm{total}}\) in this formula means mash plus sparge water recorded for the recipe; it is not a full loss-adjusted liquor requirement unless those additional values are separately available.
+
 \(V_{\mathrm{sparge}}\) is included only when recorded. Boil-off and trub are reported when recorded; otherwise **`NOT RECORDED`** (never defaulted).
 
 Related helpers (same formula identity family):
@@ -353,7 +355,7 @@ Related helpers (same formula identity family):
 ### Assumptions
 
 - No silent default boil-off rate, grain absorption, or trub loss.
-- Sparge is optional; mash water is required for a total.
+- Sparge is optional; mash water is required for \(V_{\mathrm{total}}\).
 - Epic 1 excludes full water-chemistry / residual-alkalinity laboratory models.
 
 ### Rounding / Precision

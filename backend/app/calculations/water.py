@@ -109,7 +109,11 @@ def water_requirements(
 
     related: dict[str, str] = {}
     assumptions = [
-        "Total brewing water is mash (+ sparge when provided).",
+        (
+            "V_total means mash plus sparge water recorded for the recipe; "
+            "it is not a full loss-adjusted liquor requirement unless those "
+            "additional values are separately available."
+        ),
         "Missing boil-off/trub values are reported as NOT RECORDED — not defaulted.",
     ]
     if boil_off is not None and boil_off_unit is not None:
