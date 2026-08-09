@@ -19,6 +19,7 @@ htmlcov/
 node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/tsconfig.tsbuildinfo
 
 # Local NAS-style data (never commit runtime data)
 data/**

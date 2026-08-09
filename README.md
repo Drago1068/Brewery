@@ -47,6 +47,8 @@ See [docs/NAS_DEPLOYMENT.md](docs/NAS_DEPLOYMENT.md). Reserved ports:
 
 - [NAS deployment](docs/NAS_DEPLOYMENT.md)
 - [NAS persistence](docs/NAS_PERSISTENCE.md)
+- [Backup & restore](docs/BACKUP_RESTORE.md)
+- [Security (Epic 1)](docs/SECURITY_EPIC1.md)
 - [ADR-001 access model](docs/ADR-001-access-model.md)
 - [ADR-002 orientation decisions](docs/ADR-002-epic1-orientation-decisions.md)
 - [ADR-003 calculation formulas v1](docs/ADR-003-calculation-formulas-v1.md)
@@ -56,6 +58,10 @@ See [docs/NAS_DEPLOYMENT.md](docs/NAS_DEPLOYMENT.md). Reserved ports:
 - [Increment 3](docs/INCREMENT_3.md)
 - [Increment 4](docs/INCREMENT_4.md)
 - [Increment 5](docs/INCREMENT_5.md)
+- [Increment 6](docs/INCREMENT_6.md)
+- [Increment 7](docs/INCREMENT_7.md)
+- [Epic 1 Implementation Review Package](docs/EPIC_1_IMPLEMENTATION_REVIEW.md)
+- [Codex Epic 1 Formal Handoff Report](docs/CODEX_EPIC1_HANDOFF_REPORT.md)
 
 ## Epic 1 scope
 

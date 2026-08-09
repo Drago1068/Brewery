@@ -106,6 +106,16 @@ export default function RecipesPanel({
       }
     >;
   } | null>(null);
+  const [readiness, setReadiness] = useState<{
+    overall: string;
+    summary: string;
+    checks: Array<{
+      code: string;
+      label: string;
+      severity: string;
+      message: string;
+    }>;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const batchUnit = preferredUnits === "US" ? "gal" : "L";
   const maltUnit = preferredUnits === "US" ? "lb" : "kg";
@@ -277,6 +287,24 @@ export default function RecipesPanel({
       await loadList();
     } catch (err) {
       onError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runReadiness() {
+    if (!detail?.current_version) return;
+    setBusy(true);
+    onError(null);
+    try {
+      const res = await fetch(
+        `${API_URL}/api/v1/recipe-versions/${detail.current_version.id}/readiness`,
+        { method: "POST" },
+      );
+      if (!res.ok) throw new Error(await readError(res));
+      setReadiness(await res.json());
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Readiness check failed");
     } finally {
       setBusy(false);
     }
@@ -695,6 +723,9 @@ export default function RecipesPanel({
             <button type="button" className="primary" onClick={() => void runCalculate()} disabled={busy}>
               Calculate
             </button>
+            <button type="button" className="primary" onClick={() => void runReadiness()} disabled={busy}>
+              Ready to brew?
+            </button>
             <button type="button" className="ghost" onClick={() => void activate()} disabled={busy}>
               Activate
             </button>
@@ -705,6 +736,40 @@ export default function RecipesPanel({
               Clone
             </button>
           </div>
+          {readiness && (
+            <div className="calc-panel">
+              <h3 className="subhead">Ready to Brew</h3>
+              <p className={`readiness-overall ${readiness.overall.toLowerCase()}`}>
+                {readiness.overall} — {readiness.summary}
+              </p>
+              <p className="muted">Check only — does not consume inventory or change the recipe.</p>
+              <ul className="list">
+                {readiness.checks.map((check) => (
+                  <li key={check.code}>
+                    <strong className={`sev-${check.severity.toLowerCase()}`}>
+                      {check.severity} — {check.label}
+                    </strong>
+                    <span className="row-meta">{check.message}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="actions">
+                <button type="button" className="ghost" onClick={() => setMode("list")}>
+                  Edit recipe
+                </button>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => {
+                    window.location.hash = "#inventory";
+                  }}
+                >
+                  Add inventory
+                </button>
+              </div>
+              <p className="muted">Future: Create Brew Plan (Epic 2).</p>
+            </div>
+          )}
           {calc && (
             <div className="calc-panel">
               <h3 className="subhead">Predictions</h3>

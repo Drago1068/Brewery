@@ -58,10 +58,10 @@ def _equipment(**overrides) -> EquipmentProfile:
     return EquipmentProfile(**data)
 
 
-def test_health_reports_increment_5():
+def test_health_reports_increment_7():
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json()["increment"] == 5
+    assert response.json()["increment"] == 7
 
 
 @patch("app.api.v1.brewery.brewery_service.get_primary_brewery", new_callable=AsyncMock)
@@ -154,12 +154,13 @@ def test_meta_modules_brewery_active(_mock_select):
         response = client.get("/api/v1/meta")
         assert response.status_code == 200
         data = response.json()
-        assert data["increment"] == 5
+        assert data["increment"] == 7
         assert data["modules"]["brewery"] == "active"
         assert data["modules"]["equipment"] == "active"
         assert data["modules"]["ingredients"] == "active"
         assert data["modules"]["inventory"] == "active"
         assert data["modules"]["recipes"] == "active"
         assert data["modules"]["calculations"] == "active"
+        assert data["modules"]["readiness"] == "active"
     finally:
         app.dependency_overrides.clear()

@@ -133,6 +133,18 @@ class YeastType(StrEnum):
     OTHER = "OTHER"
 
 
+class ReadinessLevel(StrEnum):
+    GREEN = "GREEN"
+    YELLOW = "YELLOW"
+    RED = "RED"
+
+
+class ReadinessSeverity(StrEnum):
+    PASS = "PASS"
+    WARNING = "WARNING"
+    BLOCKER = "BLOCKER"
+
+
 # System types that typically require mash capacity / mash fields.
 MASH_RELEVANT_TYPES = frozenset(
     {

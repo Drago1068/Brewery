@@ -64,7 +64,7 @@ async def health_liveness():
         "version": "0.1.0",
         "environment": settings.brewingos_env,
         "epic": 1,
-        "increment": 5,
+        "increment": 7,
     }
 
 

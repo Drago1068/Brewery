@@ -15,7 +15,7 @@ def test_health_liveness():
     assert data["status"] == "ok"
     assert data["service"] == "brewingos-api"
     assert data["epic"] == 1
-    assert data["increment"] == 5
+    assert data["increment"] == 7
 
 
 @patch("app.main.check_postgres", new_callable=AsyncMock)

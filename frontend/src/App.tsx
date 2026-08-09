@@ -445,10 +445,10 @@ export default function App() {
   return (
     <div className="shell">
       <header className="brand">
-        <p className="eyebrow">Epic 1 · Increment 5</p>
+        <p className="eyebrow">Epic 1 · Increment 7</p>
         <h1>BrewingOS</h1>
         <p className="lede">
-          Deterministic predictions with explanations — estimated values stay labeled as estimates.
+          Design → predict → explain → ready to brew. Epic 1 foundation complete for review.
         </p>
       </header>
 

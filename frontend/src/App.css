@@ -366,3 +366,33 @@ button.linkish {
   padding-top: 0.5rem;
   border-top: 1px solid rgba(243, 235, 224, 0.12);
 }
+
+.readiness-overall {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  margin: 0.35rem 0 0.75rem;
+}
+
+.readiness-overall.green {
+  color: var(--ok);
+}
+
+.readiness-overall.yellow {
+  color: var(--warn);
+}
+
+.readiness-overall.red {
+  color: #d36b5f;
+}
+
+.sev-pass {
+  color: var(--ok);
+}
+
+.sev-warning {
+  color: var(--warn);
+}
+
+.sev-blocker {
+  color: #d36b5f;
+}

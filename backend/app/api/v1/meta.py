@@ -19,7 +19,7 @@ async def get_meta(db: AsyncSession = Depends(get_db)):
         "product": "Brewing Intelligence & Competition OS",
         "version": "0.1.0",
         "epic": int(epic_row.value) if epic_row else 1,
-        "increment": 5,
+        "increment": 7,
         "environment": settings.brewingos_env,
         "modules": {
             "infrastructure": "active",
@@ -29,7 +29,7 @@ async def get_meta(db: AsyncSession = Depends(get_db)):
             "inventory": "active",
             "recipes": "active",
             "calculations": "active",
-            "readiness": "planned",
+            "readiness": "active",
         },
         "persistence": {
             "database": "postgresql",
