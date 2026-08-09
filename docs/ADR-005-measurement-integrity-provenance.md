@@ -1,185 +1,245 @@
 # ADR-005 — Measurement Integrity, Provenance & Validation
 
-**Status:** Accepted (E2A-0; strengthened for history-first design before E2A-1)  
+## Metadata
+
+**Status:** Accepted  
 **Date:** 2026-08-09  
-**Amended:** 2026-08-09 — lock append-only observation/status history; current fields are projections only  
-**Context:** Brew Day must record actual observations without collapsing Epic 1 value kinds or fabricating missing data. Product Owner locked confidence as HIGH/MEDIUM/LOW (P3). Measurement integrity is the highest-risk Epic 2A domain: captured values, corrections, transcription revisions, validation warnings, MISSED, and WAIVED must **preserve history**, not become silently mutable fields.
+**Context:** Brew Day must record actual observations without collapsing Epic 1 value kinds or fabricating missing data. Measurement integrity is the highest-risk Epic 2A domain: captures, corrections, revisions, validation warnings, MISSED, and WAIVED must preserve history rather than become silently mutable fields. Product Owner locked confidence as HIGH / MEDIUM / LOW (P3).  
+**Amendment:** Canonical rebuild for final E2A-0 review — architecture unchanged; iterative-edit duplication removed. INPUT ERROR may emit operational `MEASUREMENT_INPUT_REJECTED` BrewEvent (not a scientific observation).
 
 ## Decision
 
-### A. Catalog vs instance
+Epic 2A uses a **history-first** measurement model. Append-only history tables are the scientific and lifecycle sources of truth. `MeasurementRequirement.status` and `MeasurementRecord` current columns are **rebuildable projections** for API/UX convenience. Projection fields may change only when the corresponding history row is appended, and history + projection + related `BrewEvent` rows commit in one database transaction (ADR-004 command atomicity). Destructive overwrite of observation or status history is forbidden.
+
+---
+
+### A. Domain concepts
 
 | Concept | Role |
 |---------|------|
-| **MeasurementDefinition** (optional seed catalog) | Stable `measurement_type` metadata: display name, default unit, typical stage, requirement level template, optional expected range. |
-| **MeasurementRequirement** | Per-session obligation: planned value/kind, requirement level, **current** lifecycle status (projection). |
-| **MeasurementRecord** | Current projection of the captured observation for a CAPTURED requirement (convenience read model). |
-| **MeasurementObservationHistory** | **Append-only source of truth** for every accepted observation, instrument correction, and user revision (including validation class/warnings at that moment). |
-| **MeasurementStatusHistory** | **Append-only source of truth** for requirement lifecycle transitions (PENDING→CAPTURED/MISSED/WAIVED, and any later allowed transitions). |
+| **MeasurementDefinition** | Optional seed catalog: stable `measurement_type` metadata (display name, default unit, typical stage, default requirement level, optional expected range). |
+| **MeasurementRequirement** | Per-session obligation for a measurement type on a stage occurrence: planned/estimated baseline, requirement level, and **current** lifecycle status (projection). |
+| **MeasurementRecord** | **Current projection** of the captured observation for a CAPTURED requirement (read model only). |
+| **MeasurementObservationHistory** | **Append-only source of truth** for scientific values: raw capture, instrument corrections, user revisions, and validation snapshots at each event. |
+| **MeasurementStatusHistory** | **Append-only source of truth** for requirement lifecycle transitions (e.g. PENDING → CAPTURED / MISSED / WAIVED). |
 
-**Locked implementation choice:** Epic 2A uses dedicated append-only history tables (not “overwrite the record and hope BrewEvent is enough”). BrewEvents remain the session audit stream; history tables remain the scientific measurement ledger.
+History tables are authoritative. Current requirement/record fields are projections and must remain rebuildable from history.
 
-### B. Non-negotiable history invariant
+---
 
-1. **No destructive overwrite** of prior observations, corrections, revisions, validation outcomes, miss reasons, or waive reasons.  
-2. `MeasurementRecord` current columns (`raw_*`, `corrected_*`, `confidence`, `validation_*`, provenance fields) are a **materialized projection of the latest observation-history head** for UX/API convenience.  
-3. Rebuilding the projection from history must always be possible.  
-4. APIs may expose “current” values, but must also expose full history.  
-5. DELETE of history rows is forbidden. UPDATE of history rows is forbidden.  
-6. UPDATE of projection columns is allowed **only** as part of appending a new history row in the **same DB transaction** (ADR-004 command atomicity).
+### B. History invariant
 
-If a write would change a current measurement field without appending history, it is an architecture defect.
+1. No UPDATE or DELETE of `MeasurementObservationHistory` or `MeasurementStatusHistory` rows.  
+2. Current projections (`MeasurementRecord` fields and `MeasurementRequirement.status`) are rebuildable from history.  
+3. Projection changes occur only together with the corresponding history append.  
+4. History append + projection refresh + related `BrewEvent`(s) (+ idempotency ledger per ADR-006) commit **atomically** in one DB transaction.  
+5. A write that changes a current measurement or status field without appending history is an architecture defect.
 
-### C. Value kinds (orthogonal to lifecycle)
+---
 
-| Kind | Use |
-|------|-----|
+### C. Value kinds and lifecycle
+
+**Value kinds** (orthogonal to requirement lifecycle status):
+
+| Kind | Meaning |
+|------|---------|
 | `PLANNED` | BrewPlan / recipe target on the requirement |
-| `ESTIMATED` | ADR-003 planned estimate snapshotted onto the plan/requirement |
-| `CALCULATED` | Derived from other known values (if used on brew day) |
-| `MEASURED` | Authoritative captured observation (corrected value if present on current projection, else raw) |
+| `ESTIMATED` | ADR-003 estimate snapshotted onto the plan/requirement |
+| `CALCULATED` | Deterministic derivation from other known values (if used on brew day) |
+| `MEASURED` | Authoritative captured observation (prefer corrected projection if present, else raw) |
 | `MISSING` | Not available; never fabricated |
-| `INVALID` | Failed INPUT ERROR validation; not authoritative; **not stored as a MeasurementRecord** |
+| `INVALID` | Failed INPUT ERROR validation; not authoritative; not stored as a MeasurementRecord |
 
-Lifecycle status on **MeasurementRequirement** (current projection):
+**Requirement lifecycle statuses** (current projection of status history):
 
 | Status | Meaning |
 |--------|---------|
 | `PENDING` | Not yet captured, missed, or waived |
-| `CAPTURED` | At least one accepted observation-history row of class `RAW_CAPTURE` exists |
-| `MISSED` | Explicitly marked missed (including skip auto-MISS of REQUIRED) |
-| `WAIVED` | Explicit waiver with reason + actor |
+| `CAPTURED` | At least one accepted `RAW_CAPTURE` observation-history row exists |
+| `MISSED` | Explicitly marked missed (including ADR-004 skip auto-MISS of REQUIRED) |
+| `WAIVED` | Explicit waiver with reason and actor |
 
-Status changes always append `MeasurementStatusHistory` **and** the corresponding `BrewEvent` in the same transaction.
+---
 
-### D. MeasurementObservationHistory (source of truth for values)
+### D. MeasurementRecord projection
 
-Each append-only row captures a complete immutable snapshot of what was asserted at that moment:
-
-| Field | Notes |
-|-------|-------|
-| `id` | PK |
-| `requirement_id` | FK |
-| `measurement_record_id` | FK (set once record projection exists) |
-| `event_class` | `RAW_CAPTURE` \| `INSTRUMENT_CORRECTION` \| `USER_REVISION` |
-| `raw_value`, `raw_unit` | As asserted by this event (nullable for pure correction events that only add corrected_*) |
-| `corrected_value`, `corrected_unit` | As asserted by this event (nullable) |
-| `confidence` | HIGH/MEDIUM/LOW when applicable |
-| `instrument`, `method`, `provenance` | Snapshot at event time |
-| `validation_class` | `OK` \| `UNUSUAL_VALUE` \| `DOMAIN_CONCERN` (never INPUT ERROR — those reject) |
-| `validation_notes` | Immutable JSON snapshot of warnings/context for this event |
-| `reason` | Required for `USER_REVISION`; optional notes otherwise |
-| `actor_id` | |
-| `occurred_at` | Server authoritative |
-| `client_occurred_at` | Optional provenance |
-| `client_submission_id` | Idempotency |
-| `payload` | Optional extra structured context |
-
-**Projection rule after each successful append:** update `measurement_records` current fields to match this history head (and set `requirements.current_record_id`). Prior history rows remain unchanged.
-
-### E. Two correction classes (both historical)
-
-#### 1. Instrument / data correction
-
-Example: temperature-corrected hydrometer reading derived from raw SG + wort temperature.
-
-- Append `INSTRUMENT_CORRECTION` history row (preserves prior `RAW_CAPTURE` / earlier corrections).  
-- Emit `MEASUREMENT_INSTRUMENT_CORRECTION` BrewEvent.  
-- Refresh record projection’s `corrected_*` (and validation snapshot if re-validated).  
-- Never delete or rewrite the original raw capture row.
-
-#### 2. User revision
-
-Example: brewer typed `1.050` then revises transcription to `1.051`.
-
-- Append `USER_REVISION` history row with **required** `reason`.  
-- Emit `MEASUREMENT_USER_REVISION` BrewEvent.  
-- Refresh record projection to the revised raw/corrected values.  
-- Prior raw/corrected assertions remain in history.
-
-Both classes are independently queryable. “Current” API reads use the projection; audit/scientific review uses history.
-
-### F. MeasurementStatusHistory (source of truth for MISSED / WAIVED / CAPTURED)
-
-Requirement `status` is a projection. Every transition appends status history:
-
-| Field | Notes |
-|-------|-------|
-| `id` | PK |
-| `requirement_id` | FK |
-| `from_status` | e.g. PENDING |
-| `to_status` | CAPTURED / MISSED / WAIVED |
-| `reason` | Required for WAIVED; optional for MISSED; null for CAPTURED |
-| `actor_id` | |
-| `occurred_at` | Server |
-| `client_occurred_at` | Optional |
-| `client_submission_id` | When applicable |
-| `source_command` | e.g. `CAPTURE`, `MISS`, `WAIVE`, `SKIP_STAGE` |
-| `payload` | Optional (e.g. skip stage code) |
-
-Rules:
-
-- **Miss:** `PENDING → MISSED`; status history + `MEASUREMENT_MISSED`; **no** fabricated MeasurementRecord / observation values.  
-- **Waive:** `PENDING → WAIVED`; reason required; status history + `MEASUREMENT_WAIVED`; **no** fabricated values.  
-- **Capture:** `PENDING → CAPTURED`; status history + observation `RAW_CAPTURE` + `MEASUREMENT_CAPTURED`.  
-- **Skip auto-MISS (ADR-004):** for each remaining REQUIRED PENDING on the skipped stage, append status history `PENDING → MISSED` with `source_command=SKIP_STAGE` in the same transaction as the skip.  
-- Re-opening MISSED/WAIVED back to PENDING is **out of scope for 2A** (forbidden unless a future ADR allows it with history).
-
-BrewEvent alone is not sufficient scientific ledger for miss/waive; status history is required so audits do not depend on parsing session event payloads.
-
-### G. Validation classifications
-
-Validation runs on capture and on revision/correction (when values change). Classifications:
-
-| Class | Meaning | System behavior |
-|-------|---------|-----------------|
-| **INPUT ERROR** | Cannot parse, wrong type, impossible unit, or structurally invalid | **Reject**; no observation history row; no record projection create/update; requirement stays PENDING |
-| **UNUSUAL VALUE** | Structurally valid, outside expected/typical range | **Accept**; persist value; store `validation_class` + notes **on the history row**; emit warning BrewEvent; refresh projection |
-| **DOMAIN CONCERN** | Valid observation that may indicate a process issue | **Accept**; persist; store class/notes on history row; emit warning; refresh projection |
-
-An unusual value must **not** be automatically rejected or silently changed.
-
-**Warning persistence:** validation warnings live immutably on the observation-history row that produced them. They must not exist only as an overwritten `measurement_records.validation_notes` field. The record projection may copy the latest warning snapshot for convenience.
-
-Expected ranges come from MeasurementDefinition and/or BrewPlan planned targets ± tolerance (E2A-3 seed).
-
-### H. MeasurementRecord projection fields
-
-Convenience current view (always rebuildable):
+Current read-model fields (always rebuildable from observation-history head / original capture):
 
 - `raw_value`, `raw_unit`  
 - `corrected_value`, `corrected_unit` (nullable)  
-- display policy: corrected if present else raw; kind `MEASURED`  
-- `confidence` HIGH/MEDIUM/LOW  
+- Display policy: corrected if present, else raw; value kind `MEASURED`  
+- `confidence` (`HIGH` / `MEDIUM` / `LOW`)  
 - `instrument`, `method`, `provenance`  
-- `validation_class`, `validation_notes` (latest)  
-- `captured_at` / `captured_by` from the original `RAW_CAPTURE` head (do not shift “first captured” identity when revising)  
+- `validation_class`, `validation_notes` (latest snapshot only)  
 - `latest_observation_history_id`  
-- `client_submission_id` of the creating capture (stable)
+- `first_captured_at`, `captured_by` from the original `RAW_CAPTURE` (stable identity of first capture)  
+- Creating-capture `client_submission_id`  
 
-Confidence means evidence/measurement quality context, not preference for the number.
+---
 
-### I. Planned vs measured reporting
+### E. MeasurementObservationHistory
 
-- Planned/estimated values live on requirements / plan snapshots (immutable after plan create except via explicit future ADR).  
-- Measured values come only from CAPTURED observation history / projection.  
-- Target-performance deltas compute only when both planned and measured exist.  
-- MISSING/MISSED/WAIVED never receive invented measured values.
+Immutable append-only scientific value history. Each row is a complete snapshot of what was asserted at that moment.
 
-### J. Inventory independence
+| Field | Notes |
+|-------|-------|
+| `id` | PK |
+| `requirement_id` | FK |
+| `measurement_record_id` | FK once projection exists |
+| `event_class` | `RAW_CAPTURE` \| `INSTRUMENT_CORRECTION` \| `USER_REVISION` |
+| `raw_value`, `raw_unit` | As asserted by this event (nullable when event only adds correction) |
+| `corrected_value`, `corrected_unit` | As asserted by this event (nullable) |
+| `confidence` | HIGH/MEDIUM/LOW when applicable |
+| `instrument`, `method`, `provenance` | Snapshot at event time |
+| `validation_class` | `OK` \| `UNUSUAL_VALUE` \| `DOMAIN_CONCERN` |
+| `validation_notes` | Immutable warning/context snapshot for this event |
+| `reason` | Required for `USER_REVISION` |
+| `actor_id` | |
+| `occurred_at` | Server authoritative |
+| `client_occurred_at` | Optional provenance |
+| `client_submission_id` | Idempotency (ADR-006) |
+| `payload` | Optional structured context |
 
-Capturing a measurement never consumes inventory (P5 / ADR-004).
+**Event classes:**
+
+| Class | Meaning |
+|-------|---------|
+| `RAW_CAPTURE` | First accepted observation for the requirement |
+| `INSTRUMENT_CORRECTION` | Derived/corrected value added without destroying prior raw assertion |
+| `USER_REVISION` | Correction of a prior assertion/transcription; requires reason |
+
+---
+
+### F. Correction semantics
+
+**Instrument / data correction**  
+Preserves the original physical observation while adding a derived or corrected value (example: temperature-corrected hydrometer reading). Appends `INSTRUMENT_CORRECTION`, emits `MEASUREMENT_INSTRUMENT_CORRECTION`, refreshes the record projection. Prior history rows remain unchanged.
+
+**User revision**  
+Corrects a prior assertion or transcription (example: typed `1.050`, later revised to `1.051`). Appends `USER_REVISION` with **required** reason, emits `MEASUREMENT_USER_REVISION`, refreshes the projection. Prior assertions remain in history.
+
+Neither class may destroy prior history.
+
+---
+
+### G. MeasurementStatusHistory
+
+Append-only lifecycle transition ledger. `MeasurementRequirement.status` is a projection of the latest status-history head.
+
+| Field | Notes |
+|-------|-------|
+| `id` | PK |
+| `requirement_id` | FK |
+| `from_status` | Prior status |
+| `to_status` | New status |
+| `reason` | Required for `WAIVED`; optional for `MISSED` |
+| `actor_id` | |
+| `source_command` | e.g. `CAPTURE`, `MISS`, `WAIVE`, `SKIP_STAGE` |
+| `occurred_at` | Server |
+| `client_occurred_at` | Optional |
+| `client_submission_id` | When applicable |
+| `payload` | Optional (e.g. skipped stage code) |
+
+**Locked transitions (Epic 2A):**
+
+| From | To | How |
+|------|----|-----|
+| `PENDING` | `CAPTURED` | Accepted capture (`RAW_CAPTURE` + status history + events) |
+| `PENDING` | `MISSED` | Explicit miss, or ADR-004 skip of owning stage for remaining **REQUIRED** requirements (same transaction) |
+| `PENDING` | `WAIVED` | Explicit waive with reason |
+
+Reopening `MISSED` or `WAIVED` is **out of scope for Epic 2A**.  
+MISSED/WAIVED never fabricate measured values.  
+BrewEvent counterparts (`MEASUREMENT_CAPTURED` / `MISSED` / `WAIVED`) are required in the same transaction; status history remains the scientific lifecycle ledger so audits need not parse session event payloads alone.
+
+---
+
+### H. Validation
+
+Validation runs on capture and on revision/correction when values change.
+
+| Class | Meaning | Behavior |
+|-------|---------|----------|
+| **INPUT ERROR** | Cannot parse, wrong type, impossible unit, or structurally invalid | **Reject.** No `MeasurementRecord`. No `MeasurementObservationHistory` row. Requirement stays `PENDING`. |
+| **UNUSUAL VALUE** | Structurally valid but outside expected/typical range | **Accept and preserve.** Warning stored on the observation-history row. Emit warning BrewEvent. Refresh projection. |
+| **DOMAIN CONCERN** | Valid observation that may indicate a process issue | **Accept and preserve.** Contextual warning stored on the history row. Emit warning BrewEvent. Refresh projection. |
+
+An unusual value must not be automatically rejected or silently changed.
+
+**Rejected INPUT ERROR attempts** MAY emit an operational BrewEvent:
+
+`MEASUREMENT_INPUT_REJECTED`
+
+That event is audit/diagnostic metadata only. It **MUST NOT** be treated as a scientific observation and **MUST NOT** create a `MeasurementObservationHistory` row or a `MeasurementRecord`.
+
+Expected ranges come from `MeasurementDefinition` and/or BrewPlan planned targets ± tolerance (seeded in E2A-3).
+
+---
+
+### I. Planned vs actual
+
+- **Planned / estimated** baselines live on the requirement / BrewPlan snapshot (`PLANNED` / `ESTIMATED`).  
+- **Actual** values come only from CAPTURED observation history / the record projection (`MEASURED`).  
+- Never substitute planned/estimated for measured, or invent measured values for `MISSING` / `MISSED` / `WAIVED`.  
+- Target-performance deltas compute only when both a planned/estimated baseline and a measured observation exist.
+
+---
+
+### J. Confidence
+
+`HIGH` / `MEDIUM` / `LOW` express **evidence / measurement quality context** (instrument trust, method care, conditions). They do not mean preference for the number, correctness of the brew, or process success.
+
+---
+
+### K. Provenance
+
+Each accepted observation or lifecycle decision records, as applicable:
+
+- instrument  
+- method  
+- actor (`actor_id`)  
+- server `occurred_at` / first-capture timestamp (authoritative)  
+- optional client timestamp (`client_occurred_at` / `client_captured_at`)  
+- correction provenance (event class, prior history linkage via record/history ids)  
+- reason (required for user revision and waive)  
+- validation snapshot (`validation_class`, `validation_notes` on the history row)  
+- `client_submission_id`  
+
+---
+
+### L. Atomicity and idempotency
+
+- **ADR-004:** mutating commands commit domain state + side effects + BrewEvents in one transaction; integer `BrewSession.version` for session OCC where applicable.  
+- **ADR-006:** `client_submission_id` + idempotency ledger with request fingerprint; successful replay returns the original result without duplicating history rows or version bumps.  
+- Measurement capture/correction/revision/miss/waive require `client_submission_id`.
+
+---
+
+### M. Reporting implications
+
+History-first storage must support, without rewriting historical observations:
+
+- planned-vs-actual comparisons  
+- completeness (REQUIRED/RECOMMENDED vs CAPTURED/MISSED/WAIVED/PENDING)  
+- process adherence (including skip-driven MISSED)  
+- target performance (measured vs planned/estimated when both exist)  
+- later Epic 5 evidence analysis using immutable observation and status history  
+
+Current projections may optimize reads; reports that need provenance must query history.
+
+---
 
 ## Non-goals
 
-- Lab LIMS integration  
-- Automatic instrument Bluetooth ingestion (may appear later as provenance source)  
-- Numeric 0–1 confidence scores in 2A  
-- Editing history rows  
-- Silent in-place mutation of current measurement fields without history append  
+- Destructive measurement editing or history UPDATE/DELETE  
+- Automatic process diagnosis or AI-authored measurements  
+- Numeric 0–1 confidence scoring in 2A  
+- Fabricated values for MISSED / WAIVED / MISSING  
+- Reopening terminal measurement states (`MISSED` / `WAIVED`) in Epic 2A  
+- Epic 3 fermentation measurement behavior  
+- Inventory consumption implied by measurement capture (P5 / ADR-004)
 
 ## Consequences
 
-- E2A-3 must implement observation history + status history before or with capture/miss/waive APIs.  
-- Schema sketch must include `measurement_observation_history` and `measurement_status_history` as append-only.  
-- Reviews fail any design where MISSED/WAIVED/corrections/warnings are only mutable columns on a single row.
+- E2A-3 implements definitions, requirements, record projections, observation history, status history, validation, and miss/waive/capture/revision APIs under this ADR.  
+- Designs that treat `MeasurementRecord` or requirement status as silently mutable sources of truth without history appends fail architecture review.

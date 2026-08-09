@@ -33,7 +33,7 @@ Summary: BrewPlan/BrewSession/stage/action/event model; ordered stages; explicit
 
 See [`ADR-005-measurement-integrity-provenance.md`](ADR-005-measurement-integrity-provenance.md).
 
-Summary: History-first measurement ledger — append-only observation history (capture/correction/revision + validation warnings) and status history (PENDING→CAPTURED/MISSED/WAIVED); `MeasurementRecord` is a rebuildable projection only; HIGH/MEDIUM/LOW confidence; INPUT ERROR reject vs UNUSUAL/DOMAIN_CONCERN preserve.
+Summary: History-first measurement ledger (canonical ADR-005): observation + status history are sources of truth; record/status fields are projections; RAW_CAPTURE / INSTRUMENT_CORRECTION / USER_REVISION; INPUT ERROR reject (optional `MEASUREMENT_INPUT_REJECTED` BrewEvent only); UNUSUAL/DOMAIN_CONCERN preserve on history; HIGH/MEDIUM/LOW confidence.
 
 ## 3. ADR-006
 
