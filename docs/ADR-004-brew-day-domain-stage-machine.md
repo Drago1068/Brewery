@@ -156,24 +156,29 @@ Inventory consumption is **never** implied by stage start/complete, timer elapse
 ### L. Optimistic concurrency (locked)
 
 - `BrewSession.version` is a dedicated **integer** column (not `updated_at`).  
-- Every successful session-mutating command must:  
-  1. Require the client’s expected `session_version`.  
-  2. Compare-and-increment **atomically** (`version = version + 1` only if `version = expected`).  
-  3. Return the new version.  
-- Mismatch → conflict (`409`); no partial mutation.  
-- Idempotent retries use `client_submission_id` (ADR-006) and must not double-increment when replaying an already-applied command.
+- Mutating session commands provide `expected_session_version`.  
+- **Idempotency lookup (ADR-006) occurs before rejecting an exact replay as stale.**  
+- On first successful application: compare expected vs current; execute transaction; increment version **exactly once**.  
+- Stale version on a **new** command → `409 CONCURRENCY_CONFLICT`.  
+- Exact idempotent replay returns the recorded result even if the session version has since advanced (no second increment).
 
 ### M. Command atomicity (locked)
 
-For every mutating brew-day command, the following commit **in a single database transaction**:
+Every mutating Epic 2A command commits its complete effect in **ONE** PostgreSQL transaction. Where applicable this includes:
 
-1. Domain state changes (session, stages, measurement statuses, timers as applicable)  
-2. Affected measurement status updates (e.g. skip → MISSED)  
-3. All `BrewEvent` rows for that command  
+1. Domain state changes (session, stages, timers, …)  
+2. Projection changes  
+3. History rows (measurement observation/status history, …)  
+4. All required `BrewEvent` rows  
+5. `idempotency_records` row (ADR-006)  
+6. `BrewSession.version` update  
+7. Associated measurement status changes (e.g. skip → MISSED)
 
-If appending any required `BrewEvent` fails, **roll back the entire domain mutation**. There must be no committed state change without its audit events, and no orphan events without the domain change.
+If any required write fails → **ROLL BACK THE ENTIRE COMMAND**. No partial-success states.
 
-Plan creation with YELLOW/RED ack: `PLAN_CREATED` and `READINESS_ACKNOWLEDGED` both commit in that same transaction (two event rows).
+Example — `ADVANCE_STAGE` atomically: validate `expected_session_version`; verify legality; mark current stage COMPLETED; activate next stage; update `current_stage`; increment version; append `STAGE_EXITED` and `STAGE_ENTERED`; persist idempotency result. Failure of BrewEvent or idempotency persistence rolls back the stage transition.
+
+Plan creation with YELLOW/RED ack: `PLAN_CREATED` and `READINESS_ACKNOWLEDGED` are distinct event rows in the same transaction.
 
 ### N. BrewEvent (append-only)
 

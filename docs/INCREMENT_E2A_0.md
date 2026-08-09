@@ -1,23 +1,21 @@
 # Increment E2A-0 — Brew Day Architecture Lock
 
-**Status:** Complete (documentation only) — ready for architecture review  
+**Status:** Complete (documentation only) — ready for final architecture acceptance  
 **Date:** 2026-08-09
 
 ## Delivered
 
-- ADR-004 Brew Day domain & stage state machine  
-- ADR-005 Measurement integrity, provenance & validation  
-- ADR-006 Brew timers & offline idempotency  
-- E2A-0 Architecture Review Package (schema/API/events/tests/migration proposal)  
-- P1–P5 Product Owner decisions locked into Epic 2 handoff  
-- Pre–E2A-1 refinements locked: `CLOSED`→`HANDED_OFF` only; skip auto-MISS REQUIRED; reject close on REQUIRED PENDING; integer `session.version`; command atomicity; separate `READINESS_ACKNOWLEDGED`  
+- ADR-004, ADR-005, ADR-006 (canonical)  
+- Canonical E2A-0 architecture package (schema, API, migrations, tests)  
+- P1–P5 locked; timer/idempotency/OCC/atomicity/offline rules locked  
+- `idempotency_records` placed in proposed migration `005`
 
 ## Explicitly not delivered
 
-- Alembic `005+` migrations (sketch only)  
-- Brew-day domain/API/UI production code  
+- Alembic migrations applied  
+- Brew-day production domain/API/UI code  
 - Epic 3 fermentation functionality  
 
 ## Next
 
-Await architecture review acceptance of refined E2A-0, then **E2A-1 only**.
+Final architecture acceptance → **E2A-1 only**.
