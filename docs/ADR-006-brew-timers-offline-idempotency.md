@@ -111,7 +111,7 @@ Different payload with same `client_submission_id`:
 
 - Append-only events never update.  
 - Measurement history rows append.  
-- Concurrent double-submit without client id: prevented by session version token where required; without token, last writer risks conflict on stage uniqueness — E2A-1 will require version token on transitions.
+- Concurrent double-submit without client id: prevented by required integer `BrewSession.version` on mutations (ADR-004); mismatch → conflict. Idempotent retries with `client_submission_id` return the original result without a second version bump.
 
 ## Non-goals
 

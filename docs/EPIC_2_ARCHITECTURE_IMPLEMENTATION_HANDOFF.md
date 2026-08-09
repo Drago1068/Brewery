@@ -164,17 +164,19 @@ Measurement lifecycle statuses (orthogonal to value kind):
 
 ### Session-level status
 
-`PLANNED` → `IN_PROGRESS` → `PAUSED` → `IN_PROGRESS` → `CLOSED` → (`HANDED_OFF` when fermentation session created)
+`PLANNED` → `IN_PROGRESS` → `PAUSED` → `IN_PROGRESS` → `CLOSED` → (`HANDED_OFF` **only** via explicit fermentation handoff; not a brew-day terminal peer of `CLOSED`)
 
-Optional: `ABORTED` (terminal; still append-only audit; no fabrication).
+`ABORTED` is a separate brew-day terminal path and **never** transitions to handoff.
 
 ### Transition rules
 
 - Only **one active stage** at a time.  
 - Advances are **explicit brewer/API actions** (`POST .../transitions`).  
 - Backward transitions are disallowed by default in 2A (exception: PO-approved “reopen stage” later).  
-- Skipping stages requires an explicit skip event + reason (process-adherence reports it).  
-- Closing the session requires being in `BREW_DAY_AUDIT` (or explicit abort path).
+- Skipping a stage (same transaction): stage → `SKIPPED`; remaining **REQUIRED** measurements → `MISSED` + events; **RECOMMENDED** stay `PENDING`.  
+- Closing the session requires `BREW_DAY_AUDIT` path rules and **rejects** close while any REQUIRED measurement remains `PENDING` (no auto-MISS on close).  
+- Optimistic concurrency: integer `BrewSession.version` required and atomically incremented on successful mutations.  
+- Command atomicity: state + measurement side effects + BrewEvents in one DB transaction.
 
 ### Timer rule (critical)
 
@@ -284,6 +286,7 @@ BrewSession 0—1 FermentationHandoff (Epic 3 stub)
 | Event type | When |
 |------------|------|
 | `PLAN_CREATED` | BrewPlan created |
+| `READINESS_ACKNOWLEDGED` | YELLOW/RED acknowledgement (separate event from `PLAN_CREATED`) |
 | `SESSION_STARTED` | BrewSession starts |
 | `STAGE_ENTERED` | Transition into stage |
 | `STAGE_EXITED` | Transition out |
@@ -451,5 +454,6 @@ Unchanged from Epic 1 interim: `default_actor_id` + ADR-001 network isolation. R
 |---------|------|-------|
 | 1.0 | 2026-08-09 | Initial Epic 2A handoff after Epic 1 freeze |
 | 1.1 | 2026-08-09 | P1–P5 locked; E2A-0 ADRs + review package authorized |
+| 1.2 | 2026-08-09 | Pre–E2A-1 refinements: handoff semantics, skip/close locks, integer OCC, command atomicity, separate readiness event |
 
 **E2A-0 ARCHITECTURE PACKAGE SUBMITTED — NO E2A-1 UNTIL REVIEW ACCEPTANCE**

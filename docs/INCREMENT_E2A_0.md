@@ -10,6 +10,7 @@
 - ADR-006 Brew timers & offline idempotency  
 - E2A-0 Architecture Review Package (schema/API/events/tests/migration proposal)  
 - P1–P5 Product Owner decisions locked into Epic 2 handoff  
+- Pre–E2A-1 refinements locked: `CLOSED`→`HANDED_OFF` only; skip auto-MISS REQUIRED; reject close on REQUIRED PENDING; integer `session.version`; command atomicity; separate `READINESS_ACKNOWLEDGED`  
 
 ## Explicitly not delivered
 
@@ -19,4 +20,4 @@
 
 ## Next
 
-Await architecture review acceptance, then **E2A-1 only**.
+Await architecture review acceptance of refined E2A-0, then **E2A-1 only**.

@@ -6,7 +6,8 @@
 **Date:** 2026-08-09  
 **Governing spec:** [`EPIC_2_ARCHITECTURE_IMPLEMENTATION_HANDOFF.md`](EPIC_2_ARCHITECTURE_IMPLEMENTATION_HANDOFF.md) v1.0 (approved)  
 **Epic 1 freeze:** `170fbdbe6d8cab37d565c7b8c073c4a4306c6fca` (per handoff / `EPIC_1_FREEZE.md`)  
-**Classification:** Documentation & design — **no production Brew-Day domain code; no Alembic 005 applied**
+**Classification:** Documentation & design — **no production Brew-Day domain code; no Alembic 005 applied**  
+**Refinement:** Pre–E2A-1 locks for handoff semantics, skip/close rules, integer optimistic concurrency, command atomicity, and separate `READINESS_ACKNOWLEDGED` events (see ADR-004 amended).
 
 ---
 
@@ -26,7 +27,7 @@
 
 See [`ADR-004-brew-day-domain-stage-machine.md`](ADR-004-brew-day-domain-stage-machine.md).
 
-Summary: BrewPlan/BrewSession/stage/action/event model; ordered stages; explicit transitions; pause/resume/close/abort; RecipeVersion immutability; readiness acknowledgement; **timers never control process state**.
+Summary: BrewPlan/BrewSession/stage/action/event model; ordered stages; explicit transitions; pause/resume/close/abort; RecipeVersion immutability; readiness acknowledgement as a **separate** `READINESS_ACKNOWLEDGED` event; skip auto-MISS REQUIRED; reject close on REQUIRED PENDING; integer `session.version`; command atomicity; **`CLOSED`→`HANDED_OFF` only**; timers never control process state.
 
 ## 2. ADR-005
 
@@ -79,10 +80,10 @@ Additive tables; all UUID PKs unless noted. `brewery_id` on plan (and denormaliz
 | `brewery_id` | UUID FK → `breweries.id` | |
 | `status` | TEXT | PLANNED/IN_PROGRESS/PAUSED/CLOSED/ABORTED/HANDED_OFF |
 | `current_stage_code` | TEXT NULL | |
-| `version` | INT NOT NULL DEFAULT 1 | Optimistic concurrency |
+| `version` | INT NOT NULL DEFAULT 1 | Optimistic concurrency token (**integer only**; not `updated_at`) |
 | `started_at`, `closed_at`, `aborted_at` | TIMESTAMPTZ NULL | |
 | `abort_reason` | TEXT NULL | Required if ABORTED |
-| `created_at`, `updated_at` | TIMESTAMPTZ | |
+| `created_at`, `updated_at` | TIMESTAMPTZ | Audit timestamps only — **not** concurrency tokens |
 
 ### 4.3 `brew_stage_occurrences`
 
@@ -273,7 +274,15 @@ Response: `201` plan resource.
 }
 ```
 
-Response includes updated session, stage occurrences, `session_version`.
+- `session_version` is the expected integer `BrewSession.version` (required). On success it increments atomically.  
+- Entire command (state + measurement side effects + BrewEvents) commits in **one transaction**; event-append failure rolls back domain changes.  
+- Response includes updated session, stage occurrences, and new `session_version`.
+
+**Skip:** remaining REQUIRED requirements on the skipped stage → `MISSED` + `MEASUREMENT_MISSED` events in the same transaction; RECOMMENDED stay `PENDING`.
+
+**Close:** rejected while any REQUIRED requirement is still `PENDING` (no auto-MISS on close).
+
+**Abort:** never eligible for fermentation handoff.
 
 ### 5.4 Measurement capture
 
@@ -325,12 +334,25 @@ Both require `client_submission_id`; waive requires `reason`.
 
 ### 5.10 Close / abort
 
-Via transitions (`CLOSE_SESSION` / `ABORT_SESSION`). Close rejected while REQUIRED PENDING remain (ADR-004 default).
+Via transitions (`CLOSE_SESSION` / `ABORT_SESSION`).
+
+- Close rejected while REQUIRED `PENDING` remain — brewer must explicitly miss/waive/capture.  
+- Abort is terminal; no handoff.
 
 ### 5.11 Fermentation handoff
 
-`POST /brew-sessions/{id}/fermentation-handoff`  
-Requires CLOSED session; `client_submission_id`; creates stub; sets HANDED_OFF.
+`POST /brew-sessions/{id}/fermentation-handoff`
+
+```json
+{
+  "client_submission_id": "uuid",
+  "session_version": 12
+}
+```
+
+- Allowed **only** from `CLOSED` (legal transition `CLOSED` → `HANDED_OFF` if status used; never from `ABORTED`).  
+- Creates `fermentation_handoffs` stub + `FERMENTATION_HANDOFF_CREATED` in the same transaction as the status update / version increment.  
+- `HANDED_OFF` is not a brew-day terminal peer of `CLOSED`; it is a post-close handoff marker only.
 
 ### 5.12 Operations requiring `client_submission_id`
 
@@ -343,7 +365,7 @@ Capture, instrument correction, user revision, miss, waive, all transition comma
 | Event type | Emitted when |
 |------------|--------------|
 | `PLAN_CREATED` | BrewPlan created |
-| `READINESS_ACKNOWLEDGED` | YELLOW/RED ack stored |
+| `READINESS_ACKNOWLEDGED` | YELLOW/RED ack stored (**separate event row** from `PLAN_CREATED`, same transaction) |
 | `SESSION_STARTED` | Start session |
 | `STAGE_ENTERED` / `STAGE_EXITED` | Stage boundaries |
 | `STAGE_SKIPPED` | Skip |
@@ -365,28 +387,31 @@ Capture, instrument correction, user revision, miss, waive, all transition comma
 
 ### 7.1 Session
 
-| From \ Command | START | PAUSE | RESUME | CLOSE | ABORT |
-|----------------|-------|-------|--------|-------|-------|
-| PLANNED | IN_PROGRESS | — | — | — | ABORTED |
-| IN_PROGRESS | — | PAUSED | — | CLOSED* | ABORTED |
-| PAUSED | — | — | IN_PROGRESS | — | ABORTED |
-| CLOSED | — | — | — | — | — |
-| ABORTED | — | — | — | — | — |
+| From \ Command | START | PAUSE | RESUME | CLOSE | ABORT | HANDOFF |
+|----------------|-------|-------|--------|-------|-------|---------|
+| PLANNED | IN_PROGRESS | — | — | — | ABORTED | — |
+| IN_PROGRESS | — | PAUSED | — | CLOSED* | ABORTED | — |
+| PAUSED | — | — | IN_PROGRESS | — | ABORTED | — |
+| CLOSED | — | — | — | — | — | HANDED_OFF† |
+| ABORTED | — | — | — | — | — | — |
+| HANDED_OFF | — | — | — | — | — | — |
 
-\* CLOSE only when stage rules satisfied (in/after `BREW_DAY_AUDIT`, no REQUIRED PENDING).
+\* CLOSE only when stage rules satisfied (in/after `BREW_DAY_AUDIT`) **and** no REQUIRED measurement is still `PENDING` (explicit miss/waive/capture required; **no auto-MISS on close**).  
+† Handoff **only** from `CLOSED`. `ABORTED` never hands off. `HANDED_OFF` is a post-close marker, not a brew-day terminal peer of `CLOSED`.
 
 ### 7.2 Stage (happy path)
 
 `PENDING → ACTIVE → COMPLETED` via ADVANCE.  
-`PENDING|ACTIVE → SKIPPED` via SKIP (+ reason).  
+`PENDING|ACTIVE → SKIPPED` via SKIP (+ reason): in the **same transaction**, remaining REQUIRED requirements → `MISSED` + events; RECOMMENDED stay `PENDING`.  
 Only one ACTIVE.
 
 ### 7.3 Measurement requirement
 
 `PENDING → CAPTURED` (capture)  
-`PENDING → MISSED` (miss or skip policy)  
+`PENDING → MISSED` (explicit miss **or** skip of owning stage)  
 `PENDING → WAIVED` (waive)  
-CAPTURED may receive corrections/revisions without leaving CAPTURED.
+CAPTURED may receive corrections/revisions without leaving CAPTURED.  
+Close does **not** transition PENDING → MISSED.
 
 ---
 
@@ -418,9 +443,14 @@ Definition (seed)
 ## 10. Idempotency model
 
 - Key: `client_submission_id` scoped to session (or brewery/plan pre-session).  
-- Same key + same logical op → original result.  
+- Same key + same logical op → original result (**no second `version` increment**).  
 - Same key + different body → 409.  
-- Server timestamps authoritative.
+- Server timestamps authoritative.  
+- Session mutations also require matching integer `session_version` on first apply.
+
+## 10a. Command atomicity
+
+Domain mutation + measurement status side effects + all BrewEvents for the command commit in **one** DB transaction. Failed event append rolls back domain changes.
 
 ---
 
@@ -445,8 +475,9 @@ Definition (seed)
 | Illegal transitions | ADVANCE while PAUSED; CLOSE before audit; ADVANCE from CLOSED |
 | Skip | Reason required; event; adherence impact |
 | Pause/resume | Round-trip; blocked commands while paused |
-| Close | Reject with REQUIRED PENDING; success after miss/waive/capture |
-| Abort | Reason required; terminal; no fabricated measurements |
+| Close | Reject with REQUIRED PENDING (no auto-MISS); success after explicit miss/waive/capture |
+| Abort | Reason required; terminal; no fabricated measurements; **no handoff** |
+| Skip | REQUIRED → MISSED in same transaction; RECOMMENDED remain PENDING; events emitted |
 | Capture | Happy path; idempotent replay |
 | Miss / waive | Status + events; waive needs reason |
 | Instrument correction history | Raw preserved; history rows append |
@@ -455,12 +486,15 @@ Definition (seed)
 | Invalid input | 422; still PENDING |
 | Timer persistence | Restart process/read still shows RUNNING/ELAPSED |
 | Timer expiry | ELAPSED event; stage unchanged |
-| Duplicate submission | Same id returns same resource |
+| Duplicate submission | Same id returns same resource; no double version bump |
+| Command atomicity | Forced event-write failure rolls back domain mutation |
+| Optimistic concurrency | Stale `session_version` → 409; success increments integer version |
 | Offline delayed capture | Capture after delay still valid if stage allows |
 | Append-only events | No update API; count monotonic |
+| Readiness events | YELLOW/RED plan create yields both `PLAN_CREATED` and `READINESS_ACKNOWLEDGED` |
 | Planned-vs-actual | Delta only when both present |
 | Completeness / adherence / performance | Separate report sections |
-| Fermentation handoff | Stub created from CLOSED; no fermentation logs |
+| Fermentation handoff | Only from CLOSED → HANDED_OFF; aborted rejected; no fermentation logs |
 | Epic 1 regression | Full golden calculation suite unchanged |
 
 ---
@@ -498,14 +532,17 @@ Frontend remains Vite-dev interim (ADR-001/002).
 | ID | Topic | Notes |
 |----|-------|-------|
 | U1 | Exact REQUIRED measurement set per stage | Seed in E2A-3; not locked in E2A-0 |
-| U2 | Close policy vs auto-MISS on close | ADR-004 default: reject close while REQUIRED PENDING |
-| U3 | Skip → auto-MISS required measurements | ADR-004 default: yes |
-| U4 | Abort leaves PENDING vs marks MISSED | ADR-004 default: leave PENDING |
-| U5 | Whether plan-level events use null session_id | Prefer always creating session lazily or plan events on plan_id only |
+| U5 | Whether plan-level events always include `brew_plan_id` with null session | Prefer both plan_id and session_id when session exists |
 | U6 | Observation history table vs version rows only | Sketch includes dedicated history table |
 | U7 | Explicit inventory consume endpoint shape on session | Required by P5; path TBD in E2A-1/5 |
 
-Defaults above are E2A-0 recommendations; PO may override before E2A-3/5 without changing Epic 1.
+### Locked in pre–E2A-1 refinement (formerly open)
+
+| ID | Topic | Locked rule |
+|----|-------|-------------|
+| U2 | Close vs auto-MISS | **Reject close** while REQUIRED `PENDING`; never auto-MISS on close |
+| U3 | Skip → REQUIRED | **Auto-MISS** remaining REQUIRED in same transaction + events |
+| U4 | Abort PENDING | **Leave PENDING**; report incomplete; no handoff |
 
 ---
 
@@ -514,11 +551,14 @@ Defaults above are E2A-0 recommendations; PO may override before E2A-3/5 without
 | Risk | Mitigation |
 |------|------------|
 | Timer misuse auto-advances stages | ADR-004/006 invariant + tests |
-| Fabrication on close | Explicit miss/waive; reject close with PENDING REQUIRED |
+| Fabrication on close | Reject close with REQUIRED PENDING; explicit miss/waive |
+| Partial commit without audit | Command atomicity: event failure rolls back domain mutation |
+| Stale client overwrites | Integer `session_version` compare-and-increment |
+| Handoff from aborted brew | Forbidden; only `CLOSED` → `HANDED_OFF` |
 | Snapshot drift from live recipe | Immutable version + JSON snapshots |
 | Offline out-of-order transitions | Hard fail + client reconcile |
 | Scope creep into Epic 3 | Handoff stub only |
-| Dual audit streams (audit_events vs brew_events) | brew_events authoritative for brew day; optional mirror |
+| Dual audit streams | brew_events authoritative for brew day |
 
 ---
 
