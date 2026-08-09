@@ -4,8 +4,8 @@
 
 **Status:** Accepted  
 **Date:** 2026-08-09  
-**Amended:** 2026-08-09 — history-first measurement architecture locked for Epic 2A.  
-**Context:** Brew Day must record actual observations without collapsing planned, estimated, calculated, measured, missing, or invalid values. Captures, corrections, user revisions, validation warnings, MISSED, and WAIVED states must preserve history rather than become silently mutable fields. Epic 2A uses HIGH / MEDIUM / LOW measurement confidence.
+**Context:** Brew Day must record actual observations without collapsing planned, estimated, calculated, measured, missing, or invalid values. Captures, corrections, user revisions, validation warnings, MISSED, and WAIVED states must preserve history rather than become silently mutable fields. Epic 2A uses HIGH / MEDIUM / LOW measurement confidence.  
+**Amendment:** 2026-08-09 — history-first measurement architecture locked for Epic 2A; full-file overwrite for final E2A-0 acceptance.
 
 ## Decision
 
@@ -64,7 +64,7 @@ Epic 2A permits:
 - `PENDING` → `MISSED`  
 - `PENDING` → `WAIVED`  
 
-Reopening `MISSED` / `WAIVED` is out of scope.
+Reopening `MISSED` or `WAIVED` is out of scope for Epic 2A.
 
 `MISSED` and `WAIVED` never create fabricated `MeasurementRecord`s.
 
@@ -113,7 +113,7 @@ The projection represents the latest accepted state only. It is not historical t
 | `client_submission_id` | Idempotency |
 | `payload` | Optional |
 
-`event_class` exactly:
+Event classes exactly:
 
 - `RAW_CAPTURE`  
 - `INSTRUMENT_CORRECTION`  
@@ -162,13 +162,7 @@ Preserve all prior assertions.
 | `client_submission_id` | When applicable |
 | `payload` | Optional |
 
-Every lifecycle transition writes:
-
-- `MeasurementStatusHistory`  
-- corresponding BrewEvent  
-- projection update  
-
-in one transaction.
+Every lifecycle transition writes `MeasurementStatusHistory`, the corresponding BrewEvent, and the projection update in one transaction.
 
 Skip-stage REQUIRED auto-MISS follows ADR-004.
 
@@ -176,9 +170,9 @@ Skip-stage REQUIRED auto-MISS follows ADR-004.
 
 | Class | Meaning | Behavior |
 |-------|---------|----------|
-| **INPUT ERROR** | Cannot parse, invalid unit/type, or structurally impossible input. | Reject request. Do not create `MeasurementRecord`. Do not create `MeasurementObservationHistory`. Requirement remains `PENDING`. May emit operational `MEASUREMENT_INPUT_REJECTED` BrewEvent. |
-| **UNUSUAL VALUE** | Valid measurement outside expected/typical range. | Accept and preserve. Store warning on immutable observation history. Emit warning event/context. |
-| **DOMAIN CONCERN** | Valid observation that may indicate a brewing-process concern. | Accept and preserve. Store contextual warning. Do not diagnose automatically. |
+| **INPUT ERROR** | Cannot parse, invalid unit/type, or structurally impossible input. | Reject request. Do not create `MeasurementRecord`. Do not create `MeasurementObservationHistory`. Requirement remains `PENDING`. May emit operational `MEASUREMENT_INPUT_REJECTED` BrewEvent only. |
+| **UNUSUAL VALUE** | Valid measurement outside expected/typical range. | Accept and preserve. Warning stored on immutable observation history. May emit warning BrewEvent. |
+| **DOMAIN CONCERN** | Valid observation that may indicate a brewing-process concern. | Accept and preserve. Contextual warning stored on immutable observation history. Do not diagnose automatically. |
 
 Never silently change unusual values.
 
@@ -190,13 +184,9 @@ Allowed values only:
 - `MEDIUM`  
 - `LOW`  
 
-Confidence represents evidence/measurement-quality context.
+Confidence represents evidence/measurement-quality context only.
 
-It does not mean:
-
-- whether the brewer likes the value;  
-- whether the value matches the target;  
-- certainty of diagnosis.
+It does not mean whether the brewer likes the value, whether the value matches the target, or certainty of diagnosis.
 
 ## K. Provenance
 
@@ -228,16 +218,7 @@ Reporting must not calculate planned-vs-actual deltas for missing measurements.
 
 Cross-reference ADR-004 and ADR-006.
 
-Every accepted measurement mutation must commit all required:
-
-- history rows  
-- projection updates  
-- BrewEvents  
-- status transitions  
-- idempotency records  
-- applicable `BrewSession.version` increment  
-
-in one PostgreSQL transaction.
+Every accepted measurement mutation must commit all required history rows, projection updates, BrewEvents, status transitions, idempotency records, and applicable `BrewSession.version` increment in one PostgreSQL transaction.
 
 Failure rolls back the complete command.
 
@@ -245,15 +226,7 @@ Exact idempotent replay must not duplicate history, events, or version increment
 
 ## N. Reporting and Future Use
 
-The architecture must support:
-
-- data completeness  
-- planned vs actual  
-- target-performance reporting  
-- scientific audit  
-- Epic 5 evidence/hypothesis analysis  
-
-without rewriting prior observations.
+The architecture must support data completeness, planned vs actual, target-performance reporting, scientific audit, and Epic 5 evidence/hypothesis analysis without rewriting prior observations.
 
 ## Non-Goals
 
