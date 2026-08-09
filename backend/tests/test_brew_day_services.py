@@ -191,6 +191,10 @@ async def test_green_succeeds_without_ack_and_preserves_status():
             new_callable=AsyncMock,
         ) as calc,
         patch("app.services.brew_plan.audit.record_audit", new_callable=AsyncMock) as audit,
+        patch(
+            "app.services.brew_plan.brew_events_service.append_brew_event",
+            new_callable=AsyncMock,
+        ),
     ):
         lookup.return_value = None
         get_version.return_value = _version("ACTIVE")
@@ -213,8 +217,6 @@ async def test_green_succeeds_without_ack_and_preserves_status():
         assert created_plan.planned_calculation_snapshot["results"]["og"]["formula_id"] == "OG_ESTIMATE"
         audit.assert_awaited()
         # Only PLAN_CREATED for GREEN (no READINESS_ACKNOWLEDGED).
-        actions = [c.kwargs.get("action") or c.args[1] for c in audit.await_args_list]
-        # record_audit is keyword-only for action
         actions = [c.kwargs["action"] for c in audit.await_args_list]
         assert "PLAN_CREATED" in [str(a) for a in actions]
         assert "READINESS_ACKNOWLEDGED" not in [str(a) for a in actions]
@@ -258,6 +260,10 @@ async def test_yellow_ack_preserves_readiness_status_not_converted():
             new_callable=AsyncMock,
         ) as calc,
         patch("app.services.brew_plan.audit.record_audit", new_callable=AsyncMock) as audit,
+        patch(
+            "app.services.brew_plan.brew_events_service.append_brew_event",
+            new_callable=AsyncMock,
+        ),
     ):
         lookup.return_value = None
         get_version.return_value = _version("ACTIVE")

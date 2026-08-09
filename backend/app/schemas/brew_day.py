@@ -1,10 +1,12 @@
-"""Brew day (E2A-1) API schemas."""
+"""Brew day (E2A-1/E2A-2) API schemas."""
 
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.domain.enums import BrewTransitionCommand
 
 
 class ReadinessAcknowledgement(BaseModel):
@@ -46,7 +48,6 @@ class BrewPlanRead(BaseModel):
 
 class BrewSessionCreate(BaseModel):
     client_submission_id: str = Field(min_length=1, max_length=128)
-    # Optional client context included in idempotency fingerprint only (E2A-1).
     client_context: Optional[str] = None
 
 
@@ -77,3 +78,28 @@ class BrewSessionRead(BaseModel):
     created_by: str
     created_at: datetime
     stage_occurrences: list[StageOccurrenceSummary]
+
+
+class SessionTransitionRequest(BaseModel):
+    client_submission_id: str = Field(min_length=1, max_length=128)
+    expected_session_version: int = Field(ge=1)
+    command: BrewTransitionCommand
+    skip_reason: Optional[str] = None
+    abort_reason: Optional[str] = None
+    client_occurred_at: Optional[datetime] = None
+
+
+class BrewEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    brewery_id: str
+    brew_plan_id: Optional[str] = None
+    brew_session_id: Optional[str] = None
+    event_type: str
+    actor_id: str
+    occurred_at: datetime
+    client_occurred_at: Optional[datetime] = None
+    payload: dict[str, Any]
+    client_submission_id: Optional[str] = None
+    correlation_key: Optional[str] = None

@@ -11,9 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db.models import BrewPlan, EquipmentProfile
 from app.domain import brew_day as brew_day_domain
-from app.domain.enums import AuditAction, BrewPlanStatus, ReadinessLevel
+from app.domain.enums import AuditAction, BrewEventType, BrewPlanStatus, ReadinessLevel
 from app.schemas.brew_day import BrewPlanCreate, BrewPlanRead
 from app.services import audit
+from app.services import brew_events as brew_events_service
 from app.services import calculation as calculation_service
 from app.services import idempotency as idempotency_service
 from app.services import readiness as readiness_service
@@ -68,11 +69,11 @@ async def create_brew_plan(
     recipe_version_id: str,
     payload: BrewPlanCreate,
 ) -> dict:
-    """Create BrewPlan atomically with idempotency ledger + durable ack audit.
+    """Create BrewPlan atomically with idempotency ledger + canonical BrewEvents.
 
-    BrewEvent table ships in migration 007 (E2A-2). E2A-1 preserves PLAN_CREATED and
-    READINESS_ACKNOWLEDGED as distinct append-only AuditEvent rows plus immutable
-    acknowledgement columns on brew_plans. See docs/E2A1_BREW_EVENT_DEFERMENT.md.
+    Writes PLAN_CREATED and (when applicable) READINESS_ACKNOWLEDGED to brew_events
+    in the same transaction. Also retains append-only audit_events for continuity
+    with E2A-1 evidence; brew_events is the brew-day domain stream.
     """
     fp = _fingerprint_body(payload)
     existing = await idempotency_service.lookup_idempotency(
@@ -195,9 +196,24 @@ async def create_brew_plan(
             "recipe_version_status": version.status,
         },
     )
+    await brew_events_service.append_brew_event(
+        db,
+        brewery_id=plan.brewery_id,
+        brew_plan_id=plan.id,
+        event_type=BrewEventType.PLAN_CREATED,
+        actor_id=actor,
+        payload={
+            "brew_plan_id": plan.id,
+            "recipe_version_id": version.id,
+            "recipe_id": recipe.id,
+            "readiness_status": overall,
+        },
+        client_submission_id=payload.client_submission_id,
+        correlation_key=f"live:PLAN_CREATED:{plan.id}",
+    )
 
     if acknowledged:
-        # Distinct event from PLAN_CREATED (ADR-004). Durable on plan columns + AuditEvent.
+        # Distinct event from PLAN_CREATED (ADR-004).
         await audit.record_audit(
             db,
             action=AuditAction.READINESS_ACKNOWLEDGED,
@@ -214,6 +230,23 @@ async def create_brew_plan(
                 "note": acknowledgement_note,
                 "acknowledged_at": acknowledged_at.isoformat() if acknowledged_at else None,
             },
+        )
+        await brew_events_service.append_brew_event(
+            db,
+            brewery_id=plan.brewery_id,
+            brew_plan_id=plan.id,
+            event_type=BrewEventType.READINESS_ACKNOWLEDGED,
+            actor_id=acknowledged_by or actor,
+            payload={
+                "brew_plan_id": plan.id,
+                "readiness_status": overall,
+                "readiness_summary": summary,
+                "checks": brew_day_domain.json_safe(checks),
+                "note": acknowledgement_note,
+            },
+            client_submission_id=payload.client_submission_id,
+            correlation_key=f"live:READINESS_ACKNOWLEDGED:{plan.id}",
+            occurred_at=acknowledged_at,
         )
 
     response = _plan_to_read(plan).model_dump(mode="json")

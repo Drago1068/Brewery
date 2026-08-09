@@ -438,10 +438,11 @@ Unchanged from Epic 1 interim: `default_actor_id` + ADR-001 network isolation. R
 
 ## 17. Recommended immediate next actions
 
-1. Architecture review of E2A-0 package (`docs/EPIC_2A_E2A0_ARCHITECTURE_REVIEW_PACKAGE.md`).  
-2. On approval, begin **E2A-1** only (plans/sessions schema + API) — not a full Epic 2 dump.  
+1. Architecture review of the pre–E2A-2 entry amendment (`docs/E2A2_ENTRY_AMENDMENT.md`) — **accepted**.  
+2. On authorization, implement **E2A-2 only** (migration `006` `brew_events` + backfill + stage/session transitions).  
+3. Do **not** begin E2A-3 measurement implementation until E2A-2 is accepted.
 
-**Forbidden:** Undifferentiated “build all of Epic 2.”
+**Forbidden:** Undifferentiated “build all of Epic 2.” Measurement tables/services are out of scope for E2A-2.
 
 ---
 
@@ -466,5 +467,6 @@ Unchanged from Epic 1 interim: `default_actor_id` + ADR-001 network isolation. R
 | 1.2 | 2026-08-09 | Pre–E2A-1 refinements: handoff semantics, skip/close locks, integer OCC, command atomicity, separate readiness event |
 | 1.3 | 2026-08-09 | ADR-005/006 history-first strengthening (measurements + timers/idempotency) |
 | 1.4 | 2026-08-09 | Pre–E2A-2: migration sequencing amendment — `brew_events` in 006 before transitions; START_SESSION locked; U1 deferred |
+| 1.5 | 2026-08-09 | E2A-2 authorized/implemented: brew_events + transitions; next actions no longer point at E2A-1 |
 
-**E2A-1 ACCEPTED — PRE–E2A-2 ENTRY AMENDMENT REQUIRED BEFORE E2A-2 AUTHORIZATION**
+**E2A-2 IMPLEMENTED — AWAITING ARCHITECTURE REVIEW BEFORE E2A-3**

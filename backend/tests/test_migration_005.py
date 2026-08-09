@@ -43,11 +43,12 @@ def test_migration_005_does_not_include_later_tables():
         assert forbidden not in text
 
 
-def test_no_006_or_later_migrations_yet():
+def test_no_007_or_later_migrations_yet():
     names = {p.name for p in VERSIONS.glob("*.py")}
-    assert not any(n.startswith("006") for n in names)
+    assert any(n.startswith("006") for n in names)
     assert not any(n.startswith("007") for n in names)
     assert not any(n.startswith("008") for n in names)
+    assert not any(n.startswith("009") for n in names)
 
 
 @pytest.mark.asyncio

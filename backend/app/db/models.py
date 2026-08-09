@@ -767,3 +767,33 @@ class IdempotencyRecord(Base):
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class BrewEvent(Base):
+    """Append-only brew-day domain event stream (E2A-2). No UPDATE/DELETE API."""
+
+    __tablename__ = "brew_events"
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
+    brewery_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("breweries.id", ondelete="CASCADE"), nullable=False
+    )
+    brew_plan_id: Mapped[Optional[str]] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("brew_plans.id", ondelete="CASCADE"), nullable=True
+    )
+    brew_session_id: Mapped[Optional[str]] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("brew_sessions.id", ondelete="CASCADE"), nullable=True
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    client_occurred_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    client_submission_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    correlation_key: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
