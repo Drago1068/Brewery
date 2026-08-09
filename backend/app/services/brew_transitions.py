@@ -21,6 +21,7 @@ from app.schemas.brew_day import SessionTransitionRequest
 from app.services import brew_events as brew_events_service
 from app.services import brew_session as brew_session_service
 from app.services import idempotency as idempotency_service
+from app.services import measurements as measurement_service
 
 SCOPE_BREW_SESSION = "BREW_SESSION"
 
@@ -63,13 +64,19 @@ async def apply_skip_measurement_side_effects(
     *,
     session: BrewSession,
     stage: BrewStageOccurrence,
+    actor_id: str = "local-brewer",
+    client_submission_id: str | None = None,
+    client_occurred_at=None,
 ) -> None:
-    """E2A-3 hook: auto-MISS remaining REQUIRED measurements on skip (same txn).
-
-    Measurement tables do not exist in E2A-2. This no-op preserves the ADR-004
-    contract so E2A-3 can extend without redesigning the state machine.
-    """
-    return None
+    """Auto-MISS remaining REQUIRED PENDING measurements on skip (ADR-004)."""
+    await measurement_service.auto_miss_required_for_skipped_stage(
+        db,
+        session=session,
+        stage=stage,
+        actor_id=actor_id,
+        client_submission_id=client_submission_id,
+        client_occurred_at=client_occurred_at,
+    )
 
 
 def _fingerprint(payload: SessionTransitionRequest) -> str:
@@ -361,7 +368,14 @@ async def _skip_stage(
     current.exited_at = now
     current.skip_reason = payload.skip_reason.strip()
 
-    await apply_skip_measurement_side_effects(db, session=session, stage=current)
+    await apply_skip_measurement_side_effects(
+        db,
+        session=session,
+        stage=current,
+        actor_id=actor,
+        client_submission_id=payload.client_submission_id,
+        client_occurred_at=payload.client_occurred_at,
+    )
 
     await _append(
         db,
@@ -514,7 +528,7 @@ async def _close_session(
     now: datetime,
     payload: SessionTransitionRequest,
 ) -> None:
-    """E2A-2 close: IN_PROGRESS → CLOSED. Measurement REQUIRED gates arrive in E2A-3."""
+    """CLOSE_SESSION: reject while any REQUIRED requirement remains PENDING."""
     if session.status == BrewSessionStatus.PAUSED:
         raise _illegal(
             "SESSION_PAUSED",
@@ -526,7 +540,15 @@ async def _close_session(
             "CLOSE_SESSION requires session status IN_PROGRESS",
             status=session.status,
         )
-    # E2A-3 will reject close while REQUIRED measurements remain PENDING.
+    pending_required = await measurement_service.pending_required_blocks_close(
+        db, session.id
+    )
+    if pending_required:
+        raise _illegal(
+            "REQUIRED_MEASUREMENTS_PENDING",
+            "CLOSE_SESSION rejected while REQUIRED measurements remain PENDING",
+            pending_codes=pending_required,
+        )
     session.status = BrewSessionStatus.CLOSED
     session.closed_at = now
     await _append(

@@ -381,13 +381,22 @@ async def test_atomicity_rolls_back_when_brew_event_fails():
 
 
 @pytest.mark.asyncio
-async def test_skip_measurement_hook_is_noop_callable():
+async def test_skip_measurement_hook_auto_misses():
     db = AsyncMock()
     session = _session(status="IN_PROGRESS")
     stage = session.stage_occurrences[0]
-    assert await transitions.apply_skip_measurement_side_effects(
-        db, session=session, stage=stage
-    ) is None
+    with patch(
+        "app.services.brew_transitions.measurement_service.auto_miss_required_for_skipped_stage",
+        new_callable=AsyncMock,
+    ) as auto_miss:
+        await transitions.apply_skip_measurement_side_effects(
+            db,
+            session=session,
+            stage=stage,
+            actor_id="local-brewer",
+            client_submission_id="s1",
+        )
+        auto_miss.assert_awaited_once()
 
 
 @pytest.mark.asyncio

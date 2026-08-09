@@ -797,3 +797,182 @@ class BrewEvent(Base):
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     client_submission_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     correlation_key: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+
+
+class MeasurementDefinition(Base):
+    __tablename__ = "measurement_definitions"
+    __table_args__ = (UniqueConstraint("code", name="uq_measurement_definitions_code"),)
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    default_unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    typical_stage_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    default_requirement_level: Mapped[str] = mapped_column(String(32), nullable=False)
+    expected_min: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 6), nullable=True)
+    expected_max: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 6), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class MeasurementRequirement(Base):
+    __tablename__ = "measurement_requirements"
+    __table_args__ = (
+        UniqueConstraint(
+            "brew_session_id", "measurement_code", name="uq_measurement_req_session_code"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
+    brew_session_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("brew_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    stage_occurrence_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("brew_stage_occurrences.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    measurement_definition_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("measurement_definitions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    measurement_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    requirement_level: Mapped[str] = mapped_column(String(32), nullable=False)
+    planned_value: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    planned_unit: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    planned_kind: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    validation_min: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 6), nullable=True)
+    validation_max: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 6), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    record: Mapped[Optional["MeasurementRecord"]] = relationship(
+        back_populates="requirement", uselist=False
+    )
+
+
+class MeasurementRecord(Base):
+    """Current measurement projection only (ADR-005)."""
+
+    __tablename__ = "measurement_records"
+    __table_args__ = (
+        UniqueConstraint("requirement_id", name="uq_measurement_record_requirement"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
+    requirement_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("measurement_requirements.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    brew_session_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("brew_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    raw_value: Mapped[str] = mapped_column(String(64), nullable=False)
+    raw_unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    corrected_value: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    corrected_unit: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    value_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="MEASURED")
+    confidence: Mapped[str] = mapped_column(String(16), nullable=False)
+    instrument: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    method: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    provenance: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    validation_class: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    validation_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    latest_observation_history_id: Mapped[Optional[str]] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("measurement_observation_history.id", ondelete="SET NULL", use_alter=True),
+        nullable=True,
+    )
+    first_captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    captured_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    client_submission_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    requirement: Mapped["MeasurementRequirement"] = relationship(back_populates="record")
+
+
+class MeasurementObservationHistory(Base):
+    """Append-only scientific observation history (ADR-005)."""
+
+    __tablename__ = "measurement_observation_history"
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
+    requirement_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("measurement_requirements.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    measurement_record_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("measurement_records.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    event_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    raw_value: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    raw_unit: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    corrected_value: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    corrected_unit: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    confidence: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    instrument: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    method: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    provenance: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    validation_class: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    validation_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    client_occurred_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    client_submission_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    payload: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+
+
+class MeasurementStatusHistory(Base):
+    """Append-only requirement lifecycle history (ADR-005)."""
+
+    __tablename__ = "measurement_status_history"
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
+    requirement_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("measurement_requirements.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    from_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    to_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_command: Mapped[str] = mapped_column(String(64), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    client_occurred_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    client_submission_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    payload: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)

@@ -103,3 +103,52 @@ class BrewEventRead(BaseModel):
     payload: dict[str, Any]
     client_submission_id: Optional[str] = None
     correlation_key: Optional[str] = None
+
+
+class MeasurementCaptureRequest(BaseModel):
+    client_submission_id: str = Field(min_length=1, max_length=128)
+    expected_session_version: int = Field(ge=1)
+    requirement_id: str
+    raw_value: str
+    raw_unit: str
+    confidence: str
+    instrument: Optional[str] = None
+    method: Optional[str] = None
+    provenance: Optional[dict[str, Any]] = None
+    client_occurred_at: Optional[datetime] = None
+
+
+class InstrumentCorrectionRequest(BaseModel):
+    client_submission_id: str = Field(min_length=1, max_length=128)
+    expected_session_version: int = Field(ge=1)
+    corrected_value: str
+    corrected_unit: str
+    instrument: Optional[str] = None
+    method: Optional[str] = None
+    provenance: Optional[dict[str, Any]] = None
+    reason: Optional[str] = None
+    client_occurred_at: Optional[datetime] = None
+
+
+class MeasurementRevisionRequest(BaseModel):
+    client_submission_id: str = Field(min_length=1, max_length=128)
+    expected_session_version: int = Field(ge=1)
+    raw_value: str
+    raw_unit: str
+    reason: str
+    confidence: Optional[str] = None
+    client_occurred_at: Optional[datetime] = None
+
+
+class MeasurementMissRequest(BaseModel):
+    client_submission_id: str = Field(min_length=1, max_length=128)
+    expected_session_version: int = Field(ge=1)
+    reason: Optional[str] = None
+    client_occurred_at: Optional[datetime] = None
+
+
+class MeasurementWaiveRequest(BaseModel):
+    client_submission_id: str = Field(min_length=1, max_length=128)
+    expected_session_version: int = Field(ge=1)
+    reason: str
+    client_occurred_at: Optional[datetime] = None

@@ -23,6 +23,7 @@ from app.schemas.brew_day import (
 from app.services import audit
 from app.services import brew_plan as brew_plan_service
 from app.services import idempotency as idempotency_service
+from app.services import measurements as measurement_service
 
 OPERATION_CREATE_BREW_SESSION = "CREATE_BREW_SESSION"
 SCOPE_BREW_PLAN = "BREW_PLAN"
@@ -121,6 +122,9 @@ async def create_brew_session(
 
     # Ensure stage rows are queryable and server defaults are loaded.
     loaded = await get_brew_session(db, session.id)
+    await measurement_service.generate_requirements_for_session(
+        db, session=loaded, plan=plan
+    )
 
     await audit.record_audit(
         db,

@@ -40,8 +40,8 @@ def test_migration_005_still_present():
     assert (VERSIONS / "005_brew_day_plans_sessions.py").exists()
 
 
-def test_no_007_measurement_migration_yet():
+def test_no_008_or_later_migrations_yet():
     names = {p.name for p in VERSIONS.glob("*.py")}
-    assert not any(n.startswith("007") for n in names)
+    assert any(n.startswith("007") for n in names)
     assert not any(n.startswith("008") for n in names)
     assert not any(n.startswith("009") for n in names)
