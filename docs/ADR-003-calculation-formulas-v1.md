@@ -1,8 +1,8 @@
 # ADR-003 — Epic 1 Calculation Formula Methodologies (v1)
 
-**Status:** Accepted (provenance strengthened 2026-08-09 for final Epic 1 acceptance)  
+**Status:** Accepted  
 **Date:** 2026-08-09  
-**Context:** ADR-002 deferred authoritative brewing formulas until Increment 5. Product Owner authorized proceeding with Increment 5, accepting the v1 set below. Independent review required **stronger provenance** (exact equations, constants, units, assumptions, rounding, and specific references) **without changing formula behavior**.
+**Context:** ADR-002 deferred authoritative brewing formulas until Increment 5. Product Owner authorized the v1 set below as Epic 1 calculation authority.
 
 ## Decision
 
@@ -11,8 +11,6 @@ Authoritative Epic 1 calculations use the following **formula identities**. Chan
 Runtime results expose `formula_id`, `formula_version`, `source_reference`, `assumptions`, `precision`, and explanation. The `source_reference` string for each module points to the matching section of this ADR.
 
 ### Provenance checklist (every authoritative formula)
-
-Each §A–§J section documents:
 
 | Field | Requirement |
 |-------|-------------|
@@ -24,6 +22,8 @@ Each §A–§J section documents:
 | Rounding / precision | Decimal places via `Decimal.quantize` (Python default half-even) |
 | Reference / source | Specific enough to re-derive the method |
 
+Vague labels (e.g. “standard homebrew gravity points method,” “standard infusion equation,” “conventional brewing factors”) are forbidden in ADR text and runtime `source_reference`.
+
 ---
 
 ## Formula catalog (summary)
@@ -34,8 +34,8 @@ Each §A–§J section documents:
 | `FG_ESTIMATE` | v1 | §B attenuation applied to OG | Derived from §C definition of apparent attenuation |
 | `ABV` | v1 | §D `(OG − FG) × 131.25` | Palmer, *How to Brew* (homebrew ABV approximation) |
 | `APPARENT_ATTENUATION` | v1 | §C SG form of AA% | SG rearrangement of apparent attenuation (not ASBC Plato) |
-| `IBU` | v1 | §E Tinseth utilization | Tinseth hop-utilization equations (constants below) |
-| `COLOR` | v1 | §F Morey MCU→SRM | Morey SRM model (MCU power fit; constants below) |
+| `IBU` | v1 | §E Tinseth utilization | Tinseth hop-utilization equations (constants in §E) |
+| `COLOR` | v1 | §F Morey MCU→SRM | Morey SRM model (MCU power fit; constants in §F) |
 | `WATER_REQUIREMENTS` | v1 | §G recorded mash/sparge (+ optional losses) | BrewingOS ADR-003 compositional definition |
 | `STRIKE_TEMP` | v1 | §H Palmer infusion strike | Palmer, *How to Brew*, infusion mash (`0.2` factor) |
 | `RECIPE_SCALING` | v1 | §I linear volume scale factor | BrewingOS ADR-003 proportional scaling |
@@ -51,7 +51,6 @@ Each §A–§J section documents:
 4. Formula id + version are returned with every authoritative result.
 5. Historical stored explanations must retain formula identity; future formula changes do not rewrite history.
 6. Provenance must state the **exact equation and constants** used in code — not only a marketing name.
-7. Vague labels (e.g. “standard homebrew gravity points method,” “standard infusion equation,” “conventional brewing factors”) are **forbidden** in ADR text and runtime `source_reference`.
 
 ### Global rounding policy
 
@@ -60,8 +59,6 @@ Unless a section states otherwise, numeric results use `app.calculations.types.r
 ---
 
 ## A. `OG_ESTIMATE` v1 — Gravity points method
-
-**Identity:** `OG_ESTIMATE@v1`
 
 ### Units (internal)
 
@@ -97,7 +94,7 @@ C_i = W_i^{\mathrm{(lb)}} \times ((P_i - 1)\times 1000) \times \frac{E}{100}
 
 ### References
 
-1. John Palmer, *How to Brew* (Brewers Publications) — gravity / points discussion for recipe formulation.  
+1. John Palmer, *How to Brew* (Brewers Publications) — gravity / points discussion for recipe formulation.
 2. Ray Daniels, *Designing Great Beers* (Brewers Publications) — points-per-pound-per-gallon (PPG) formulation method consistent with the equations above.
 
 ### Runtime `source_reference`
@@ -107,8 +104,6 @@ C_i = W_i^{\mathrm{(lb)}} \times ((P_i - 1)\times 1000) \times \frac{E}{100}
 ---
 
 ## B. `FG_ESTIMATE` v1 — Final gravity from expected apparent attenuation
-
-**Identity:** `FG_ESTIMATE@v1`
 
 ### Units
 
@@ -142,8 +137,6 @@ Derived algebraically from §C. Yeast attenuation ranges are manufacturer data w
 
 ## C. `APPARENT_ATTENUATION` v1
 
-**Identity:** `APPARENT_ATTENUATION@v1`
-
 ### Units
 
 OG, FG → **specific gravity**; result → **percent**.
@@ -176,19 +169,19 @@ Standard rearrangement of apparent attenuation when gravity is expressed as spec
 
 ## D. `ABV` v1
 
-**Identity:** `ABV@v1`
-
 ### Units
 
 OG, FG → **specific gravity**; result → **% ABV**.
+
+### Constant
+
+`131.25` (SG→%ABV factor).
 
 ### Equation
 
 \[
 \mathrm{ABV\%} = (\mathrm{OG} - \mathrm{FG}) \times 131.25
 \]
-
-**Constant:** `131.25` (SG→%ABV factor).
 
 ### Assumptions
 
@@ -212,8 +205,6 @@ OG, FG → **specific gravity**; result → **% ABV**.
 
 ## E. `IBU` v1 — Tinseth
 
-**Identity:** `IBU@v1`
-
 ### Units (internal)
 
 Hop mass → **grams**; wort volume → **liters**; alpha acid → **percent**; time → **minutes**; boil gravity → **SG**.
@@ -223,7 +214,7 @@ Hop mass → **grams**; wort volume → **liters**; alpha acid → **percent**; 
 | Constant | Value | Role |
 |----------|-------|------|
 | Bigness base | `1.65` | BF scale |
-| Gravity term base | `0.000125` | \(\mathrm{BF}\) gravity exponent base |
+| Gravity term base | `0.000125` | BF gravity exponent base |
 | Boil-time decay | `0.04` | per minute in \(e^{-0.04 t}\) |
 | Boil-time divisor | `4.15` | BTF denominator |
 
@@ -246,7 +237,11 @@ U = \mathrm{BF} \times \mathrm{BTF}
 \]
 
 \[
-\mathrm{IBU}_i = U \times (\mathrm{mg\,\alpha/L})_i;\quad \mathrm{IBU} = \sum_i \mathrm{IBU}_i
+\mathrm{IBU}_i = U \times (\mathrm{mg\,\alpha/L})_i
+\]
+
+\[
+\mathrm{IBU} = \sum_i \mathrm{IBU}_i
 \]
 
 ### Stage policy (v1)
@@ -260,7 +255,7 @@ U = \mathrm{BF} \times \mathrm{BTF}
 
 - No pellet utilization multiplier in v1.
 - Batch volume is used as the post-boil volume **proxy** for mg/L when a separate post-boil volume is unavailable (recorded on the result).
-- Dry-hop contributes exactly 0 IBU (not an estimated utilization).
+- Dry-hop IBU follows stage policy above (exactly 0).
 - Result kind is **ESTIMATED**.
 
 ### Rounding / precision
@@ -279,11 +274,13 @@ Total IBU → **1** decimal place.
 
 ## F. `COLOR` v1 — Morey SRM
 
-**Identity:** `COLOR@v1`
-
 ### Units (internal)
 
 Mass → **lb**; volume → **US gallon**; color → **°Lovibond**; result → **SRM**.
+
+### Constants
+
+`1.4922` (scale); `0.6859` (exponent).
 
 ### Equations
 
@@ -294,8 +291,6 @@ Mass → **lb**; volume → **US gallon**; color → **°Lovibond**; result → 
 \[
 \mathrm{SRM} = 1.4922 \times \mathrm{MCU}^{0.6859}
 \]
-
-**Constants:** `1.4922`, exponent `0.6859`.
 
 ### Assumptions
 
@@ -309,7 +304,7 @@ Mass → **lb**; volume → **US gallon**; color → **°Lovibond**; result → 
 
 ### References
 
-1. Dan Morey — MCU→SRM power-fit model (constants `1.4922`, `0.6859`), as commonly cited in homebrew formulation references including Palmer, *How to Brew*.
+1. Dan Morey — MCU→SRM power-fit model (constants above), as commonly cited in homebrew formulation references including Palmer, *How to Brew*.
 
 ### Runtime `source_reference`
 
@@ -318,8 +313,6 @@ Mass → **lb**; volume → **US gallon**; color → **°Lovibond**; result → 
 ---
 
 ## G. `WATER_REQUIREMENTS` v1
-
-**Identity:** `WATER_REQUIREMENTS@v1`
 
 ### Units
 
@@ -338,7 +331,7 @@ Boil-off and trub loss are **reported when recorded**; otherwise explicitly **`N
 Related volume helpers (same formula id family):
 
 - If trub recorded: \(V_{\mathrm{post}} = V_{\mathrm{batch}} + V_{\mathrm{trub}}\); else \(V_{\mathrm{post}} \approx V_{\mathrm{batch}}\) with assumption noted.
-- If boil-off recorded: \(V_{\mathrm{pre}} = V_{\mathrm{post}} + V_{\mathrm{boil\text{-}off}}\); else pre-boil is `MISSING`.
+- If boil-off recorded: \(V_{\mathrm{pre}} = V_{\mathrm{post}} + V_{\mathrm{boil-off}}\); else pre-boil is `MISSING`.
 
 ### Assumptions
 
@@ -361,8 +354,6 @@ BrewingOS ADR-003 compositional water accounting (deliberate Epic 1 scope).
 ---
 
 ## H. `STRIKE_TEMP` v1 — Palmer infusion strike
-
-**Identity:** `STRIKE_TEMP@v1`
 
 ### Units
 
@@ -404,8 +395,6 @@ Strike temperature output → **1** decimal place (°C).
 
 ## I. `RECIPE_SCALING` v1
 
-**Identity:** `RECIPE_SCALING@v1`
-
 ### Units
 
 Batch sizes converted to **US gallons** before the scale factor; ingredient amounts scaled in their native units.
@@ -413,7 +402,11 @@ Batch sizes converted to **US gallons** before the scale factor; ingredient amou
 ### Equation
 
 \[
-f = \frac{V_{\mathrm{to}}^{\mathrm{(gal)}}}{V_{\mathrm{from}}^{\mathrm{(gal)}}};\quad a'_i = a_i \times f
+f = \frac{V_{\mathrm{to}}^{\mathrm{(gal)}}}{V_{\mathrm{from}}^{\mathrm{(gal)}}}
+\]
+
+\[
+a'_i = a_i \times f
 \]
 
 ### Assumptions
@@ -438,8 +431,6 @@ BrewingOS ADR-003 proportional scaling definition.
 
 ## J. `UNIT_CONVERSION` v1
 
-**Identity:** `UNIT_CONVERSION@v1`
-
 ### Exact constants used in code
 
 | Conversion | Factor | Note |
@@ -463,8 +454,8 @@ Converted numeric results → **6** decimal places.
 
 ### References
 
-1. NIST Handbook 44 / SI conversion — avoirdupois pound and ounce to gram (exact).  
-2. US gallon = \(231\ \mathrm{in}^3 = 3.785411784\ \mathrm{L}\) (exact).  
+1. NIST Handbook 44 / SI conversion — avoirdupois pound and ounce to gram (exact).
+2. US gallon = \(231\ \mathrm{in}^3 = 3.785411784\ \mathrm{L}\) (exact).
 3. Temperature — standard linear °C/°F relation.
 
 ### Runtime `source_reference`
@@ -484,7 +475,6 @@ Converted numeric results → **6** decimal places.
 
 ## Consequences
 
-1. Calculation modules must keep `source_reference` aligned with this ADR’s section strings.  
-2. Formula **numeric behavior** is unchanged by the 2026-08-09 provenance strengthening.  
-3. Any future equation/constant change requires a new formula version, updated fixtures, and PO approval.  
-4. Epic 1 final acceptance treats §§A–J as the auditable calculation foundation.
+1. Calculation modules must keep `source_reference` aligned with this ADR’s section strings.
+2. Any future equation or constant change requires a new formula version, updated golden fixtures, and PO approval.
+3. Epic 1 treats §§A–J as the auditable calculation foundation.
