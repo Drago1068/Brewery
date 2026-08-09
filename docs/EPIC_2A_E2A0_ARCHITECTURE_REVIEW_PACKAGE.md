@@ -33,7 +33,7 @@ Summary: BrewPlan/BrewSession/stage/action/event model; ordered stages; explicit
 
 See [`ADR-005-measurement-integrity-provenance.md`](ADR-005-measurement-integrity-provenance.md).
 
-Summary: Requirements/records; raw vs corrected; HIGH/MEDIUM/LOW confidence; PENDING/CAPTURED/MISSED/WAIVED; non-destructive instrument correction vs user revision; INPUT ERROR / UNUSUAL VALUE / DOMAIN CONCERN.
+Summary: History-first measurement ledger — append-only observation history (capture/correction/revision + validation warnings) and status history (PENDING→CAPTURED/MISSED/WAIVED); `MeasurementRecord` is a rebuildable projection only; HIGH/MEDIUM/LOW confidence; INPUT ERROR reject vs UNUSUAL/DOMAIN_CONCERN preserve.
 
 ## 3. ADR-006
 
@@ -134,26 +134,28 @@ Additive tables; all UUID PKs unless noted. `brewery_id` on plan (and denormaliz
 | `planned_kind` | TEXT NULL | PLANNED/ESTIMATED |
 | `current_record_id` | UUID NULL FK → measurement_records | Soft pointer |
 
-### 4.7 `measurement_records`
+### 4.7 `measurement_records` (projection only)
+
+Current convenience view of the latest observation-history head. **Not** the scientific source of truth.
 
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | UUID PK | |
 | `requirement_id` | UUID FK | |
-| `raw_value`, `raw_unit` | NUMERIC/TEXT | |
-| `corrected_value`, `corrected_unit` | NUMERIC/TEXT NULL | |
+| `raw_value`, `raw_unit` | NUMERIC/TEXT | Projection |
+| `corrected_value`, `corrected_unit` | NUMERIC/TEXT NULL | Projection |
 | `confidence` | TEXT | HIGH/MEDIUM/LOW |
-| `instrument`, `method`, `provenance` | TEXT NULL | |
-| `validation_class` | TEXT NULL | OK/UNUSUAL_VALUE/DOMAIN_CONCERN (INPUT ERROR never stored) |
-| `validation_notes` | JSONB NULL | |
-| `captured_at` | TIMESTAMPTZ | Server |
-| `client_captured_at` | TIMESTAMPTZ NULL | |
-| `captured_by` | TEXT | |
-| `client_submission_id` | TEXT NOT NULL | |
+| `instrument`, `method`, `provenance` | TEXT NULL | Projection |
+| `validation_class` | TEXT NULL | Latest OK/UNUSUAL_VALUE/DOMAIN_CONCERN |
+| `validation_notes` | JSONB NULL | Latest warning snapshot only |
+| `latest_observation_history_id` | UUID FK | Points at history head |
+| `first_captured_at` | TIMESTAMPTZ | From original RAW_CAPTURE (stable) |
+| `captured_by` | TEXT | Original capture actor |
+| `client_submission_id` | TEXT NOT NULL | Creating capture idempotency key |
 
-### 4.8 `measurement_observation_history`
+Projection columns may change only when a new observation-history row is appended in the same transaction.
 
-Append-only observation/revision/correction history.
+### 4.8 `measurement_observation_history` (append-only; value source of truth)
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -161,9 +163,12 @@ Append-only observation/revision/correction history.
 | `measurement_record_id` | UUID FK | |
 | `requirement_id` | UUID FK | |
 | `event_class` | TEXT | `RAW_CAPTURE` / `INSTRUMENT_CORRECTION` / `USER_REVISION` |
-| `raw_value`, `raw_unit` | NUMERIC/TEXT NULL | |
-| `corrected_value`, `corrected_unit` | NUMERIC/TEXT NULL | |
+| `raw_value`, `raw_unit` | NUMERIC/TEXT NULL | Immutable snapshot |
+| `corrected_value`, `corrected_unit` | NUMERIC/TEXT NULL | Immutable snapshot |
 | `confidence` | TEXT NULL | |
+| `instrument`, `method`, `provenance` | TEXT NULL | Snapshot |
+| `validation_class` | TEXT NULL | OK/UNUSUAL_VALUE/DOMAIN_CONCERN on this event |
+| `validation_notes` | JSONB NULL | Immutable warning snapshot for this event |
 | `reason` | TEXT NULL | Required for USER_REVISION |
 | `actor_id` | TEXT | |
 | `occurred_at` | TIMESTAMPTZ | Server |
@@ -171,7 +176,25 @@ Append-only observation/revision/correction history.
 | `client_submission_id` | TEXT NOT NULL | |
 | `payload` | JSONB NULL | |
 
-**No UPDATE/DELETE** via API.
+**No UPDATE/DELETE** via API or ORM helpers used by services.
+
+### 4.8b `measurement_status_history` (append-only; lifecycle source of truth)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | UUID PK | |
+| `requirement_id` | UUID FK | |
+| `from_status` | TEXT | |
+| `to_status` | TEXT | CAPTURED/MISSED/WAIVED |
+| `reason` | TEXT NULL | Required for WAIVED |
+| `actor_id` | TEXT | |
+| `source_command` | TEXT | CAPTURE/MISS/WAIVE/SKIP_STAGE/… |
+| `occurred_at` | TIMESTAMPTZ | Server |
+| `client_occurred_at` | TIMESTAMPTZ NULL | |
+| `client_submission_id` | TEXT NULL | |
+| `payload` | JSONB NULL | |
+
+Requirement `status` is a projection of the latest status-history head.
 
 ### 4.9 `brew_timers`
 
@@ -419,13 +442,27 @@ Close does **not** transition PENDING → MISSED.
 
 ```text
 Definition (seed)
-  → Requirement (PENDING, planned/estimated)
-  → Capture (Record + history RAW_CAPTURE) → CAPTURED
-      → Instrument correction (history) → update corrected pointer
-      → User revision (history) → update current values
-  → OR Miss → MISSED
-  → OR Waive → WAIVED
+  → Requirement (PENDING + planned/estimated)
+  → Capture:
+        append observation_history RAW_CAPTURE (with validation snapshot)
+        append status_history PENDING→CAPTURED
+        upsert record projection
+        BrewEvents
+      → Instrument correction:
+        append observation_history INSTRUMENT_CORRECTION
+        refresh projection only
+      → User revision:
+        append observation_history USER_REVISION (reason required)
+        refresh projection only
+  → OR Miss:
+        append status_history PENDING→MISSED (no value fabrication)
+  → OR Waive:
+        append status_history PENDING→WAIVED (reason required)
+  → OR Skip stage:
+        append status_history PENDING→MISSED for remaining REQUIRED
 ```
+
+History tables are authoritative; record/requirement status fields are projections.
 
 ---
 
@@ -479,10 +516,10 @@ Domain mutation + measurement status side effects + all BrewEvents for the comma
 | Abort | Reason required; terminal; no fabricated measurements; **no handoff** |
 | Skip | REQUIRED → MISSED in same transaction; RECOMMENDED remain PENDING; events emitted |
 | Capture | Happy path; idempotent replay |
-| Miss / waive | Status + events; waive needs reason |
-| Instrument correction history | Raw preserved; history rows append |
-| User revision history | Prior values retained; reason required |
-| Unusual value | Persisted + warning |
+| Instrument correction history | Prior rows immutable; projection refreshed; BrewEvent emitted |
+| User revision history | Prior values retained; reason required; history append |
+| Miss / waive history | `measurement_status_history` append; no fabricated values |
+| Unusual value | Persisted on observation-history row + warning; not overwrite-only notes |
 | Invalid input | 422; still PENDING |
 | Timer persistence | Restart process/read still shows RUNNING/ELAPSED |
 | Timer expiry | ELAPSED event; stage unchanged |
@@ -504,7 +541,7 @@ Domain mutation + measurement status side effects + all BrewEvents for the comma
 | Migration | Content |
 |-----------|---------|
 | `005_brew_day_plans_sessions` | brew_plans, brew_sessions, brew_stage_occurrences, brew_actions |
-| `006_brew_day_measurements` | definitions, requirements, records, observation_history |
+| `006_brew_day_measurements` | definitions, requirements, records (projection), observation_history, status_history |
 | `007_brew_day_timers_events` | brew_timers, brew_events |
 | `008_fermentation_handoffs` | fermentation_handoffs stub |
 
@@ -533,7 +570,6 @@ Frontend remains Vite-dev interim (ADR-001/002).
 |----|-------|-------|
 | U1 | Exact REQUIRED measurement set per stage | Seed in E2A-3; not locked in E2A-0 |
 | U5 | Whether plan-level events always include `brew_plan_id` with null session | Prefer both plan_id and session_id when session exists |
-| U6 | Observation history table vs version rows only | Sketch includes dedicated history table |
 | U7 | Explicit inventory consume endpoint shape on session | Required by P5; path TBD in E2A-1/5 |
 
 ### Locked in pre–E2A-1 refinement (formerly open)
@@ -543,6 +579,7 @@ Frontend remains Vite-dev interim (ADR-001/002).
 | U2 | Close vs auto-MISS | **Reject close** while REQUIRED `PENDING`; never auto-MISS on close |
 | U3 | Skip → REQUIRED | **Auto-MISS** remaining REQUIRED in same transaction + events |
 | U4 | Abort PENDING | **Leave PENDING**; report incomplete; no handoff |
+| U6 | Observation/status history | **Dedicated append-only tables** required; record fields are projections only |
 
 ---
 
@@ -551,6 +588,7 @@ Frontend remains Vite-dev interim (ADR-001/002).
 | Risk | Mitigation |
 |------|------------|
 | Timer misuse auto-advances stages | ADR-004/006 invariant + tests |
+| Mutable measurement fields without history | ADR-005 history-first invariant + projection-only records |
 | Fabrication on close | Reject close with REQUIRED PENDING; explicit miss/waive |
 | Partial commit without audit | Command atomicity: event failure rolls back domain mutation |
 | Stale client overwrites | Integer `session_version` compare-and-increment |
