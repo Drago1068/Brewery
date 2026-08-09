@@ -32,6 +32,6 @@
 
 ## Stop
 
-Do **not** begin Epic 2. Await independent architecture review + Human Product Owner approval.
+Epic 1 is **frozen**. Do **not** begin undifferentiated Epic 2 code.
 
-Do **not** treat Epic 1 Compose (Vite-dev + no login + Tailscale/loopback) as the long-term production architecture — see `docs/SECURITY_EPIC1.md`.
+Next: [`docs/EPIC_2_ARCHITECTURE_IMPLEMENTATION_HANDOFF.md`](EPIC_2_ARCHITECTURE_IMPLEMENTATION_HANDOFF.md) — Increment **E2A-0** (ADRs) before brew-day production code.

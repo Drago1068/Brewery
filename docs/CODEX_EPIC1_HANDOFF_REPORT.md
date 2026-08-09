@@ -6,7 +6,7 @@
 **Epic:** 1 — Design the Beer (Brewery, Equipment, Ingredients, Inventory, Recipe Formulation & Readiness)  
 **Handoff source:** Epic 1 Implementation Handoff v1.2  
 **Report date:** 2026-08-09  
-**Classification:** Implementation complete through Increment 7 — **do not begin Epic 2**
+**Classification:** Implementation complete through Increment 7 — **Epic 1 frozen**; Epic 2 proceeds via dedicated handoff (not undifferentiated build)
 
 ---
 
@@ -305,7 +305,7 @@ Epic 1 implementation through Increment 7 is **complete in the local workspace**
 **Documentation archive:** External drives (not runtime dependencies)  
 **Final authority:** Human Product Owner  
 
-**Do not begin Epic 2** until independent review completes and the Product Owner explicitly authorizes.
+**Do not begin undifferentiated Epic 2 implementation.** Epic 1 is frozen at `170fbdb`. Proceed only via [`docs/EPIC_2_ARCHITECTURE_IMPLEMENTATION_HANDOFF.md`](EPIC_2_ARCHITECTURE_IMPLEMENTATION_HANDOFF.md) starting at Increment **E2A-0**.
 
 ---
 
