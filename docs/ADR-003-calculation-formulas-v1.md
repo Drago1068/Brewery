@@ -1,77 +1,78 @@
 # ADR-003 — Epic 1 Calculation Formula Methodologies (v1)
 
+## Metadata
+
 **Status:** Accepted  
 **Date:** 2026-08-09  
-**Context:** ADR-002 deferred authoritative brewing formulas until Increment 5. Product Owner authorized the v1 set below as Epic 1 calculation authority.
+**Context:** ADR-002 deferred authoritative brewing formulas until Increment 5. Product Owner authorized this v1 set as Epic 1 calculation authority.
 
 ## Decision
 
-Authoritative Epic 1 calculations use the following **formula identities**. Changing behavior later requires a new formula version plus golden-fixture updates (handoff §34).
+Authoritative Epic 1 calculations are identified by stable formula IDs and versions (`formula_id@version`). Changing equation or constant behavior requires a new formula version, updated golden fixtures, and Product Owner approval; historical stored explanations must retain their original formula identity and must not be silently reinterpreted. Every authoritative runtime result exposes `formula_id`, `formula_version`, `source_reference`, `assumptions`, `precision`, and explanation, with `source_reference` matching the Runtime string in the corresponding section below.
 
-Runtime results expose `formula_id`, `formula_version`, `source_reference`, `assumptions`, `precision`, and explanation. Each module’s `source_reference` matches the Runtime string in its section below.
-
-### Provenance checklist
+## Provenance checklist
 
 | Field | Requirement |
 |-------|-------------|
 | Formula ID + version | Stable identity (e.g. `OG_ESTIMATE@v1`) |
 | Exact algorithm / equation | One canonical definition per formula section |
-| Constants | Listed once in that section’s Constants block (when applicable) |
-| Units | Internal conversion targets |
+| Constants | Listed once in that section’s Constants block when applicable |
+| Units | Internal conversion targets for the algorithm |
 | Assumptions | Explicit; no silent defaults for missing brewing losses |
 | Rounding / precision | Per Global rounding policy and each section’s precision |
 | Reference / source | Specific enough to re-derive the method; no duplicate citations |
 
-Vague labels (e.g. “standard homebrew gravity points method,” “standard infusion equation,” “conventional brewing factors”) are forbidden in ADR text and runtime `source_reference`.
+Vague source labels (for example “standard homebrew gravity points method,” “standard infusion equation,” or “conventional brewing factors”) are forbidden in this ADR and in runtime `source_reference` strings.
 
----
+## Formula catalog
 
-## Formula catalog (summary)
-
-| Formula ID | Version | Section | Exact method (short) | Canonical reference |
-|------------|---------|---------|----------------------|---------------------|
+| Formula ID | Version | Section | Exact method | Canonical reference |
+|------------|---------|---------|--------------|---------------------|
 | `OG_ESTIMATE` | v1 | §A | Gravity points into batch volume | Palmer, *How to Brew*; Daniels, *Designing Great Beers* (PPG) |
-| `FG_ESTIMATE` | v1 | §B | Attenuation applied to OG | Derived from §C |
-| `APPARENT_ATTENUATION` | v1 | §C | SG form of AA% | SG rearrangement (not ASBC Plato) |
+| `FG_ESTIMATE` | v1 | §B | Expected apparent attenuation applied to OG | Derived from §C |
+| `APPARENT_ATTENUATION` | v1 | §C | SG form of apparent attenuation | SG rearrangement (not ASBC Plato) |
 | `ABV` | v1 | §D | ABV from OG and FG | Palmer, *How to Brew* |
 | `IBU` | v1 | §E | Tinseth utilization | Tinseth hop-utilization equations |
 | `COLOR` | v1 | §F | Morey MCU→SRM | Morey SRM power-fit model |
-| `WATER_REQUIREMENTS` | v1 | §G | Recorded mash/sparge (+ optional losses) | BrewingOS compositional definition |
+| `WATER_REQUIREMENTS` | v1 | §G | Mash (+ optional sparge); recorded losses only | BrewingOS compositional definition |
 | `STRIKE_TEMP` | v1 | §H | Palmer infusion strike | Palmer, *How to Brew*, infusion mash |
-| `RECIPE_SCALING` | v1 | §I | Linear volume scale factor | BrewingOS proportional scaling |
-| `UNIT_CONVERSION` | v1 | §J | Fixed conversion constants | NIST Handbook 44 / SI exact factors |
-
-Each formula ID appears exactly once in this catalog.
-
----
+| `RECIPE_SCALING` | v1 | §I | Linear batch-volume scale factor | BrewingOS proportional scaling |
+| `UNIT_CONVERSION` | v1 | §J | Fixed mass/volume/temperature factors | NIST Handbook 44 / SI exact factors |
 
 ## Principles
 
-1. Results are **ESTIMATED** / **CALCULATED**, never **MEASURED**.
-2. Missing required inputs → status `MISSING` (no fabricated authoritative value).
-3. Invalid inputs → status `INVALID`.
-4. Formula id + version are returned with every authoritative result.
-5. Historical stored explanations must retain formula identity; future formula changes do not rewrite history.
-6. Provenance must state the exact equation and constants used in code — not only a marketing name.
+1. Results are **ESTIMATED** or **CALCULATED**, never **MEASURED**.
+2. Missing required inputs return status `MISSING` (no fabricated authoritative value).
+3. Invalid inputs return status `INVALID`.
+4. Formula ID and version are returned with every authoritative result.
+5. Historical explanations preserve formula identity across future formula versions.
+6. Exact equations and constants used in code are documented in this ADR.
+7. Formula behavior changes require a new version, updated golden fixtures, and PO approval.
 
-### Global rounding policy
+## Global rounding policy
 
-Numeric results use `app.calculations.types.round_decimal` → `Decimal.quantize` at each section’s precision (Python `decimal` default: **ROUND_HALF_EVEN**), unless a section states otherwise.
+Numeric results use `app.calculations.types.round_decimal`, which applies `Decimal.quantize` at the precision listed in each section (Python `decimal` default rounding mode: **ROUND_HALF_EVEN**).
 
 ---
 
 ## A. `OG_ESTIMATE` v1 — Gravity points method
 
-### Units (internal)
+### Identity
 
-Mass → **lb**; volume → **US gallon**; efficiency → **percent 0–100**; potential → specific gravity of 1 lb extract in 1 US gal at 100% efficiency (e.g. `1.037`).
+`OG_ESTIMATE@v1`
 
-### Constants / definitions
+### Units
 
-- `potential_points = (potential_sg − 1) × 1000`
-- Efficiency applied as `E/100` (percent → fraction)
+Mass → **lb**; volume → **US gallon**; efficiency → **percent (0–100)**; potential → specific gravity for 1 lb extract in 1 US gal at 100% efficiency. Non-US inputs are converted via §J before this algorithm.
 
-### Equation
+### Constants
+
+| Name | Value / definition |
+|------|--------------------|
+| Potential points | `(potential_sg − 1) × 1000` |
+| Efficiency fraction | `E / 100` |
+
+### Equation / Algorithm
 
 For each fermentable \(i\):
 
@@ -85,12 +86,10 @@ C_i = W_i^{\mathrm{(lb)}} \times ((P_i - 1)\times 1000) \times \frac{E}{100}
 
 ### Assumptions
 
-- Brewhouse efficiency is a single recipe-level percent applied equally to all fermentable lines.
-- `potential_sg` is PPG-style SG (not Plato).
-- Metric mass/volume inputs convert to lb / US gal via §J before this equation.
+- Efficiency is overall brewhouse efficiency into the stated batch volume.
 - Result kind is **ESTIMATED**.
 
-### Rounding / precision
+### Rounding / Precision
 
 **3** decimal places (SG).
 
@@ -107,11 +106,15 @@ C_i = W_i^{\mathrm{(lb)}} \times ((P_i - 1)\times 1000) \times \frac{E}{100}
 
 ## B. `FG_ESTIMATE` v1 — Final gravity from expected apparent attenuation
 
+### Identity
+
+`FG_ESTIMATE@v1`
+
 ### Units
 
-OG, FG → **specific gravity**; attenuation \(A\) → **percent**.
+OG and FG → **specific gravity**; attenuation \(A\) → **percent**.
 
-### Equation
+### Equation / Algorithm
 
 \[
 \mathrm{FG} = 1 + (\mathrm{OG} - 1)\times\left(1 - \frac{A}{100}\right)
@@ -119,17 +122,17 @@ OG, FG → **specific gravity**; attenuation \(A\) → **percent**.
 
 ### Assumptions
 
-- Uses **expected** apparent attenuation (yeast profile / recipe line), not measured fermentation data.
-- When OG is from `OG_ESTIMATE`, FG remains **ESTIMATED**.
+- \(A\) is **expected** apparent attenuation (yeast profile / recipe line), not measured fermentation data.
+- When OG comes from `OG_ESTIMATE`, FG remains **ESTIMATED**.
 - Algebraically consistent with §C.
 
-### Rounding / precision
+### Rounding / Precision
 
 **3** decimal places (SG).
 
 ### References
 
-Derived from §C. Yeast attenuation ranges are manufacturer data when supplied on the recipe line.
+1. Derived from §C; yeast attenuation ranges are manufacturer data when supplied on the recipe line.
 
 ### Runtime `source_reference`
 
@@ -139,11 +142,15 @@ Derived from §C. Yeast attenuation ranges are manufacturer data when supplied o
 
 ## C. `APPARENT_ATTENUATION` v1
 
+### Identity
+
+`APPARENT_ATTENUATION@v1`
+
 ### Units
 
-OG, FG → **specific gravity**; result → **percent**.
+OG and FG → **specific gravity**; result → **percent**.
 
-### Equation
+### Equation / Algorithm
 
 \[
 \mathrm{AA\%} = \frac{\mathrm{OG} - \mathrm{FG}}{\mathrm{OG} - 1} \times 100
@@ -151,16 +158,16 @@ OG, FG → **specific gravity**; result → **percent**.
 
 ### Assumptions
 
-- SG-based form only (not ASBC Plato; that would be `APPARENT_ATTENUATION@v2`).
+- SG-based form only; not the ASBC Plato-based formula (`APPARENT_ATTENUATION@v2` if required later).
 - Requires \(\mathrm{OG} > 1\); otherwise `INVALID`.
 
-### Rounding / precision
+### Rounding / Precision
 
 **1** decimal place.
 
 ### References
 
-1. Palmer, *How to Brew* — attenuation discussion (SG rearrangement used here).
+1. John Palmer, *How to Brew* (Brewers Publications) — attenuation discussion (SG rearrangement used here).
 
 ### Runtime `source_reference`
 
@@ -170,34 +177,38 @@ OG, FG → **specific gravity**; result → **percent**.
 
 ## D. `ABV` v1
 
+### Identity
+
+`ABV@v1`
+
 ### Units
 
-OG, FG → **specific gravity**; result → **% ABV**.
+OG and FG → **specific gravity**; result → **% ABV**.
 
-### Constant
+### Constants
 
-| Symbol | Value | Meaning |
-|--------|-------|---------|
-| \(k_{\mathrm{ABV}}\) | `131.25` | Homebrew SG→%ABV factor |
+| Name | Value | Meaning |
+|------|-------|---------|
+| Homebrew ABV factor | `131.25` | SG difference → % ABV |
 
-### Equation
+### Equation / Algorithm
 
 \[
-\mathrm{ABV\%} = (\mathrm{OG} - \mathrm{FG}) \times k_{\mathrm{ABV}}
+\mathrm{ABV\%} = (\mathrm{OG} - \mathrm{FG}) \times 131.25
 \]
 
 ### Assumptions
 
 - Simplified homebrew approximation only (not Balling / high-gravity models; those would be `ABV@v2+`).
-- Kind is **CALCULATED** when both gravities are supplied to this formula (upstream inputs may still be estimates).
+- Kind is **CALCULATED** when both gravities are supplied to this formula (upstream values may still be estimates).
 
-### Rounding / precision
+### Rounding / Precision
 
 **2** decimal places.
 
 ### References
 
-1. John Palmer, *How to Brew* (Brewers Publications) — homebrew ABV approximation using \(k_{\mathrm{ABV}}\).
+1. John Palmer, *How to Brew* (Brewers Publications) — homebrew ABV approximation.
 
 ### Runtime `source_reference`
 
@@ -207,27 +218,31 @@ OG, FG → **specific gravity**; result → **% ABV**.
 
 ## E. `IBU` v1 — Tinseth
 
-### Units (internal)
+### Identity
+
+`IBU@v1`
+
+### Units
 
 Hop mass → **grams**; wort volume → **liters**; alpha acid → **percent**; time → **minutes**; boil gravity → **SG**.
 
-### Constants (Tinseth)
+### Constants
 
-| Symbol | Value | Role |
-|--------|-------|------|
-| \(B\) | `1.65` | Bigness base |
-| \(g\) | `0.000125` | Gravity-term base |
-| \(k_t\) | `0.04` | Boil-time decay (per minute) |
-| \(d\) | `4.15` | Boil-time divisor |
+| Name | Value | Role |
+|------|-------|------|
+| Bigness base | `1.65` | BF scale |
+| Gravity-term base | `0.000125` | BF gravity exponent base |
+| Boil-time decay | `0.04` | Per-minute factor in \(e^{-0.04 t}\) |
+| Boil-time divisor | `4.15` | BTF denominator |
 
-### Equations
+### Equation / Algorithm
 
 \[
-\mathrm{BF} = B \times g^{(G_b - 1)}
+\mathrm{BF} = 1.65 \times 0.000125^{(G_b - 1)}
 \]
 
 \[
-\mathrm{BTF} = \frac{1 - e^{-k_t\,t}}{d}
+\mathrm{BTF} = \frac{1 - e^{-0.04\,t}}{4.15}
 \]
 
 \[
@@ -239,30 +254,25 @@ U = \mathrm{BF} \times \mathrm{BTF}
 \]
 
 \[
-\mathrm{IBU}_i = U \times (\mathrm{mg\,\alpha/L})_i,\quad
+\mathrm{IBU}_i = U \times (\mathrm{mg\,\alpha/L})_i,\qquad
 \mathrm{IBU} = \sum_i \mathrm{IBU}_i
 \]
 
-### Stage policy (v1)
-
-| Stage | Contribution |
-|-------|--------------|
-| `BOIL`, `FIRST_WORT`, `WHIRLPOOL`, `MASH` | Tinseth with supplied `time_minutes` |
-| `DRY_HOP` | **0 IBU** (explicit; not estimated) |
+Stage policy: `BOIL`, `FIRST_WORT`, `WHIRLPOOL`, and `MASH` use Tinseth with supplied `time_minutes`; `DRY_HOP` contributes **0 IBU**.
 
 ### Assumptions
 
 - No pellet utilization multiplier in v1.
-- Batch volume is the post-boil volume **proxy** for mg/L when a separate post-boil volume is unavailable (recorded on the result).
+- Batch volume is the post-boil volume proxy for mg/L when a separate post-boil volume is unavailable (recorded on the result).
 - Result kind is **ESTIMATED**.
 
-### Rounding / precision
+### Rounding / Precision
 
 Total IBU → **1** decimal place.
 
 ### References
 
-1. Glenn Tinseth — hop utilization / bitterness equations (Tinseth model); historically published via the Real Beer hop pages / Tinseth hop utilization write-up. Symbols \(B,g,k_t,d\) match the common software reproduction of that model.
+1. Glenn Tinseth — hop utilization / bitterness equations (Tinseth model), historically published via the Real Beer hop pages / Tinseth hop utilization write-up; constants above match the common software reproduction of that model.
 
 ### Runtime `source_reference`
 
@@ -272,25 +282,29 @@ Total IBU → **1** decimal place.
 
 ## F. `COLOR` v1 — Morey SRM
 
-### Units (internal)
+### Identity
+
+`COLOR@v1`
+
+### Units
 
 Mass → **lb**; volume → **US gallon**; color → **°Lovibond**; result → **SRM**.
 
 ### Constants
 
-| Symbol | Value | Role |
-|--------|-------|------|
-| \(a\) | `1.4922` | Morey scale |
-| \(b\) | `0.6859` | Morey exponent |
+| Name | Value | Role |
+|------|-------|------|
+| Morey scale | `1.4922` | SRM scale factor |
+| Morey exponent | `0.6859` | MCU power |
 
-### Equations
+### Equation / Algorithm
 
 \[
 \mathrm{MCU} = \sum_i \frac{W_i^{\mathrm{(lb)}} \times L_i}{V_{\mathrm{batch}}^{\mathrm{(gal)}}}
 \]
 
 \[
-\mathrm{SRM} = a \times \mathrm{MCU}^{b}
+\mathrm{SRM} = 1.4922 \times \mathrm{MCU}^{0.6859}
 \]
 
 ### Assumptions
@@ -299,13 +313,13 @@ Mass → **lb**; volume → **US gallon**; color → **°Lovibond**; result → 
 - Morey power-fit only (not Mosher / Daniels color models).
 - Result kind is **ESTIMATED**.
 
-### Rounding / precision
+### Rounding / Precision
 
 **1** decimal place (SRM).
 
 ### References
 
-1. Dan Morey — MCU→SRM power-fit model (constants \(a,b\) above), commonly cited in homebrew formulation references including Palmer, *How to Brew*.
+1. Dan Morey — MCU→SRM power-fit model, commonly cited in homebrew formulation references including Palmer, *How to Brew*.
 
 ### Runtime `source_reference`
 
@@ -315,36 +329,40 @@ Mass → **lb**; volume → **US gallon**; color → **°Lovibond**; result → 
 
 ## G. `WATER_REQUIREMENTS` v1
 
+### Identity
+
+`WATER_REQUIREMENTS@v1`
+
 ### Units
 
-Volumes in the caller’s unit after §J conversion when needed; totals in the requested output unit.
+Volumes in the caller’s unit after §J conversion when needed; totals reported in the requested output unit.
 
-### Equations
+### Equation / Algorithm
 
 \[
 V_{\mathrm{total}} = V_{\mathrm{mash}} + V_{\mathrm{sparge}}
 \]
 
-\(V_{\mathrm{sparge}}\) is included only if recorded. Boil-off and trub are reported when recorded; otherwise **`NOT RECORDED`** (never defaulted).
+\(V_{\mathrm{sparge}}\) is included only when recorded. Boil-off and trub are reported when recorded; otherwise **`NOT RECORDED`** (never defaulted).
 
-Related helpers (same formula id family):
+Related helpers (same formula identity family):
 
-- Trub recorded: \(V_{\mathrm{post}} = V_{\mathrm{batch}} + V_{\mathrm{trub}}\); else \(V_{\mathrm{post}} \approx V_{\mathrm{batch}}\) (assumption noted on the result).
+- Trub recorded: \(V_{\mathrm{post}} = V_{\mathrm{batch}} + V_{\mathrm{trub}}\); else \(V_{\mathrm{post}} \approx V_{\mathrm{batch}}\) with assumption noted on the result.
 - Boil-off recorded: \(V_{\mathrm{pre}} = V_{\mathrm{post}} + V_{\mathrm{boil-off}}\); else pre-boil is `MISSING`.
 
 ### Assumptions
 
 - No silent default boil-off rate, grain absorption, or trub loss.
-- Sparge optional; mash water required for a total.
-- No full water-chemistry / residual-alkalinity laboratory model in Epic 1.
+- Sparge is optional; mash water is required for a total.
+- Epic 1 excludes full water-chemistry / residual-alkalinity laboratory models.
 
-### Rounding / precision
+### Rounding / Precision
 
 Volume totals → **3** decimal places in the output unit.
 
 ### References
 
-BrewingOS ADR-003 compositional water accounting (Epic 1 scope).
+1. BrewingOS ADR-003 compositional water accounting (Epic 1 scope).
 
 ### Runtime `source_reference`
 
@@ -354,38 +372,43 @@ BrewingOS ADR-003 compositional water accounting (Epic 1 scope).
 
 ## H. `STRIKE_TEMP` v1 — Palmer infusion strike
 
+### Identity
+
+`STRIKE_TEMP@v1`
+
 ### Units
 
-Ratio \(r\) in **US quarts water per pound grain**. Temperatures computed in **°F**, then converted to **°C** for output.
+Water/grain ratio \(r\) in **US quarts water per pound grain**. Temperatures are computed in **°F**, then converted to **°C** for output.
 
-### Constant
+### Constants
 
-| Symbol | Value | Role |
-|--------|-------|------|
-| \(c\) | `0.2` | Grain thermal factor (qt/lb, °F) |
+| Name | Value | Role |
+|------|-------|------|
+| Grain thermal factor | `0.2` | Valid with \(r\) in qt/lb and temperatures in °F |
 
-### Equation
+### Equation / Algorithm
 
 \[
 r = \frac{V_{\mathrm{water}}^{\mathrm{(qt)}}}{W_{\mathrm{grain}}^{\mathrm{(lb)}}}
 \]
 
 \[
-T_w^{\mathrm{(°F)}} = \frac{c}{r}\,(T_{\mathrm{mash}}^{\mathrm{(°F)}} - T_{\mathrm{grain}}^{\mathrm{(°F)}}) + T_{\mathrm{mash}}^{\mathrm{(°F)}}
+T_w^{\mathrm{(°F)}} = \frac{0.2}{r}\,(T_{\mathrm{mash}}^{\mathrm{(°F)}} - T_{\mathrm{grain}}^{\mathrm{(°F)}}) + T_{\mathrm{mash}}^{\mathrm{(°F)}}
 \]
 
 ### Assumptions
 
 - Single-infusion mash only (no decoction / multi-infusion in v1).
-- Grain and mash target temperatures are required (missing → `MISSING`; no implied room-temp default).
+- Grain and mash target temperatures are required inputs (missing → `MISSING`; no implied room-temperature grain default).
+- Result kind is **ESTIMATED**.
 
-### Rounding / precision
+### Rounding / Precision
 
 Strike temperature → **1** decimal place (°C).
 
 ### References
 
-1. John Palmer, *How to Brew* (Brewers Publications) — infusion mash strike-water temperature equation with factor \(c\) for qt/lb / °F.
+1. John Palmer, *How to Brew* (Brewers Publications) — infusion mash strike-water temperature equation.
 
 ### Runtime `source_reference`
 
@@ -395,11 +418,15 @@ Strike temperature → **1** decimal place (°C).
 
 ## I. `RECIPE_SCALING` v1
 
+### Identity
+
+`RECIPE_SCALING@v1`
+
 ### Units
 
-Batch sizes → **US gallons** before the scale factor; ingredient amounts scaled in their native units.
+Batch sizes converted to **US gallons** before the scale factor; ingredient amounts scaled in their native units.
 
-### Equation
+### Equation / Algorithm
 
 \[
 f = \frac{V_{\mathrm{to}}^{\mathrm{(gal)}}}{V_{\mathrm{from}}^{\mathrm{(gal)}}}
@@ -415,13 +442,13 @@ a'_i = a_i \times f
 - Does not re-fit hop utilization, efficiency, or boil-off for the new size in v1.
 - Does not mutate a RecipeVersion; persistence requires a new version per recipe rules.
 
-### Rounding / precision
+### Rounding / Precision
 
 Scale factor → **6** decimal places; scaled amounts → **4** decimal places.
 
 ### References
 
-BrewingOS ADR-003 proportional scaling definition.
+1. BrewingOS ADR-003 proportional scaling definition.
 
 ### Runtime `source_reference`
 
@@ -430,6 +457,14 @@ BrewingOS ADR-003 proportional scaling definition.
 ---
 
 ## J. `UNIT_CONVERSION` v1
+
+### Identity
+
+`UNIT_CONVERSION@v1`
+
+### Units
+
+Mass, volume, and temperature unit pairs supported by the conversion tables below.
 
 ### Constants
 
@@ -443,14 +478,18 @@ BrewingOS ADR-003 proportional scaling definition.
 | `L` → `ml` | `1000` | SI |
 | °C ↔ °F | \(F = C\times 9/5 + 32\); \(C = (F-32)\times 5/9\) | linear |
 
+### Equation / Algorithm
+
+Convert via a common base unit (grams for mass, milliliters for volume) using the factors above; apply the °C/°F relations for temperature.
+
 ### Assumptions
 
-- `gal` / `qt` are **US** liquid measures (not Imperial).
+- `gal` / `qt` mean **US** liquid measures (not Imperial).
 - Unsupported unit pairs → `INVALID` (no guessed factors).
 
-### Rounding / precision
+### Rounding / Precision
 
-Converted results → **6** decimal places.
+Converted numeric results → **6** decimal places.
 
 ### References
 
@@ -476,5 +515,4 @@ Converted results → **6** decimal places.
 ## Consequences
 
 1. Calculation modules must keep `source_reference` aligned with this ADR’s Runtime strings.
-2. Any future equation or constant change requires a new formula version, updated golden fixtures, and PO approval.
-3. Epic 1 treats §§A–J as the auditable calculation foundation.
+2. Epic 1 treats §§A–J as the auditable calculation foundation.
