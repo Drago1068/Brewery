@@ -40,6 +40,61 @@ class AuditAction(StrEnum):
     RECIPE_VERSION_ACTIVATED = "RECIPE_VERSION_ACTIVATED"
     RECIPE_VERSION_LOCKED = "RECIPE_VERSION_LOCKED"
     RECIPE_CLONED = "RECIPE_CLONED"
+    # E2A-1 interim brew-day audit (canonical BrewEvent rows arrive with migration 007).
+    PLAN_CREATED = "PLAN_CREATED"
+    READINESS_ACKNOWLEDGED = "READINESS_ACKNOWLEDGED"
+    SESSION_CREATED = "SESSION_CREATED"
+
+
+class BrewPlanStatus(StrEnum):
+    CREATED = "CREATED"
+
+
+class BrewSessionStatus(StrEnum):
+    PLANNED = "PLANNED"
+    IN_PROGRESS = "IN_PROGRESS"
+    PAUSED = "PAUSED"
+    CLOSED = "CLOSED"
+    ABORTED = "ABORTED"
+    HANDED_OFF = "HANDED_OFF"
+
+
+class BrewStageStatus(StrEnum):
+    PENDING = "PENDING"
+    ACTIVE = "ACTIVE"
+    COMPLETED = "COMPLETED"
+    SKIPPED = "SKIPPED"
+
+
+class BrewActionStatus(StrEnum):
+    PENDING = "PENDING"
+    COMPLETED = "COMPLETED"
+
+
+class BrewStageCode(StrEnum):
+    PRE_BREW = "PRE_BREW"
+    MASH_IN = "MASH_IN"
+    MASH = "MASH"
+    MASH_COMPLETE = "MASH_COMPLETE"
+    BOIL = "BOIL"
+    CHILL_KNOCKOUT = "CHILL_KNOCKOUT"
+    TRANSFER = "TRANSFER"
+    YEAST_PITCH = "YEAST_PITCH"
+    BREW_DAY_AUDIT = "BREW_DAY_AUDIT"
+
+
+# Ordered Epic 2A stage sequence (ADR-004).
+BREW_DAY_STAGE_SEQUENCE: tuple[BrewStageCode, ...] = (
+    BrewStageCode.PRE_BREW,
+    BrewStageCode.MASH_IN,
+    BrewStageCode.MASH,
+    BrewStageCode.MASH_COMPLETE,
+    BrewStageCode.BOIL,
+    BrewStageCode.CHILL_KNOCKOUT,
+    BrewStageCode.TRANSFER,
+    BrewStageCode.YEAST_PITCH,
+    BrewStageCode.BREW_DAY_AUDIT,
+)
 
 
 class RecipeStatus(StrEnum):

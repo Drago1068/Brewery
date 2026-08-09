@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1 import (
+    brew_day,
     brewery,
     calculations,
     equipment,
@@ -20,3 +21,4 @@ api_router.include_router(inventory.router)
 api_router.include_router(recipes.router)
 api_router.include_router(calculations.router)
 api_router.include_router(readiness.router)
+api_router.include_router(brew_day.router)

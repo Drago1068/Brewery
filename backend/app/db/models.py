@@ -600,3 +600,170 @@ class RecipeVersionTarget(Base):
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     recipe_version: Mapped["RecipeVersion"] = relationship(back_populates="targets")
+
+
+class BrewPlan(Base):
+    """Immutable RecipeVersion baseline for a Guided Brew Day (E2A-1)."""
+
+    __tablename__ = "brew_plans"
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
+    brewery_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("breweries.id", ondelete="CASCADE"), nullable=False
+    )
+    recipe_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("recipes.id", ondelete="RESTRICT"), nullable=False
+    )
+    recipe_version_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("recipe_versions.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="CREATED")
+    batch_size: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
+    batch_size_unit: Mapped[str] = mapped_column(String(8), nullable=False)
+    brewhouse_efficiency: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 3), nullable=True)
+    equipment_profile_id: Mapped[Optional[str]] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("equipment_profiles.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    equipment_snapshot: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    recipe_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    planned_calculation_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    readiness_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    readiness_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    readiness_checks_snapshot: Mapped[list] = mapped_column(JSONB, nullable=False)
+    readiness_acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    readiness_acknowledged_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    readiness_acknowledged_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    readiness_acknowledgement_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    session: Mapped[Optional["BrewSession"]] = relationship(
+        back_populates="brew_plan", uselist=False, cascade="all, delete-orphan"
+    )
+
+
+class BrewSession(Base):
+    __tablename__ = "brew_sessions"
+    __table_args__ = (UniqueConstraint("brew_plan_id", name="uq_brew_sessions_brew_plan_id"),)
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
+    brew_plan_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("brew_plans.id", ondelete="CASCADE"), nullable=False
+    )
+    brewery_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("breweries.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PLANNED")
+    current_stage_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    abort_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    brew_plan: Mapped["BrewPlan"] = relationship(back_populates="session")
+    stage_occurrences: Mapped[list["BrewStageOccurrence"]] = relationship(
+        back_populates="brew_session",
+        cascade="all, delete-orphan",
+        order_by="BrewStageOccurrence.sequence_no",
+    )
+
+
+class BrewStageOccurrence(Base):
+    __tablename__ = "brew_stage_occurrences"
+    __table_args__ = (
+        UniqueConstraint("brew_session_id", "stage_code", name="uq_brew_stage_session_code"),
+        UniqueConstraint(
+            "brew_session_id", "sequence_no", name="uq_brew_stage_session_sequence"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
+    brew_session_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("brew_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    stage_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING")
+    entered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    exited_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    skip_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    brew_session: Mapped["BrewSession"] = relationship(back_populates="stage_occurrences")
+    actions: Mapped[list["BrewAction"]] = relationship(
+        back_populates="stage_occurrence", cascade="all, delete-orphan"
+    )
+
+
+class BrewAction(Base):
+    """Lightweight checklist foundation; no procedural templates in E2A-1."""
+
+    __tablename__ = "brew_actions"
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
+    brew_stage_occurrence_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("brew_stage_occurrences.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    stage_occurrence: Mapped["BrewStageOccurrence"] = relationship(back_populates="actions")
+
+
+class IdempotencyRecord(Base):
+    """Append-only replay ledger (ADR-006). No UPDATE/DELETE application API."""
+
+    __tablename__ = "idempotency_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "scope_type",
+            "scope_id",
+            "client_submission_id",
+            name="uq_idempotency_scope_submission",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4())
+    )
+    scope_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    scope_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    client_submission_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    operation_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    http_status: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    session_version_before: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    session_version_after: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
