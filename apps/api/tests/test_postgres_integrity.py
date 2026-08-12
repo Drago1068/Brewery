@@ -19,11 +19,16 @@ def test_postgres_immutability_triggers_are_installed():
                 text(
                     "SELECT tgname FROM pg_trigger "
                     "WHERE NOT tgisinternal AND tgname IN "
-                    "('recipe_version_immutable', 'measurement_completed_immutable')"
+                    "('recipe_version_immutable', 'measurement_completed_immutable', "
+                    "'inventory_ledger_immutable')"
                 )
             ).scalars()
         )
-    assert trigger_names == {"recipe_version_immutable", "measurement_completed_immutable"}
+    assert trigger_names == {
+        "recipe_version_immutable",
+        "measurement_completed_immutable",
+        "inventory_ledger_immutable",
+    }
 
 
 def test_migration_head_and_immutability_are_enforced_by_postgres():
@@ -37,7 +42,10 @@ def test_migration_head_and_immutability_are_enforced_by_postgres():
     measurement_id = uuid.uuid4()
     user_id = uuid.uuid4()
     with engine.connect() as connection, connection.begin():
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0001_phase1a"
+        assert (
+            connection.scalar(text("SELECT version_num FROM alembic_version"))
+            == "0002_phase2_brewing_core"
+        )
         connection.execute(
             text(
                 "INSERT INTO users (id, created_at, username, password_hash, is_active) "

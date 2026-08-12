@@ -11,7 +11,7 @@ docker compose run --rm --no-deps -e DATABASE_URL=sqlite+pysqlite:///./.test-bre
 PostgreSQL integration tests verify migration head and both database-level immutability triggers:
 
 ```powershell
-docker compose exec -e TEST_USE_POSTGRES=1 api pytest -q tests/test_postgres_integrity.py
+docker compose exec -e TEST_USE_POSTGRES=1 api pytest -q tests/test_postgres_integrity.py tests/test_phase2_postgres_integrity.py
 ```
 
 ## Frontend
@@ -30,5 +30,4 @@ The production Docker build runs the Next.js TypeScript compilation.
 docker compose --profile test run --rm --build e2e
 ```
 
-The Playwright test performs the complete authorized slice and reloads the browser during the running Mash timer. Failures retain traces and screenshots inside the ephemeral test container; CI publishes should be added if long-term artifacts are desired.
-
+The Playwright suite proves both the accepted Phase 1A Mash slice and the Phase 2 path from equipment/catalog/inventory through calculation, availability, scaling, immutable cloning, and original-version verification. Failures retain traces and screenshots inside the ephemeral test container.

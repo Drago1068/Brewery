@@ -20,13 +20,13 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
           </Link>
           <nav aria-label="Primary navigation">
             <Link href="/">Recipes</Link>
+            <Link href="/designer">Recipe Designer</Link>
             <Link href="/#active-brew">Active brew</Link>
           </nav>
         </header>
         <main>{children}</main>
-        <footer>Phase 1A · Private brewing workspace</footer>
+        <footer>Phase 2 · Private brewing workspace · Deterministic calculations</footer>
       </body>
     </html>
   );
 }
-

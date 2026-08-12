@@ -10,7 +10,7 @@ from brewing_api.application.errors import DomainError
 from brewing_api.platform.config import get_settings
 from brewing_api.platform.database import SessionLocal
 from brewing_api.platform.logging import configure_logging
-from brewing_api.presentation.routes import auth, brew_sessions, health, recipes
+from brewing_api.presentation.routes import auth, brew_sessions, brewing_core, health, recipes
 
 configure_logging()
 log = structlog.get_logger()
@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="1.0.0-phase1a",
+    version="2.0.0-phase2",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
@@ -36,7 +36,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT"],
     allow_headers=["Content-Type"],
 )
 
@@ -68,4 +68,4 @@ app.include_router(health.router)
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(recipes.router, prefix="/api/v1")
 app.include_router(brew_sessions.router, prefix="/api/v1")
-
+app.include_router(brewing_core.router, prefix="/api/v1")

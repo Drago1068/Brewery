@@ -11,7 +11,9 @@ docker compose run --rm api alembic current
 docker compose run --rm api alembic upgrade head
 ```
 
-Migration `0001_phase1a` creates only Phase 1/1A tables. PostgreSQL triggers prevent mutation/deletion of a recipe version used by a brew session and prevent mutation/deletion of measurements belonging to a completed stage. Corrections append a new measurement linked by `correction_of_id` and generate audit/journal events.
+Migration `0001_phase1a` remains unchanged. Additive migration `0002_phase2_brewing_core` adds equipment, catalog, lots, ledger inventory, reservations, safety stock, recipe formulation, water targets, substitutions, and calculation snapshot columns. It is compatible with legacy recipe versions because new Phase 2 fields are nullable. Its downgrade removes only Phase 2 objects and was round-trip tested locally.
+
+PostgreSQL triggers protect used recipe versions, completed-stage measurements, and every inventory transaction from update/delete. Inventory corrections are new `ADJUSTMENT` entries; reservation/release audit entries do not change physical stock.
 
 ## Backup
 

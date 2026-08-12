@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0-phase2 - 2026-08-12
+
+- Added owned equipment profiles and immutable recipe equipment snapshots.
+- Added category-aware ingredients, lots with hop-specific alpha acid, suppliers, and supplier items.
+- Added append-only ledger inventory, independent reservations, transfers, safety stock, and deterministic projections.
+- Added Recipe Designer APIs/UI, persisted calculation snapshots, availability states, manual substitutions, and clone-to-new-version scaling.
+- Expanded the authoritative Decimal calculation package for conversions, extract, OG/FG, attenuation, ABV, efficiency, Tinseth IBU, Morey color, water volumes, strike temperature, pitch, carbonation, minerals, and process-aware scaling.
+- Added reversible migration `0002_phase2_brewing_core`, ADRs 0008-0011, backend/golden/PostgreSQL/frontend/E2E tests, and Phase 2 domain documentation.
+- Preserved the Phase 1A workflow, passed independent architecture and brewing-domain review, and closed the reproducible Phase 2 accepted baseline.
+- Stopped before Phase 3; fermentation, packaging, serving/menu, learning, sensory, competition, advanced analytics/AI, IoT, and production deployment remain excluded.
+
 ## 0.1.0-phase1a - 2026-08-11
 
 - Initialized the independent `B:\brewing-platform` Git repository.
@@ -12,5 +23,4 @@
 - Recorded independent architecture acceptance and closed the Phase 1/1A baseline for tagging.
 - Stopped before Phase 2 for independent architecture review.
 
-Phase 2 remains explicitly unauthorized.
-
+Phase 3 remains explicitly unauthorized.

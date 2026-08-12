@@ -1,9 +1,9 @@
 # Architecture Compliance Report
 
-Baseline: `0.1.0-phase1a`
+Accepted baseline: `v0.1.0-phase1a` (`d864bbd505cf7b7bb03a2652ebf1c86819aa48ee`)
 
 Assessment date: 2026-08-11
-Decision boundary: stop after Phase 1 and Phase 1A for independent architecture review.
+Decision boundary: Phase 2 review candidate; stop before Phase 3.
 
 Architecture review was subsequently accepted. Closure and restore evidence is recorded in `docs/evidence/PHASE_1A_INDEPENDENT_ARCHITECTURE_ACCEPTANCE.md`.
 
@@ -19,19 +19,19 @@ Architecture review was subsequently accepted. Closure and restore evidence is r
 - Git-ignored custom-format PostgreSQL backup plus confirmation-gated restore helper.
 - GitHub Actions baseline for backend, PostgreSQL integration, frontend, and E2E checks.
 
-No Phase 2 feature was implemented.
+Phase 2 adds owned equipment, category-aware ingredients/lots, append-only ledger inventory and independent reservations, safety stock, immutable recipe calculation snapshots, process-aware scaling, availability, manual substitutions, and a responsive Recipe Designer. PostgreSQL remains authoritative and the calculation package owns all brewing formulas.
 
 ## Tests and evidence
 
 Executed locally against the candidate:
 
 - `ruff check`: PASS.
-- Backend SQLite/domain/API suite: PASS, 11 passed and 2 PostgreSQL-only tests skipped as designed.
-- PostgreSQL migration/integrity suite: PASS, 2 passed. It verified Alembic head and exercised both immutability triggers.
-- Frontend Vitest suite: PASS, 3 passed.
+- Backend SQLite/domain/API suite: PASS, 21 passed and 3 PostgreSQL-only tests skipped as designed.
+- PostgreSQL migration/integrity suite: PASS, 3 passed. It verified Alembic head and exercised recipe, measurement, and inventory immutability triggers.
+- Frontend Vitest suite: PASS, 5 passed.
 - Frontend ESLint: PASS.
 - Next.js production build and TypeScript compilation: PASS.
-- Playwright complete Phase 1A browser flow: PASS, 1 passed. The flow included a browser refresh while the Mash timer was active.
+- Playwright Phase 1A and Phase 2 browser flows: PASS, 2 passed. They prove timer refresh recovery and the complete Brewing Core workflow through immutable scaling/cloning.
 - Docker Compose validation: PASS.
 - Runtime health: PASS for PostgreSQL, Redis, API, and web; `/health/live`, `/health/ready`, and `/login` returned success.
 - npm audit for web and E2E packages: PASS, zero known vulnerabilities.
@@ -45,9 +45,12 @@ The FastAPI test client emits a dependency deprecation warning recommending the 
 - ADR-0002: platform capabilities, brewing-domain modules, application use cases, HTTP/UI presentation, and implementation infrastructure remain separated.
 - ADR-0003: historical corrections append records and audit/journal events; PostgreSQL prevents silent updates after Mash completion.
 - ADR-0004: variance/tolerance comparisons live in the deterministic `packages/calculations` code and have golden/edge tests.
-- ADR-0005: inventory is not implemented; no mutable quantity shortcut compromises the future ledger.
+- ADR-0005/ADR-0011: inventory derives from immutable transactions; reservations are independent allocations with auditable zero-delta ledger events.
 - ADR-0006: the timer start, duration, pause fields, status, and completion are stored in PostgreSQL; the UI reconstructs display state and E2E proves refresh recovery.
 - ADR-0007: public menu work remains deferred and no public endpoint was introduced.
+- ADR-0008: canonical SI-oriented units and boundary conversion prevent mixed-unit calculations.
+- ADR-0009: formula/model identifiers make Tinseth, Morey, ABV, pitch, and carbonation assumptions explicit.
+- ADR-0010: each recipe version snapshots equipment, inputs, outputs, models, and unit policy.
 
 ## Security
 
@@ -71,7 +74,7 @@ There are no material deviations from the approved architecture. Dedicated host 
 
 ## Recommended next step
 
-Phase 1A gate decision: **PASS / ACCEPTED**, not authorization for Phase 2 and not NAS-production readiness.
+Phase 2 gate recommendation: **PASS / READY FOR INDEPENDENT REVIEW**, not authorization for Phase 3 and not NAS-production readiness.
 
 The reviewer should inspect the migration/trigger strategy, authentication/session boundary, module dependency direction, timer/reminder rules, mobile Brew-Day interaction, and backup/restore plan. Any requested correction should remain within Phase 1/1A until the gate is formally accepted.
 
@@ -85,4 +88,4 @@ The reviewer should inspect the migration/trigger strategy, authentication/sessi
 
 ## Stop
 
-Implementation stops here. Phase 2 has not begun.
+Implementation stops here. Phase 3 has not begun and requires explicit authorization after review.

@@ -1,14 +1,14 @@
 # Brewing Platform
 
-Phase 1/1A architecture-review candidate for a private Brewing Knowledge & Execution Platform.
+Phase 2 accepted baseline for a private Brewing Knowledge & Execution Platform.
 
 ## Status
 
-**Phase 1 + Phase 1A baseline accepted**
+**Phase 2 Brewing Core accepted baseline**
 
-**Phase 2 awaiting explicit authorization**
+**Phase 3 awaiting explicit authorization**
 
-The implemented slice creates a versioned recipe, starts a brew session and Mash stage, persists an authoritative timer and reminders, captures pH and gravity, records deviations, completes Mash, and displays planned-versus-actual evidence with an automatic journal. Later roadmap phases are intentionally absent.
+The platform now provides owned equipment profiles, a category-aware ingredient catalog, lot inventory derived from an append-only ledger, safety-stock warnings, a responsive Recipe Designer, immutable calculation snapshots, process-aware scaling, availability checks, and manual substitution metadata. The accepted Phase 1A Mash slice remains intact. Later roadmap phases are intentionally absent.
 
 ## Repository
 
@@ -48,7 +48,7 @@ The API is host-local at `http://127.0.0.1:18100`; interactive API documentation
 
 ```powershell
 docker compose run --rm --no-deps -e DATABASE_URL=sqlite+pysqlite:///./.test-brewing.db api pytest -q
-docker compose exec -e TEST_USE_POSTGRES=1 api pytest -q tests/test_postgres_integrity.py
+docker compose exec -e TEST_USE_POSTGRES=1 api pytest -q tests/test_postgres_integrity.py tests/test_phase2_postgres_integrity.py
 docker build --target build -t brewing-platform-web-test -f infrastructure/docker/web.Dockerfile .
 docker run --rm brewing-platform-web-test npm test
 docker run --rm brewing-platform-web-test npm run lint
@@ -59,4 +59,4 @@ See [Local Development](docs/operations/LOCAL_DEVELOPMENT.md), [Database](docs/o
 
 ## Scope gate
 
-Phase 2 is not authorized. The accepted baseline is closed and tagged for reproducible future work; no later-phase capability is included.
+Phase 2 is closed as the accepted `v0.2.0-phase2` baseline. Work stops here: Phase 3 and NAS production deployment are not authorized, and no fermentation, packaging, serving, advanced analytics/AI, IoT, or production deployment capability is included.
