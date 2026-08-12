@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "brewing-platform-api"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+  "alembic==1.19.1",
+  "fastapi==0.141.1",
+  "psycopg[binary]==3.2.10",
+  "pydantic-settings==2.10.1",
+  "pwdlib[argon2]==0.2.1",
+  "redis==6.4.0",
+  "sqlalchemy==2.0.52",
+  "structlog==25.4.0",
+  "uvicorn[standard]==0.35.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx==0.28.1",
+  "pytest==8.4.2",
+  "pytest-cov==6.2.1",
+  "ruff==0.12.12",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["brewing_api*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = ["integration: requires PostgreSQL"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+

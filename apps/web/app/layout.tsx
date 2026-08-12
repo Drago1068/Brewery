@@ -1,0 +1,32 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import type { ReactNode } from "react";
+
+import "./globals.css";
+
+export const metadata: Metadata = {
+  title: "Brewing Platform",
+  description: "Measured brewing, repeatable results.",
+};
+
+export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
+  return (
+    <html lang="en">
+      <body>
+        <header className="site-header">
+          <Link className="brand" href="/" aria-label="Brewing Platform home">
+            <span className="brand-mark" aria-hidden="true">BP</span>
+            <span>Brewing Platform</span>
+          </Link>
+          <nav aria-label="Primary navigation">
+            <Link href="/">Recipes</Link>
+            <Link href="/#active-brew">Active brew</Link>
+          </nav>
+        </header>
+        <main>{children}</main>
+        <footer>Phase 1A · Private brewing workspace</footer>
+      </body>
+    </html>
+  );
+}
+
