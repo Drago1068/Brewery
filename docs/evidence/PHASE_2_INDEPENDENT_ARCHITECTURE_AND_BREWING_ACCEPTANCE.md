@@ -13,9 +13,9 @@ Excluded scope: `PHASE_3_NOT_INCLUDED`
 - Phase 1A source tag: `v0.1.0-phase1a`
 - Phase 1A source commit: `d864bbd505cf7b7bb03a2652ebf1c86819aa48ee`
 - Closure branch: `main`
-- Phase 2 implementation baseline commit: `TO_BE_RECORDED_AFTER_BASELINE_COMMIT`
+- Phase 2 implementation baseline commit: `03dd3bf863e4607404df3d75068fa151b8d4d068`
 - Final accepted tag: `v0.2.0-phase2`
-- Tag target: the evidence-complete Phase 2 closure commit
+- Tag target: the evidence-completion commit that adds this recorded implementation SHA; resolve with `git rev-list -n 1 v0.2.0-phase2`
 
 ## Architecture Findings
 
@@ -173,8 +173,8 @@ The disposable environment was stopped with `docker compose down`; persistent vo
 ## Final Baseline
 
 - Branch: `main`
-- Phase 2 implementation baseline commit: `TO_BE_RECORDED_AFTER_BASELINE_COMMIT`
+- Phase 2 implementation baseline commit: `03dd3bf863e4607404df3d75068fa151b8d4d068`
 - Evidence-complete accepted tag: `v0.2.0-phase2`
-- Tag target: this evidence-complete closure state
+- Tag target: the evidence-completion commit that adds this recorded implementation SHA; the annotated tag is the authoritative final accepted-state identifier
 
 No Phase 3 work is authorized by this acceptance record.
