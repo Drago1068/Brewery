@@ -112,6 +112,6 @@ The pre-commit review found no real `.env`, credentials, API keys, auth tokens, 
 ## Baseline
 
 - Branch: `main`
-- Accepted implementation commit: `PENDING_BASELINE_COMMIT`
-- Evidence-complete commit: `PENDING_EVIDENCE_COMMIT`
-- Tag: `v0.1.0-phase1a` (to be created after the evidence-complete commit)
+- Accepted implementation commit: `a2f83d247bc7b3e484983d58acc77fdad2408cec`
+- Evidence-complete state: the commit identified by annotated tag `v0.1.0-phase1a`
+- Tag: `v0.1.0-phase1a`
