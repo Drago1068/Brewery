@@ -1,38 +1,46 @@
 # Product Requirements v1.0
 
+This document refines the mandatory capabilities in the [Brewing Intelligence & Competition OS Master Plan](BREWING_INTELLIGENCE_AND_COMPETITION_OS_MASTER_PLAN.md). Delivery is split into Core Product V1, Advanced Capabilities, and Future Intelligence; deferral to a later horizon does not make a capability optional.
+
 ## Core User Experiences
 
 ### Learn
-Structured lessons, quizzes, practical exercises, mastery tracking, contextual explanations, and AI tutoring.
+Master Brewer Academy with progressive curriculum, brewing science and mathematics, BJCP/style education, sensory and fault-identification training, triangle testing, practical exercises, skill assessment, mastery tracking, contextual “teach me why” explanations, and bounded AI tutoring.
 
 ### Design
-Create recipes using style targets, ingredient calculations, equipment profile, water chemistry, process assumptions, and versioning.
+Translate sensory targets into equipment-aware recipes using style constraints, ingredient calculations, water chemistry, mash/boil/hop/yeast formulation, cost optimization, process assumptions, scaling/upscaling, immutable versioning, and controlled A/B or split-batch experiments.
 
 ### Plan
-Confirm ingredient availability, identify shortages, suggest inventory substitutions, calculate purchase requirements, and respect safety stock.
+Confirm lot-level availability and freshness, reserve inventory, identify shortages, simulate compatible substitutions, calculate purchase requirements, respect safety stock/reorder points/lead times, forecast demand, and reduce waste.
 
 ### Brew
-Run a guided brew-day workflow with timers, stage reminders, required measurements, notes, deviations, and automatic journal capture.
+Run a stage-aware interactive worksheet with concurrent and automatic addition timers, required-data and pH/gravity/volume reminders, voice-assisted confirmed entry, validated planned-versus-actual measurements, photos, notes, deviations, audit history, and timestamped journal capture.
 
 ### Ferment
-Track fermentation temperature, gravity, milestones, additions, attenuation, and packaging readiness.
+Track gravity, temperature, pH, curves, milestones, additions, attenuation, yeast pitch calculations and history, alerts, conditioning, troubleshooting, and packaging readiness.
 
 ### Package
-Record kegging/canning/bottling, carbonation, packaging date, yield, location, and remaining quantity.
+Record kegging/canning/bottling, oxygen exposure, carbonation, packaging quality and stability checks, packaging date, yield, location, and remaining quantity with batch traceability.
 
 ### Serve
-Maintain current beer-on-hand inventory and publish a digital menu showing beers on tap and/or available in cans/bottles.
+Maintain keg/can/bottle inventory, draft-system and tap assignments, line-cleaning reminders, consumption, and a QR-capable digital menu grounded in live authoritative availability.
 
 ### Evaluate
-Capture sensory observations, structured off-flavor descriptors, BJCP-style scores, and competition feedback.
+Capture structured sensory observations, off-flavor descriptors, BJCP-style scoresheets, triangle tests, AI-judge advice, judge disagreement, competition selection/calendar/entries/history/awards, and resulting iteration evidence.
 
 ### Improve
-Compare planned vs actual performance, identify recurring process variation, evaluate recipe changes, and recommend next-version improvements.
+Use the Brewer Knowledge Engine and personal brewing profile to compare planned vs actual performance, analyze historical batches and experiment history, identify recipe-performance correlations, evaluate changes, and recommend evidence-ranked future-batch improvements.
+
+### Assure Quality and Operate
+Manage QA/QC, sanitation/CIP, equipment maintenance, instrument calibration, microbiology/contamination awareness, brewing/fermentation/packaging/competition calendars, purchasing, scheduling, and equipment-capacity planning.
+
+### Brand and Publish
+Generate brewer-approved beer names, identity concepts, logos, labels, and tap badges while publishing digital and QR menus whose availability comes only from authoritative finished-beer inventory.
 
 ## Inventory Requirements
 - Ingredient master data.
 - Lot-level inventory where relevant.
-- Quantity on hand.
+- Quantity on hand derived from the append-only inventory ledger.
 - Unit and conversion.
 - Supplier and cost.
 - Storage location.
@@ -43,6 +51,8 @@ Compare planned vs actual performance, identify recurring process variation, eva
 - Recipe reservation/commitment support.
 - Substitution engine constrained by ingredient role, style impact, quantity, and inventory availability.
 - Purchase list generation.
+- Reorder alerts, supplier lead times, demand forecasts, freshness controls, and waste-minimization guidance.
+- Substitution simulation with compatibility score, process/flavor impact, confidence, and explicit approval.
 
 ## Packaged Beer Requirements
 - Keg inventory.
@@ -88,14 +98,32 @@ Recipes must scale by target finished volume while considering:
 - Workflow state machine.
 - Stage timers.
 - Multiple concurrent timers where needed.
+- Automatic hop and addition timers.
 - Required/optional measurement prompts.
 - Reminder escalation.
 - Timestamped notes.
+- Confirmed voice data entry, photos, and attachments.
 - Planned vs actual values.
 - Variance thresholds.
 - Corrective action suggestions.
 - Automatic journal generation.
 - Resume active brew after browser/device interruption.
+
+## Quality and Operations Requirements
+- QA/QC plans and evidence linked to batches and packages.
+- Sanitation/CIP records, equipment maintenance, and line-cleaning schedules.
+- Instrument calibration history and due reminders.
+- Contamination-awareness guidance without fabricating microbiological evidence.
+- Packaging quality, stability testing, oxygen exposure, and carbonation controls.
+- Brewing, fermentation, packaging, purchasing, maintenance, calibration, and competition calendars.
+- Brew scheduling and equipment-capacity planning.
+
+## Intelligence Requirements
+- Maintain a personal brewing profile, historical-batch evidence, experiment history, and recipe-performance correlations.
+- Recommendations must cite relevant evidence, assumptions, confidence, and uncertainty.
+- AI may explain, tutor, diagnose, simulate, synthesize, recommend, and create drafts.
+- Deterministic application services must calculate, validate, record, authorize, and enforce rules.
+- AI cannot autonomously control brewery equipment or silently change authoritative records.
 
 ## Required Measurement Examples
 - source water or brewing water values where available
@@ -114,4 +142,4 @@ Recipes must scale by target finished volume while considering:
 - carbonation where tracked
 
 ## Nonfunctional Requirements
-Security, backup/recovery, mobile responsiveness, accessibility, testability, traceability, auditability, observability, deterministic calculations, reliable timers, and data portability.
+Security, server-side authorization, explicit units, UTC storage, backup/restore/repair, mobile responsiveness, accessibility, testability, traceability, provenance, auditability, observability, explainable AI, deterministic calculations, reliable timers, and data portability.

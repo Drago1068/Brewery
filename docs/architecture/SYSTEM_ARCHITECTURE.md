@@ -16,20 +16,32 @@ Technology selections require final validation during repository initialization.
 - identity
 - brewing_profile
 - equipment
+- equipment_assurance
 - ingredients
 - inventory
+- suppliers_purchasing
 - recipes
+- experiments
 - calculations
 - brew_sessions
 - workflow
 - measurements
 - fermentation
+- yeast_management
+- conditioning
+- quality_sanitation
 - packaging
+- finished_beer
+- draft_system
 - serving_menu
+- branding
 - sensory
 - competition
 - learning
+- academy
+- operations_scheduling
 - analytics
+- knowledge_engine
 - ai_coach
 - notifications
 - audit
@@ -60,4 +72,6 @@ SENSORY_EVALUATION_RECORDED
 Brew-day timer state is persisted server-side so the active session can recover after client refresh/reconnect.
 
 ## AI Boundary
-The AI layer consumes domain data and deterministic calculation results. It does not directly mutate authoritative brewing history without explicit application commands and validation.
+The Brewing Data Core owns authoritative facts and provenance. Deterministic services calculate, validate, record, authorize, and enforce rules. The AI Orchestration Layer consumes authorized domain data and deterministic results to explain, tutor, diagnose, simulate, synthesize, create drafts, and recommend. It does not directly mutate authoritative brewing history or operational state without explicit validated application commands.
+
+The complete mandatory capability map and delivery horizons are governed by the [Brewing Intelligence & Competition OS Master Plan](../product/BREWING_INTELLIGENCE_AND_COMPETITION_OS_MASTER_PLAN.md).

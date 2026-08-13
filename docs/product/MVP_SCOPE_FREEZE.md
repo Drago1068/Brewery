@@ -1,5 +1,7 @@
 # MVP Scope Freeze — v1.0
 
+This is the historical freeze for the first Phase 1A vertical slice, not the full product scope. The authoritative long-range scope is the [Brewing Intelligence & Competition OS Master Plan](BREWING_INTELLIGENCE_AND_COMPETITION_OS_MASTER_PLAN.md).
+
 ## MVP Objective
 Prove that the architecture can support the complete core loop from recipe through guided brewing and structured measurements.
 
@@ -43,4 +45,4 @@ Prove that the architecture can support the complete core loop from recipe throu
 - AI optimization
 - logo/image generation
 
-These items remain committed roadmap capabilities, not removed requirements.
+These items remain mandatory, phase-gated roadmap capabilities, not optional ideas or authorization to begin the next phase.

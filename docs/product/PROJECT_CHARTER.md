@@ -1,10 +1,10 @@
 # Project Charter
 
 ## Product
-Brewing Platform
+Brewing Intelligence & Competition OS (repository name: Brewing Platform)
 
 ## Vision
-Create a personal Brewing Knowledge & Execution Platform that teaches brewing, engineers recipes, guides brew-day execution, manages ingredients and packaged beer, records objective and sensory data, and uses those results to improve future brews.
+Create a personal Brewing Intelligence & Competition OS that teaches brewing, engineers and experiments with recipes, guides execution from brewing through serving, manages ingredients and finished beer, assures quality, records objective/sensory/competition evidence, and uses trusted history to improve future brews.
 
 ## Primary Objectives
 - Develop the user's brewing mastery from fundamentals through competition-level recipe design.
@@ -15,7 +15,9 @@ Create a personal Brewing Knowledge & Execution Platform that teaches brewing, e
 - Use AI for explanation, coaching, diagnosis, synthesis, and recommendation.
 - Support inventory-aware recipe planning and substitution.
 - Support packaged/kegged beer inventory and a digital beer menu.
-- Enable future competition-oriented learning and optimization.
+- Provide a Master Brewer Academy with progressive science, mathematics, style, sensory, and practical learning.
+- Support quality, sanitation, calibration, maintenance, finished-beer, operations, competition, and branding workflows.
+- Build a Brewer Knowledge Engine from trusted lineage and evidence.
 
 ## Product Principles
 1. Data before AI.
@@ -28,10 +30,16 @@ Create a personal Brewing Knowledge & Execution Platform that teaches brewing, e
 8. Recipe changes create new versions.
 9. Mobile-first usability is required for brew-day operation.
 10. Architecture precedes implementation technology.
+11. AI recommends and reasons; deterministic software calculates, validates, records, and enforces rules.
+12. All master-plan capabilities are mandatory scope, but implementation remains phase-gated.
 
 ## Initial Non-Goals
 - Commercial brewery ERP/accounting.
 - Automated physical brewery control.
 - Complex IoT integration.
 - Public multi-tenant SaaS.
-- Machine-learning prediction before sufficient trusted historical data exists.
+- Machine-learning prediction before sufficient trusted historical data exists; calibrated intelligence remains mandatory later scope.
+
+## Authoritative Scope
+
+See [Brewing Intelligence & Competition OS Master Plan](BREWING_INTELLIGENCE_AND_COMPETITION_OS_MASTER_PLAN.md). Advanced and future-intelligence horizons are committed scope, not optional ideas, and do not independently authorize implementation.

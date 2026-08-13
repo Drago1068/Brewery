@@ -57,6 +57,12 @@ docker compose --profile test run --rm --build e2e
 
 See [Local Development](docs/operations/LOCAL_DEVELOPMENT.md), [Database](docs/operations/DATABASE.md), [API](docs/API.md), [Testing](docs/TESTING.md), [Security](docs/security/SECURITY.md), and [Architecture Compliance](docs/ARCHITECTURE_COMPLIANCE.md).
 
+The authoritative long-range product scope and phase boundaries are defined in the [Brewing Intelligence & Competition OS Master Plan](docs/product/BREWING_INTELLIGENCE_AND_COMPETITION_OS_MASTER_PLAN.md) and [Development Roadmap](docs/DEVELOPMENT_ROADMAP.md).
+
+The next engineering gate is the documentation-only [Phase 3 Brew-Day OS Engineering and Acceptance Specification](docs/specifications/PHASE_3_ENGINEERING_AND_ACCEPTANCE_SPECIFICATION.md). It is awaiting architecture review and does not authorize Phase 3 implementation.
+
+Use the [Codex Phase 3 Engineering Specification Independent Review Master Prompt](docs/prompts/CODEX_PHASE_3_ENGINEERING_SPECIFICATION_INDEPENDENT_REVIEW_MASTER_PROMPT.md) to perform the required review without editing the specification or starting implementation.
+
 ## Scope gate
 
 Phase 2 is closed as the accepted `v0.2.0-phase2` baseline. Work stops here: Phase 3 and NAS production deployment are not authorized, and no fermentation, packaging, serving, advanced analytics/AI, IoT, or production deployment capability is included.

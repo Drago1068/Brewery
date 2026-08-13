@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — master-plan governance
+
+- Locked the expanded Brewing Intelligence & Competition OS architecture as mandatory, phase-gated product scope.
+- Separated Core Product V1, Advanced Capabilities, and Future Intelligence delivery horizons.
+- Established the Brewing Data Core, deterministic calculation engine, and AI orchestration boundary without authorizing Phase 3 implementation.
+- Added the documentation-only Phase 3 Brew-Day OS engineering and acceptance gate, including explicit Phase 4–10 anti-leakage controls; Phase 3 implementation remains unauthorized.
+- Added the independent-review master prompt that binds review to the exact specification, requires full requirement/acceptance traceability, and prohibits implementation or silent specification edits.
+
 ## 0.2.0-phase2 - 2026-08-12
 
 - Added owned equipment profiles and immutable recipe equipment snapshots.
