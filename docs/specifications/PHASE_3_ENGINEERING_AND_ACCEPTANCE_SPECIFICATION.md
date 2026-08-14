@@ -2,7 +2,7 @@
 
 ## 1. Document control
 
-- Status: **DRAFT REMEDIATED AFTER INDEPENDENT RE-REVIEW**
+- Status: **DRAFT REMEDIATED FOR FINAL BLOCKING-FINDINGS REVIEW**
 - Scope identifier: `PHASE_3_BREW_DAY_OS`
 - Source baseline: annotated tag `v0.2.0-phase2`
 - Source baseline commit: `c3faa93ea1502db63798b8c0dcc10c02741fabf7`
@@ -64,7 +64,8 @@ The flow must use a real PostgreSQL-backed API and the responsive web interface.
 - **Timer:** server-authoritative elapsed-time record associated with a session, stage, or planned addition.
 - **Reminder:** deterministic required-action projection derived from persisted rules and authoritative time.
 - **Measurement:** append-only observation with value, unit, type, time, method, and provenance.
-- **Correction:** a new observation linked to the superseded observation; never an overwrite.
+- **Measurement correction:** a new observation linked to the superseded measurement; never an overwrite.
+- **Addition correction:** an append-only replacement fact linked to the current effective AdditionEvent/correction; never an overwrite of the actual event or planned addition.
 - **Deviation:** deterministic comparison or explicit operational departure linked to its source.
 - **Addition event:** planned-versus-actual record of an ingredient or process addition; it is not an inventory transaction.
 - **Journal event:** append-only, chronological execution fact suitable for the final brew-day audit.
@@ -119,16 +120,27 @@ The materializer is deterministic and identified as `phase3-plan-v1`. Its comple
 5. Insert required/default/conditional stages from the table below at their canonical stage rank. A default or derived conditional stage is omitted when an explicit mapped step already occupies that semantic stage; qualifying additions attach to the explicit step. Multiple explicit steps at the same rank retain source-sequence order. When no explicit step exists, a derived conditional stage uses the earliest qualifying source/addition UUID as its stable source discriminator.
 6. Assign the final total order by `(canonical_stage_rank ASC, source_kind_rank ASC, source_sequence ASC, expansion_rank ASC, planned_same_type_ordinal ASC, stable_source_discriminator ASC)`, where `source_kind_rank` is `EXPLICIT=0`, `DERIVED_CONDITIONAL=1`, `PHASE3_DEFAULT=2`, except that a default at a rank with an explicit row is omitted. Null source sequence for derived/default rows is normalized to `2147483647`; unordered maps, database row order, insertion order and UI order are never inputs.
 7. Planned same-type ordinal is contiguous and one-based in the final order for that canonical type. Each plan step except the first has the immediately preceding plan step as its execution predecessor. `BREW_COMPLETE` additionally requires every included required stage to be `COMPLETED` and every included optional stage to be `COMPLETED` or `SKIPPED`. Runtime repeat/return occurrences do not mutate this immutable predecessor graph; their runtime source-transition links are governed by section 6.2.
-8. Generate each `plan_step_id` as UUIDv5 using namespace `b3ad9f4c-9e5f-5a31-9df2-25d731f5a302` and name `phase3-plan-v1:{recipe_version_id}:{source_kind}:{stable_source_discriminator}:{planned_same_type_ordinal}`, with lowercase canonical UUID/key components. A BrewSession-specific `stage_instance_id` is a newly generated UUID persisted once for each materialized plan step; repeated reads never regenerate it.
+8. Treat the upstream source identity and the Phase 3 materialized identity as separate facts. `source_process_step_id` is the accepted Phase 2 RecipeProcessStep UUID when one exists; otherwise the stored provenance key is the stable default, derived-conditional, or legacy key. Generate each distinct Phase 3 `plan_step_id` as UUIDv5 using namespace `b3ad9f4c-9e5f-5a31-9df2-25d731f5a302` and name `phase3-plan-v1:{recipe_version_id}:{source_kind}:{stable_source_discriminator}:{canonical_stage_type}:{expansion_rank}:{planned_same_type_ordinal}`, with lowercase canonical UUID/key components and uppercase canonical stage enum text. `canonical_stage_type` and `expansion_rank` are mandatory identity inputs even when one source produces one stage. Thus `MASH_IN` rank `0` and `MASH` rank `1` materialized from one Phase 2 Mash row retain the same `source_process_step_id` but receive different `plan_step_id` values. A BrewSession-specific `stage_instance_id` is a newly generated UUID persisted once for each materialized plan step; repeated reads never regenerate it.
 9. Serialize the normalized logical plan with lexicographically sorted object keys, arrays in final total order, canonical lowercase UUIDs, canonical Decimal strings and the `phase3-plan-v1` identifier; store its SHA-256 logical-plan hash. Identical normalized input must produce the identical ordered plan and hash.
 
 Legacy Phase 1A RecipeVersions do not have Phase 2 process sequence data and therefore use the fixed `MASH` then `BREW_COMPLETE` order in the compatibility rules below. There is no inferred ordering from names, timestamps or existing row retrieval order.
 
+The identity rule has these required consequences:
+
+- one source step producing one Phase 3 stage uses that stage type and expansion rank `0`;
+- one source step producing multiple Phase 3 stages retains one source identity but uses a distinct canonical-stage/expansion tuple for each output;
+- multiple source steps of the same type remain distinct through their source UUIDs and contiguous planned same-type ordinals;
+- sparse/default/derived stages use their stable provenance key, canonical stage type, expansion rank and ordinal and therefore remain reproducible;
+- repeated materialization of identical normalized input and rule version produces byte-identical `plan_step_id` values; and
+- duplicate source identity/order remains a `422` under steps 1 through 4 and can never be resolved by allowing two planned stages to share an identity.
+
+Within one BrewSession execution snapshot, `plan_step_id` is globally unique across all materialized planned stages. A duplicate derived identity is a materialization defect: reject with `422 PLAN_STEP_ID_COLLISION` and create no BrewSession or plan row. The materializer may not disambiguate a collision with a random value, insertion order, database order, or retry-specific salt.
+
 Each materialized plan step stores:
 
-- an immutable `plan_step_id` derived deterministically from RecipeVersion ID, materialization-rule version, source kind, stable source ID/default-stage key and planned occurrence;
+- an immutable `plan_step_id` derived deterministically from RecipeVersion ID, materialization-rule version, source kind, stable source ID/default-stage key, canonical stage type, expansion rank and planned occurrence;
 - canonical stage type, requiredness, predecessor set, planned occurrence, planned duration and clock basis;
-- source RecipeProcessStep ID when present, or an explicit `PHASE3_DEFAULT`/`LEGACY_PHASE1A` provenance key;
+- `source_process_step_id` when present, or an explicit `PHASE3_DEFAULT`/`DERIVED_CONDITIONAL`/`LEGACY_PHASE1A` provenance key, kept separately from `plan_step_id`;
 - all planned measurements, additions and reminders with their stable requirement identities;
 - source equipment/calculation/process identifiers and snapshot hashes; and
 - the materialization-rule version and UTC materialization time.
@@ -210,10 +222,34 @@ Rules:
 - Returning to a prior stage is prohibited by default. Every authorized runtime `repeat` or `return` creates a new stage occurrence; Phase 3 has no post-completion continuation model. Extending an `ACTIVE` or `PAUSED` occurrence before completion is the only bounded continuation of that same occurrence.
 - `repeat` applies when the source occurrence is the most recently completed primary stage and no later primary stage has started. `return` applies when at least one later primary stage has completed or been skipped. Both require an `ACTIVE` session, a `COMPLETED` source occurrence, no other `ACTIVE` or `PAUSED` primary stage, the expected session revision, a unique operation ID and a nonempty reason. Otherwise return/repeat is `409` with no mutation.
 - The command locks the session and all occurrences for the source `plan_step_id`, assigns contiguous `occurrence_number = max(existing occurrence_number) + 1`, creates a new UUID `stage_instance_id`, retains the immutable original `plan_step_id`, and stores `runtime_occurrence_kind` (`REPEAT` or `RETURN`), reason, actor, UTC command time, source completed `stage_instance_id`, and the latest chronological stage from which control moved. The new occurrence becomes the sole authoritative current `ACTIVE` stage. All prior stages and their completion facts remain unchanged.
-- A runtime occurrence receives new timer/reminder identities. It copies only requirements explicitly marked repeatable in the snapshotted plan; a single-occurrence requirement or planned addition is not copied implicitly. Any requested copy decision is part of the canonical command and event. Same operation replay returns the same new occurrence; a different operation racing for the same next occurrence conflicts under the session lock/version.
+- A runtime occurrence receives the exact rule-derived requirement set in section 6.2.1. The repeat/return command cannot choose an arbitrary subset, override eligibility, or carry prior satisfaction/waiver state. Same operation replay returns the same occurrence and requirement set; a different operation racing for the same next occurrence conflicts under the session lock/version.
 - A measurement or addition recorded after its stage completed may reference the original stage instance only through the late-evidence policy in section 6.8. It preserves `observed_at`, server `recorded_at`, actor, reason, availability-at-completion and current correction/waiver rules. Late evidence never changes the historical stage/session terminal timestamp.
 - An invalid backward transition returns `409` and creates no stage, timer, reminder, journal, or audit mutation.
 - Commands address `stage_instance_id`, never canonical stage name alone. Human-readable type/name is presentation metadata and cannot select an occurrence.
+
+#### 6.2.1 Runtime-occurrence requirement policy (`phase3-runtime-requirements-v1`)
+
+Every materialized requirement template stores a stable `requirement_template_id`, requirement class, required/optional status, `waivable`, `runtime_occurrence_policy`, governing plan/rule version, source identity, and provenance. Allowed runtime policies are `REGENERATE_FROM_RULE` and `DO_NOT_COPY`; `COPY_REQUIRED` and `COPY_OPTIONAL` are presentation descriptions of regenerated requiredness, never reuse of a prior occurrence row or identity. Missing or unsupported policy is a materialization-blocking `422`.
+
+The following table is normative. “Fresh” means a new stable identity derived from the new `stage_instance_id`, the requirement template identity, the requirement class and `phase3-runtime-requirements-v1`; it never reuses a prior Measurement, AdditionEvent, Reminder, Timer, Waiver, checklist-resolution or satisfaction identity.
+
+| Requirement class | Planned repeated occurrence | Runtime `REPEAT` | Controlled `RETURN` | Bounded continuation of `ACTIVE`/`PAUSED` occurrence |
+|---|---|---|---|---|
+| Required measurement definition | Materialize independently as required from its own planned step | `REGENERATE_FROM_RULE` as a fresh required obligation | Same as runtime repeat | No new requirement; existing unsatisfied obligation remains |
+| Optional measurement definition | Materialize independently as optional | `REGENERATE_FROM_RULE` as a fresh optional opportunity | Same as runtime repeat | No new requirement |
+| Reminder | Materialize independently from the occurrence requirement/action | Regenerate only for each included measurement, checklist or addition requirement, with a fresh identity and initial state | Same as runtime repeat | Preserve the existing reminder identity/state; revise due projection only through existing timer/reminder rules |
+| Stage-local checklist item | Materialize independently | `REGENERATE_FROM_RULE` with original requiredness when the template is stage-local; session/preflight and explicitly single-use items are `DO_NOT_COPY` | Same as runtime repeat | No new checklist row or resolution |
+| Scheduled or unscheduled planned addition | Materialize independently from its own planned addition source | `DO_NOT_COPY` by default. Regenerate with fresh requirement, reminder and timer identities only when the immutable plan template explicitly stores `runtime_occurrence_policy=REGENERATE_FROM_RULE` from the governing versioned materialization rule | Same as runtime repeat | Never duplicate; existing planned addition/timer remains governed by its original occurrence |
+| Timer | Materialize independently when required by that occurrence | Regenerate with a fresh identity only when derived from an included repeatable requirement/addition; manual, elapsed-history and single-use timers are `DO_NOT_COPY` | Same as runtime repeat | Extend/revise the existing timer under section 6.4; do not copy it |
+| Instruction or plan note | Reference the immutable instruction/template for that planned step; no execution Note is copied | Re-reference immutable stage instructions with `PLANNED_COPY` provenance; prior brewer-authored Notes are `DO_NOT_COPY` | Same as runtime repeat | Existing instructions and Notes remain; no duplicate Note is created |
+| Waivable requirement | Requiredness is determined by its planned template; `waivable` is copied as policy metadata | Regenerate only when its requirement class is included above; retain `waivable=true`, but never copy an existing Waiver or waived/completed state | Same as runtime repeat | Existing requirement and any Waiver remain attached to the same occurrence |
+| Non-waivable requirement | Requiredness is determined by its planned template | Regenerate when its class is included above and retain `waivable=false`; it cannot inherit satisfaction | Same as runtime repeat | Existing requirement remains non-waivable |
+
+For planned additions, `phase3-plan-v1` must assign `runtime_occurrence_policy` before the BrewSession is created. Accepted Phase 2 planned additions default to `DO_NOT_COPY`; no ingredient addition becomes repeatable from stage type, user-interface selection, or the repeat/return command alone. A versioned materialization rule may explicitly classify a particular planned-addition source as `REGENERATE_FROM_RULE`, and the snapshot must store the source addition identity, rule/version and reason. An unknown, conflicting or untraceable classification fails materialization with `422`. This Phase 3 execution policy never changes the Phase 2 addition definition or inventory reservation.
+
+The server derives the full runtime requirement set; the command supplies only repeat/return reason, expected revision and operation ID. It persists a normalized requirement-set fingerprint and one provenance value per generated requirement: `PLANNED_COPY` for immutable instructions, `RUNTIME_REPEAT_RULE` for `REPEAT`, or `CONTROLLED_RETURN_RULE` for `RETURN`, plus source template/rule identities. No `MANUAL_AUTHORIZED_REQUIREMENT` is allowed in Phase 3 without a later specification amendment.
+
+Fresh required Mash measurements include the applicable temperature, pH and gravity obligations from the source template. Prior measurements, reminder acknowledgements/completions, addition executions/skips, checklist resolutions and Waivers never satisfy the new occurrence. Duplicate delivery of the same repeat/return operation returns the original new occurrence and exact stored requirement-set fingerprint and creates no duplicate requirement, reminder or timer rows.
 
 ### 6.3 Required stage vocabulary
 
@@ -280,6 +316,7 @@ Permitted non-completing/terminal paths:
 - `SCHEDULED | DUE | ACKNOWLEDGED -> CANCELLED`
 - `DUE | ACKNOWLEDGED -> EXPIRED -> COMPLETED | SKIPPED | CANCELLED`
 - `SKIPPED -> COMPLETED` only when valid late evidence supersedes the linked active waiver under section 6.8
+- `COMPLETED -> DUE | SKIPPED` only when an append-only AdditionCorrection invalidates or reclassifies the current satisfaction source under section 6.8.1; the prior completion transition remains historical
 
 Rules:
 
@@ -291,6 +328,7 @@ Rules:
 - Recording the associated authoritative action and transitioning the correct reminder to `COMPLETED` occur in one transaction. Repeating the same scoped operation returns the original result. A competing action for an already completed reminder returns the authoritative result or a stable `409` without creating a second semantic completion.
 - Expiration is deterministic from persisted due state/time. An expired reminder remains visible until completed, validly waived/skipped, or cancelled under an allowed rule.
 - A waiver-driven `SKIPPED` reminder stores the Waiver ID as its resolution source. If eligible late evidence supersedes that waiver, the same reminder transitions once to `COMPLETED`, stores the Measurement/AdditionEvent as current satisfaction source, retains the waiver and full state history, and records cause `LATE_EVIDENCE_SUPERSEDED_WAIVER`. Duplicate waiver/evidence commands follow `phase3-operation-v1` and cannot create another reminder or resolution.
+- Correcting an AdditionEvent never creates a second Reminder identity or a second semantic completion merely because amount, time, ingredient/lot or note changed. The current satisfaction source moves to the effective correction. If the correction changes effective status from `EXECUTED` to `SKIPPED`, the same Reminder appends cause `ADDITION_EVIDENCE_INVALIDATED`: it becomes `SKIPPED` with an already-valid Waiver as source, otherwise `DUE`/currently unsatisfied even when the session is terminal. The original `COMPLETED` transition remains visible; CompletionAudit and current UI must use the current satisfaction projection rather than the invalidated evidence.
 
 ### 6.6 Addition schedule semantics
 
@@ -317,7 +355,7 @@ An authorized schedule revision may move a due point only through the timer-revi
 | `FERMENTATION`, `DRY_HOP` or `PACKAGING` | Excluded from Phase 3 execution | Preserve source exclusion provenance only; create no post-pitch timer/reminder |
 | `MISCELLANEOUS` or an unsupported stage context | `UNSCHEDULED` only when RecipeVersion explicitly marks it as a Brew-Day item and names the governing Phase 3 stage | Otherwise fail materialization with `422` and identify the source addition |
 
-If the referenced stage is absent, duration is missing, timing is negative/out of range, or more than one stage occurrence could satisfy an unqualified reference, materialization fails with `422`. A repeated planned stage must be selected by its `plan_step_id`; runtime repeats copy the source addition only through an explicit repeat decision recorded in the new stage occurrence.
+If the referenced stage is absent, duration is missing, timing is negative/out of range, or more than one stage occurrence could satisfy an unqualified reference, materialization fails with `422`. A repeated planned stage must be selected by its `plan_step_id`; a runtime occurrence regenerates an addition only through its immutable `phase3-runtime-requirements-v1` template policy and persists the rule/source provenance on the new occurrence.
 
 ### 6.7 Normative cross-state command effects
 
@@ -359,12 +397,30 @@ All time limits below use authoritative UTC. `recorded_at` is always server-assi
 | Addition after stage completion, session `ACTIVE` | Target stage `COMPLETED`; submit no later than 24 hours after `stage.completed_at`; actual execution time no later than 24 hours after stage completion and not future beyond five-minute skew | Append actual AdditionEvent/deviation; update reminder/waiver projection; preserve planned schedule and stage completion |
 | Measurement/addition after session `COMPLETED` | Submit no later than 24 hours after `session.completed_at`; target stage must already exist and be `COMPLETED`; measurement observation window is that stage's start through completion plus five-minute skew; addition actual time may be no later than 24 hours after its stage completion | Append evidence only; never create a stage/timer or change terminal time; regenerate current CompletionAudit/journal projection while retaining the original completion snapshot and `available_at_original_session_completion=false` |
 | New measurement/addition after session `ABORTED` | Prohibited | Return `409 TERMINAL_SESSION_EVIDENCE_PROHIBITED`; create no operation/domain/journal/audit mutation beyond the safe conflict audit policy |
-| Correction of an existing measurement/addition | Nonterminal at any time; `COMPLETED` or `ABORTED` no later than 30 calendar days after terminal time | Append correction linked to existing evidence; preserve raw/original and terminal facts; current projection uses latest valid chain member and records post-terminal availability |
+| Correction of an existing measurement/addition | Existing evidence in a nonterminal session at any time; `COMPLETED` or `ABORTED` no later than 30 calendar days after terminal time | Append the type-specific correction under the measurement contract or section 6.8.1; preserve raw/original and terminal facts; current projection uses the unique latest valid chain member and records post-terminal availability |
 | Note/annotation | Nonterminal at any time; `COMPLETED` or `ABORTED` no later than seven calendar days after terminal time | Append timestamped annotation explicitly labeled post-terminal when applicable; never changes structured requirement satisfaction |
 | Media attachment | Nonterminal `ACTIVE` only | No new upload after `COMPLETED` or `ABORTED`; existing attachment retrieval, unavailable-media projection and reconciliation continue under section 7.6 |
 | Journal/CompletionAudit regeneration | Any state, no expiry | Read-only deterministic projection; no BrewJournalEvent or domain mutation |
 
 After `COMPLETED` or `ABORTED`, the plan snapshot, RecipeVersion reference, original stage/session states and timestamps, timers, occurrences and preterminal events are immutable. Prohibited actions include start/resume, new normal stages or runtime occurrences, timer start/restart/extension, new waiver, attachment upload/removal that would erase evidence, plan rewrite, RecipeVersion reassignment and inventory mutation. Allowed actions are only those append-only rows in the table within their stated windows plus read/retrieval/regeneration. Expired windows return `409 LATE_ENTRY_WINDOW_CLOSED` without reserving a successful operation result or mutating domain/journal state.
+
+#### 6.8.1 AdditionEvent correction contract (`phase3-addition-correction-v1`)
+
+`AdditionCorrection` is the only way to correct an existing Phase 3 AdditionEvent. The original AdditionEvent and every prior correction are immutable and undeletable. A correction stores its own UUID; owner, BrewSession and `stage_instance_id`; `original_addition_event_id`; `correction_of_id` pointing to the current effective AdditionEvent or AdditionCorrection; planned-addition and Phase 2 source identities copied unchanged; actual ingredient/lot/substitution provenance; complete replacement effective values; `changed_fields`; mandatory correction reason; actor; original actual execution/observation time; server `recorded_at`; operation ID; entry source; rule/schema version; terminal-state/availability flags; and correlation/causation identity.
+
+The correctable actual fields are `actual_quantity` with a compatible canonical unit, `actual_executed_at`, `execution_status` (`EXECUTED` or `SKIPPED`), actual ingredient identity, actual lot, accepted substitution reference, and actual note. Omitted fields retain the current effective value. `EXECUTED` requires a valid actual time and the governing quantity/identity fields; `SKIPPED` clears fields that assert physical execution but retains the correction reason and prior facts in lineage. A correction may not change owner, BrewSession, stage occurrence, RecipeVersion, `plan_step_id`, planned-addition identity/definition/schedule/amount/ingredient, Phase 2 source identity, or any inventory reservation/transaction. It cannot reopen a stage/session, restart a timer, rewrite a terminal timestamp, or create a new planned addition.
+
+Only the current leaf may be corrected. `(original_addition_event_id, correction_of_id)` lineage must be same-owner/session/stage, acyclic and nonforking; one accepted successor per `correction_of_id` is allowed. A request targeting a superseded AdditionEvent/correction returns `409 ADDITION_CORRECTION_TARGET_SUPERSEDED` with the current effective correction identity and creates no mutation, except that replay of the already accepted scoped operation returns its original result. Current effective addition is the unique valid leaf reached from the immutable original. Missing, forked, cyclic or cross-session lineage fails closed and is never resolved by latest timestamp.
+
+The owner may correct existing evidence while the session is nonterminal. For `COMPLETED` and `ABORTED`, the correction is allowed through and including 30 calendar days after the authoritative terminal time; after that boundary it returns `409 LATE_ENTRY_WINDOW_CLOSED`. Completed and aborted sessions use the same append-only correction rule. A terminal correction does not reopen work or create a new Waiver; it may make current CompletionAudit truthfully show an unresolved requirement that was believed satisfied at completion/abort.
+
+The application command is `CorrectAdditionEvent` and the required resource capability is `POST /api/v1/brew-sessions/{session_id}/addition-events/{addition_event_id}/corrections`. Authentication and owner scoping occur before disclosure. The path IDs identify the target session and immutable original AdditionEvent. The request contains `operation_id`, `expected_session_revision` for a nonterminal session, `correction_of_id` identifying the expected current effective AdditionEvent/correction, one or more correctable fields, and a 10 through 1,000 Unicode character `reason`; actor and server `recorded_at` are server-derived. Validation covers ownership/lineage, current-leaf match, allowed session/window, field compatibility, actual-time chronology/five-minute future skew, execution-status shape, planned-source immutability and zero inventory effect.
+
+Success returns the correction identity, immutable original AdditionEvent identity, superseded identity, current effective addition projection, reminder/current CompletionAudit effects, session revision when applicable, and replay indicator. Same scoped operation ID plus the same canonical correction returns the original result. The same operation ID plus a different canonical correction returns `409 IDEMPOTENCY_KEY_REUSED`. A stale expected revision or a different operation racing on the same current leaf permits exactly one success; the loser receives `409` and current effective identity. Authentication uses `401`; hidden/cross-owner targets use the established nondisclosure response; schema/range errors use `422`.
+
+Correcting quantity, time, actual identity/lot or note while effective status remains `EXECUTED` updates the existing Reminder's current satisfaction source to the new correction without another semantic completion. Correcting `EXECUTED` to `SKIPPED` applies the `ADDITION_EVIDENCE_INVALIDATED` rule in section 6.5. Correcting `SKIPPED` to `EXECUTED` makes the same Reminder `COMPLETED` once against the effective correction when all authoritative evidence validates; any Waiver remains historical and is superseded using the existing waiver rule. No correction directly acknowledges a Reminder or creates a new Reminder identity.
+
+Operational facts, AuditEvents and journal projection remain distinct. The correction appends one operational correction fact, one typed BrewJournalEvent and the required security AuditEvent atomically with any reminder-resolution history. Planned-versus-actual display, timing/quantity deviation calculations, CompletionAudit, Brew-Day history and journal regeneration use the effective leaf and expose the complete correction chain. Regeneration creates no new operational event. Phase 10 interpretation is prohibited.
 
 ## 7. Functional requirements
 
@@ -383,6 +439,7 @@ Each `P3-FR` requirement is mandatory unless explicitly labeled conditional.
 - **P3-FR-009:** Materialize the complete immutable execution-plan snapshot under section 6.1.1 in the same transaction as BrewSession creation. `phase3-plan-v1` mapping, defaulting, ordering, requiredness, provenance and failure behavior are normative; the same normalized source and rule version must produce the same logical plan.
 - **P3-FR-090:** Apply the normative total-order/predecessor algorithm in section 6.1.1. Contradictory, duplicate, missing, malformed or unsupported order input fails atomically; database/insertion/UI order is never authority.
 - **P3-FR-091:** Existing Phase 1A BrewSessions use `legacy-phase1a-session-v1` exactly. Compatibility identities, status/timestamp projection, existing relationships and route targeting remain stable across repeated reads, migration round trips and restarts without destructive historical backfill.
+- **P3-FR-097:** Separate upstream `source_process_step_id` provenance from Phase 3 `plan_step_id` and apply the complete identity rule in section 6.1.1. Every materialized planned stage in a BrewSession snapshot has a unique stable identity; one Phase 2 Mash source produces distinct deterministic `MASH_IN` and `MASH` identities without losing their shared source provenance.
 
 ### 7.2 Stage-aware worksheet
 
@@ -399,6 +456,7 @@ Each `P3-FR` requirement is mandatory unless explicitly labeled conditional.
 - **P3-FR-092:** Distinguish repeat from return, allocate contiguous occurrence numbers under the session lock, preserve `plan_step_id`, create a new `stage_instance_id`, and reject a return while another primary stage is active/paused or the source/session state is ineligible.
 - **P3-FR-093:** Implement the section 6.7 cancellation/abort model: optional pending-stage skip is the only independent stage cancellation, stage `ABORTED` is session-abort-only, and session abort is confirmed, reasoned, atomic, terminal, nonresumable and historically preserving.
 - **P3-FR-094:** Implement `phase3-waiver-v1`, including explicit waivable/nonwaivable classes, owner authorization, immutable reasoned records, idempotency, reminder effects, completion meaning and deterministic late-evidence supersession.
+- **P3-FR-098:** Implement `phase3-runtime-requirements-v1` exactly for planned repeats, runtime repeats, controlled returns and bounded continuation. Persist fresh requirement identities, rule/source provenance and a normalized requirement-set fingerprint; never carry prior satisfaction or Waiver state, and never duplicate an addition unless its immutable plan template explicitly permits rule-driven regeneration.
 
 ### 7.3 Timers, additions, and reminders
 
@@ -419,7 +477,7 @@ Each `P3-FR` requirement is mandatory unless explicitly labeled conditional.
 - **P3-FR-031:** A measurement must store definition/rule version, type, process point, stage instance, raw Decimal value/unit, canonical Decimal value/unit, observed-at UTC time, server-recorded-at UTC time, actor, entry method, required method/context fields, optional instrument reference, validation status, correction lineage and provenance.
 - **P3-FR-032:** Unit, context and plausible-range validation must occur at the API boundary and domain/application layer. PostgreSQL constraints protect type/unit/status domains, required context shape and lineage where expressible; type-specific cross-field rules remain deterministic domain checks with PostgreSQL integration proof.
 - **P3-FR-033:** Temperature measurements persist canonical `degC` plus original scale/value when converted. Gravity persists canonical `SG`, raw scale/value, method and any accepted conversion/correction model ID. Volume persists canonical liters, vessel/basis, sample temperature when applicable and any reference-temperature correction/model. A derived correction never replaces the raw observation.
-- **P3-FR-034:** Corrections append a linked replacement and reason; no measurement update or deletion path may bypass history.
+- **P3-FR-034:** Measurement corrections append a linked replacement and reason; no measurement update or deletion path may bypass history.
 - **P3-FR-035:** Completion requirements use the latest valid measurement in a correction chain while retaining the entire chain.
 - **P3-FR-036:** Measurement timestamps may be back-entered only within the exact five-minute/24-hour/terminal-state bounds in section 6.8 and must preserve both observation and recording times.
 - **P3-FR-037:** A required measurement may be waived only with explicit reason, actor, timestamp, and journal/audit event. A waiver is visibly different from a measurement.
@@ -456,6 +514,7 @@ The equipment/plan plausibility bound for volume is snapshotted and rule-version
 - **P3-FR-045:** Corrective-action text is brewer-authored deterministic workflow content in Phase 3. AI diagnosis is prohibited.
 - **P3-FR-046:** Addition execution records must preserve planned addition identity, planned ingredient/time/amount/unit, actual ingredient identity, actual lot when known, actual time/amount/unit, execution status, and any accepted Phase 2 substitution reference. Acknowledgement has no Phase 3 inventory-ledger effect and never mutates RecipeVersion intent.
 - **P3-FR-047:** Addition schedule materialization and execution must implement section 6.6. An ambiguous or invalid Phase 2 schedule fails before `READY`; a runtime revision is append-only; and future-phase additions are excluded without creating post-pitch workflow.
+- **P3-FR-099:** Implement `phase3-addition-correction-v1` and `CorrectAdditionEvent` exactly. Preserve immutable original and correction lineage, project one effective addition, keep Reminder/CompletionAudit/journal/deviation truth current, enforce terminal windows and idempotency, and produce zero RecipeVersion, Phase 2 planned-addition, reservation or inventory-ledger mutation.
 
 ### 7.6 Notes, photos, and journal
 
@@ -524,7 +583,7 @@ Human-command abuse bounds for the private single-user Phase 3 runtime are 120 n
 - A different key with a semantically duplicate single-occurrence action is governed by domain uniqueness and expected revision: it returns the existing authoritative result where the command defines that behavior or stable `409`; repeatable observations require an explicit repeat-capable requirement and otherwise conflict.
 - Commit and operation-result persistence are one PostgreSQL transaction. If the commit succeeds but the HTTP response is lost, retry returns the stored result. If the transaction rolls back, no operation success/tombstone or partial domain/event row remains.
 
-This contract applies at minimum to measurement creation/correction, action-linked reminder completion, timer creation/revision/cancellation, stage repeat/return/extension/completion, addition execution/skip, deviation creation, media metadata finalization, and BrewSession abort/completion. It uses no distributed lock, event broker, outbox or Redis authority.
+This contract applies at minimum to measurement creation/correction, AdditionEvent correction, action-linked reminder completion, timer creation/revision/cancellation, stage repeat/return/extension/completion, addition execution/skip, deviation creation, media metadata finalization, and BrewSession abort/completion. It uses no distributed lock, event broker, outbox or Redis authority.
 
 ### 7.9 Security, ownership, and audit
 
@@ -586,6 +645,7 @@ The existing Phase 1A route contracts remain supported. Compatibility adapters m
 - Authenticated reminder query and `acknowledge|skip|cancel` commands; completion is performed only by the linked authoritative action or allowed waiver, not a generic completion route.
 - `POST /api/v1/brew-sessions/stages/{stage_instance_id}/measurements`; a completed-stage or terminal-session target additionally requires explicit late-entry flag/reason and is accepted only under section 6.8 and P3-FR-018/095/096.
 - `POST /api/v1/brew-sessions/measurements/{id}/corrections`.
+- `POST /api/v1/brew-sessions/{session_id}/addition-events/{addition_event_id}/corrections` implements `CorrectAdditionEvent` and section 6.8.1; the path selects the immutable original event and `correction_of_id` must select its current effective leaf. It never modifies the planned-addition resource.
 - `POST /api/v1/brew-sessions/stages/{stage_instance_id}/waivers`; no stage-name selector is permitted and `phase3-waiver-v1` controls eligibility.
 - `POST /api/v1/brew-sessions/{id}/additions/{addition_id}/acknowledge|skip`.
 - `POST /api/v1/brew-sessions/{id}/deviations`.
@@ -615,7 +675,7 @@ The migration must:
 - preserve all Phase 1A and Phase 2 rows and constraints;
 - provide explicit defaults/backfill/nullability for existing Mash-only sessions;
 - preserve existing Mash-only session/stage/timer/reminder/measurement/event IDs and implement the read-only `legacy-phase1a-session-v1` compatibility projection without replacement historical rows;
-- add database constraints/indexes needed for state, order, ownership joins, correction lineage, timer integrity, and stable journal retrieval;
+- add database constraints/indexes needed for state, order, ownership joins, measurement and AdditionCorrection lineage, timer integrity, and stable journal retrieval;
 - retain or strengthen completed-measurement and used-recipe-version immutability;
 - avoid creating Phase 4–10 tables or speculative columns;
 - downgrade only Phase 3 objects and return cleanly to `0002_phase2_brewing_core`; and
@@ -633,15 +693,17 @@ The Phase 3 migration and integration tests must enforce the following wherever 
 | Session, stage, timer, reminder and addition statuses use valid values and compatible required timestamps | Check constraints plus domain transitions |
 | At most one `ACTIVE` or `PAUSED` BrewSession per owner under the current architecture | Partial unique index or transactionally locked equivalent documented and PostgreSQL-tested |
 | BrewSession creation and complete `phase3-plan-v1` snapshot materialization are all-or-nothing; plan rows cannot be changed after creation | One transaction, non-null rule/source fields, deterministic logical-plan hash, and append-protection trigger/permissions |
-| `phase3-plan-v1` total order and predecessor graph are reproducible; accepted legacy projection IDs never drift | Persist normalized order keys/hash for new plans; fixed UUIDv5 namespace/name fixtures and no-replacement migration tests for legacy sessions |
+| `phase3-plan-v1` total order, globally unique plan identities and predecessor graph are reproducible; accepted legacy projection IDs never drift | Persist normalized order keys/hash and separate source/Phase 3 identities for new plans; unique `(brew_session_id, plan_step_id)` planned-step constraint; fixed UUIDv5 namespace/name fixtures and no-replacement migration tests for legacy sessions |
 | One stage occurrence identity/order within a session; repeated occurrences remain distinct | Unique `(brew_session_id, plan_step_id, occurrence_number)` or accepted equivalent |
 | Runtime repeat/return occurrence numbers are contiguous and exactly one concurrent next occurrence succeeds | Session/plan-step transaction lock plus unique occurrence constraint, expected revision and idempotency record |
+| Runtime occurrence requirement sets are complete, deterministic and nonduplicating | Immutable template policy/provenance, unique `(stage_instance_id, requirement_template_id, requirement_class)` or accepted equivalent, stored requirement-set fingerprint and transactional creation of occurrence/requirements/reminders/timers |
 | A stage command cannot target a stage instance from another session/owner or select by ambiguous type/name | Session-scoped foreign keys plus ownership query/transaction lock; instance-targeted API only |
 | Timer revision/replace links remain in the same session and cannot self-reference | Foreign keys/checks plus domain validation |
 | Addition timing basis, offset, reference stage, clock basis and revision are valid and internally compatible | Check constraints for enum/nonnegative shape plus domain validation against the snapshotted plan |
 | Reminder satisfaction source belongs to the same session/stage and one requirement is not completed twice | Unique requirement identity plus transaction/domain validation |
 | At most one active Waiver exists per stable requirement; nonwaivable kinds cannot be accepted; supersession retains both Waiver and evidence | Unique active-waiver scope, immutable Waiver rows, constrained status/source shape plus domain eligibility policy |
 | Measurement type/process point/context shape is valid; correction references the same type/session lineage and cannot self-reference or fork ambiguously | Enum/check constraints and same-session foreign keys where expressible plus versioned domain validation and unique lineage |
+| AdditionCorrection retains immutable same-owner/session/stage/planned-source lineage, has one successor per corrected leaf and cannot self-reference or fork | Same-session foreign keys, immutable rows, check constraints, unique `correction_of_id`, execution-status/value shape and versioned domain validation; current effective value is the unique leaf, never timestamp selection |
 | Late evidence retains terminal availability/provenance and cannot alter original session/stage terminal facts | Non-null late-entry metadata/checks, immutable terminal columns and domain/application time-window enforcement with PostgreSQL integration proof |
 | Scoped operation identity is unique and payload mismatch cannot overwrite the stored result or tombstone | Unique actor/use-case/aggregate/operation key plus immutable fingerprint/result/tombstone record |
 | Attachment metadata is owner/session scoped and cannot reference a temporary/unvalidated storage identity | Foreign keys, finalized-status/checksum/size constraints and ownership-scoped application finalization |
@@ -798,6 +860,9 @@ Independent acceptance must record `PASS`, `FAIL`, or `NOT RUN` with evidence fo
 | P3-AC-081 | P3-FR-012/015/028/037/093/094: abort/cancel/waiver | Database + domain + application + API | State-table + PostgreSQL rollback/concurrency + E2E | Optional pending skip is the only stage cancel; session abort alone creates stage ABORTED and exact child effects; each waivable class succeeds once, each nonwaivable class fails `409`, duplicate waiver is idempotent, and late evidence supersedes without erasure | Full effect vectors, waiver/reminder history, CompletionAudit and atomic row/event counts |
 | P3-AC-082 | P3-FR-018/036/038/095: late evidence | Database + domain + API | Boundary-value clock + contract + PostgreSQL integration + E2E | At, before and after every 5-minute/24-hour/7-day/30-day boundary produce exact acceptance/conflict; observed/recorded times and availability flags persist; completed and aborted policies differ exactly; original terminal facts never change | Fixed-clock fixtures, row/timestamp vectors, reminder/waiver transitions, journal and comparisons |
 | P3-AC-083 | P3-FR-059/086/096: terminal-session allowlist | Database + domain + application + API | Mutation-matrix + failure-injection + E2E | Every allowed post-terminal append/regeneration works only in its window; every prohibited start/resume/stage/timer/waiver/media/plan/reference mutation is `409` with zero ordinary domain/journal change; completed/aborted journal and CompletionAudit remain reproducible | Endpoint/state matrix, zero-mutation vectors, projection hashes and immutable terminal timestamps |
+| P3-AC-084 | P3-FR-009/090/097: collision-free materialized plan identity | Database + domain + application | Golden + property + PostgreSQL integration | One Phase 2 Mash source materializes `MASH_IN` rank 0 and `MASH` rank 1 with distinct stable `plan_step_id` values and the same `source_process_step_id`; repeated materialization is byte-identical; one-to-one, one-to-many, same-type, sparse/default and duplicate-order cases obey section 6.1.1; a duplicate derived ID is rejected atomically | UUID-name/input fixtures, source/plan identity rows, logical hashes, uniqueness-constraint proof, Phase 1A preservation vector and zero-row collision response |
+| P3-AC-085 | P3-FR-016/019/092/098: runtime requirement regeneration | Database + domain + application + API | Golden + state-table + concurrency + E2E | Planned repeats materialize independently; repeat Mash and controlled return create fresh required pH/gravity/temperature, checklist, reminder and eligible timer identities; prior completion/Waiver state does not transfer; a nonrepeatable hop/addition is absent; an explicitly rule-repeatable addition alone regenerates; bounded continuation creates no requirement set; duplicate command returns the identical stored set/fingerprint | Before/after templates, occurrence/requirement/reminder/timer/addition rows, provenance/fingerprint, replay response and racing row counts |
+| P3-AC-086 | P3-FR-046/095/096/099: append-only AdditionEvent correction | Database + domain + application + API | Contract + boundary-clock + concurrency + PostgreSQL integration + E2E | Active/completed/aborted corrections obey section 6.8.1 and the 30-day boundary; original remains immutable; unique leaf supplies effective quantity/time/status/identity/note; same-key retry replays; changed payload and stale/superseded targets conflict; invalidated evidence updates the same Reminder and CompletionAudit truthfully; journal/deviation projections regenerate from the leaf; Phase 2 plan/reservation/inventory vectors remain unchanged | Original/correction/lineage rows, request/response matrix, reminder resolution history, projection hashes, immutable terminal timestamps and before/after Phase 2 ledger vector |
 
 ### H. Mandatory adversarial scenarios
 
@@ -843,6 +908,16 @@ Independent acceptance must record `PASS`, `FAIL`, or `NOT RUN` with evidence fo
 | P3-ADV-038 | Optional stage cancel, active-stage cancel, session abort with active children, waivable/nonwaivable requests, duplicate waiver and later valid evidence are attempted | Only optional pending skip succeeds as stage cancel; abort applies the full matrix; prohibited waiver/cancel fails; one waiver remains historical and is superseded deterministically by evidence |
 | P3-ADV-039 | Measurement/addition/note/correction requests occur immediately before, at and after each late-entry boundary for active, completed and aborted sessions | Fixed-clock results match section 6.8 exactly; provenance/availability flags persist; aborted new evidence is rejected; original terminal facts never change |
 | P3-ADV-040 | Every normal mutation is attempted after `COMPLETED` and `ABORTED`, followed by journal/CompletionAudit regeneration | Only the explicit append-only allowlist within its window succeeds; all other commands are `409` without ordinary mutation; regeneration is stable and adds no event |
+| P3-ADV-041 | One accepted Phase 2 Mash process step generates both `MASH_IN` and `MASH` | Both stages retain the same source-process UUID, have different canonical-stage/expansion inputs and distinct `plan_step_id` values, and coexist at occurrence 1 |
+| P3-ADV-042 | The identical Phase 2 plan is materialized again after API/PostgreSQL restart | Ordered logical plan, source provenance, every `plan_step_id` and logical-plan hash are identical; no random/retrieval-order input appears |
+| P3-ADV-043 | Runtime Mash repeat is requested after the original occurrence completed | One new occurrence receives fresh required pH/gravity/temperature, checklist, reminder and eligible timer identities; no original satisfaction or Waiver carries forward |
+| P3-ADV-044 | The original occurrence contains a nonrepeatable planned hop/addition and a rule-explicit repeatable addition | The nonrepeatable addition is absent from the runtime occurrence; only the explicitly repeatable addition regenerates with fresh requirement/reminder/timer identities and provenance; Phase 2 rows/ledger remain unchanged |
+| P3-ADV-045 | The same runtime repeat command is delivered twice after a lost response | One occurrence and one exact requirement set exist; retry returns the original occurrence, requirement-set fingerprint and resources without duplicates |
+| P3-ADV-046 | Addition quantity is recorded incorrectly and corrected before stage completion | Original AdditionEvent remains immutable; one linked correction becomes the effective quantity; reminder has no second semantic completion; deviation/journal use the effective leaf and inventory counts do not change |
+| P3-ADV-047 | Addition execution time is corrected after BrewSession completion and after abort at the fixed 30-day boundaries | Both terminal states accept append-only correction through the boundary and reject after it; stage/session terminal times do not move or reopen |
+| P3-ADV-048 | A correction changes the AdditionEvent that satisfied a required Reminder from `EXECUTED` to `SKIPPED` | The same Reminder appends invalidation history and is currently `SKIPPED` only with an existing valid Waiver, otherwise `DUE`/unsatisfied; CompletionAudit cannot report false satisfaction |
+| P3-ADV-049 | Addition correction commits, its HTTP response is lost, and the operation is retried; then its key is reused with changed data and a superseded target is corrected | Same correction replays once; changed fingerprint is `409 IDEMPOTENCY_KEY_REUSED`; stale target is `409 ADDITION_CORRECTION_TARGET_SUPERSEDED` with the current leaf; no fork or duplicate event exists |
+| P3-ADV-050 | A client attempts to correct the Phase 2 planned-addition resource instead of the Phase 3 execution fact | Request is rejected without mutation; RecipeVersion, planned addition, reservation and inventory ledger remain byte/count identical; only the AdditionEvent correction route is valid |
 
 ## 14. Required test layers
 
@@ -858,7 +933,7 @@ Implementation must add and execute:
 - backup/restore verification; and
 - live disposable-runtime smoke checks.
 
-The test plan must execute every P3-AC-060 through P3-AC-083 traceability row and every applicable P3-ADV-001 through P3-ADV-040 scenario. Failure-injection must occur at the authoritative boundary named by the scenario; merely mocking a successful response or restarting an unrelated container is insufficient. Any scenario marked not applicable requires architecture evidence and independent-review disposition.
+The test plan must execute every P3-AC-060 through P3-AC-086 traceability row and every applicable P3-ADV-001 through P3-ADV-050 scenario. Failure-injection must occur at the authoritative boundary named by the scenario; merely mocking a successful response or restarting an unrelated container is insufficient. Any scenario marked not applicable requires architecture evidence and independent-review disposition.
 
 SQLite may support fast tests but cannot substitute for PostgreSQL integrity evidence.
 
@@ -871,7 +946,7 @@ The implementation candidate is incomplete without:
 - `docs/PHASE_3_IMPLEMENTATION_REPORT.md` containing scope mapping, migration summary, commands, actual results, limitations, and exact candidate SHA;
 - `docs/evidence/PHASE_3_INDEPENDENT_ARCHITECTURE_AND_BREWING_ACCEPTANCE.md` completed by independent review;
 - an explicit inventory proving no Phase 4–10 leakage; and
-- a remediation traceability appendix mapping P3-FR-009, 014 through 019, 021 through 024, 030 through 039, 046/047, 050 through 059, 066, and 072 through 096 to enforcement, tests, actual results, and evidence locations;
+- a remediation traceability appendix mapping P3-FR-009, 014 through 019, 021 through 024, 030 through 039, 046/047, 050 through 059, 066, and 072 through 099 to enforcement, tests, actual results, and evidence locations;
 - a clean-worktree and artifact/secret scan receipt.
 
 Evidence must distinguish repository/static checks, automated tests, disposable local runtime checks, restore evidence, and any unavailable external/deployment evidence. Local Compose success is not NAS-production evidence.
