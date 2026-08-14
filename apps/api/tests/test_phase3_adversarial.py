@@ -63,14 +63,15 @@ def test_adv_001_003_004_031_idempotent_replay_and_key_reuse(active_mash):
             )
         )
         assert len(rows) == 1
+    revision = client.get(f"/api/v1/brew-sessions/{session_id}").json()["revision"]
     paused = client.post(
         f"/api/v1/brew-sessions/{session_id}/pause",
-        json={"operation_id": "pause-adv-1"},
+        json={"operation_id": "pause-adv-1", "expected_revision": revision},
     )
     assert paused.status_code == 200
     same = client.post(
         f"/api/v1/brew-sessions/{session_id}/pause",
-        json={"operation_id": "pause-adv-1"},
+        json={"operation_id": "pause-adv-1", "expected_revision": revision},
     )
     assert same.status_code == 200
     assert same.json()["id"] == paused.json()["id"]
@@ -862,13 +863,16 @@ def test_adv_032_oversize_and_traversal_filenames_rejected(active_mash, tmp_path
 
 
 def test_adv_034_performance_bench_records_percentiles(active_mash):
-    bench = active_mash["client"].post(
+    from brewing_api.application.phase3.performance import run_isolated_performance_harness
+
+    removed = active_mash["client"].post(
         f"/api/v1/brew-sessions/{active_mash['session_id']}/performance-bench"
     )
-    assert bench.status_code == 200
-    body = bench.json()
+    assert removed.status_code in {404, 405}
+    body = run_isolated_performance_harness(samples=8, warmup=1)
     assert body["sample_size"] >= 1
     assert "results" in body
+    assert body["all_pass"] is True
 
 
 def test_adv_044_052_053_054_055_runtime_repeat_policy_matrix():

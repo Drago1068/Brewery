@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     Numeric,
     String,
@@ -96,6 +97,14 @@ class BrewStageRequirement(UuidTimestampMixin, Base):
 
 class BrewAdditionEvent(UuidTimestampMixin, Base):
     __tablename__ = "brew_addition_events"
+    __table_args__ = (
+        UniqueConstraint("id", "brew_session_id", name="uq_addition_event_session"),
+        ForeignKeyConstraint(
+            ["stage_instance_id", "brew_session_id"],
+            ["brew_stages.id", "brew_stages.brew_session_id"],
+            name="fk_addition_event_stage_session",
+        ),
+    )
 
     brew_session_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("brew_sessions.id", ondelete="CASCADE"), index=True, nullable=False
@@ -131,7 +140,20 @@ class BrewAdditionEvent(UuidTimestampMixin, Base):
 
 class BrewAdditionCorrection(UuidTimestampMixin, Base):
     __tablename__ = "brew_addition_corrections"
-    __table_args__ = (UniqueConstraint("correction_of_id"),)
+    __table_args__ = (
+        UniqueConstraint("correction_of_id"),
+        UniqueConstraint("id", "brew_session_id", name="uq_addition_correction_session"),
+        ForeignKeyConstraint(
+            ["correction_of_id", "brew_session_id"],
+            ["brew_addition_events.id", "brew_addition_events.brew_session_id"],
+            name="fk_addition_correction_event_session",
+        ),
+        ForeignKeyConstraint(
+            ["stage_instance_id", "brew_session_id"],
+            ["brew_stages.id", "brew_stages.brew_session_id"],
+            name="fk_addition_correction_stage_session",
+        ),
+    )
 
     brew_session_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("brew_sessions.id", ondelete="CASCADE"), index=True, nullable=False
@@ -142,7 +164,9 @@ class BrewAdditionCorrection(UuidTimestampMixin, Base):
     original_addition_event_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("brew_addition_events.id", ondelete="RESTRICT"), index=True, nullable=False
     )
-    correction_of_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    correction_of_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("brew_addition_events.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
     execution_status: Mapped[str] = mapped_column(String(24), nullable=False)
     actual_quantity: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
     actual_unit: Mapped[str | None] = mapped_column(String(16))

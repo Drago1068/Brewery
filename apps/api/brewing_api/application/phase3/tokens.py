@@ -1,6 +1,11 @@
 import hashlib
 import hmac
+import secrets
 from uuid import UUID
+
+
+def generate_csrf_token() -> str:
+    return secrets.token_hex(32)
 
 
 def derive_csrf_token(auth_session_id: UUID, secret: str) -> str:

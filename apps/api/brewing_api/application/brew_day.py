@@ -44,6 +44,100 @@ class MeasurementCommand(Protocol):
     late_entry_reason: str | None
 
 
+PROCESS_POINTS = {
+    "MASH_IN_TEMPERATURE": "MASH_IN",
+    "MASH_REST_TEMPERATURE": "MASH",
+    "MASH_PH": "MASH",
+    "MASH_GRAVITY": "MASH",
+    "POST_MASH_GRAVITY": "POST_MASH",
+    "PRE_BOIL_GRAVITY": "PRE_BOIL",
+    "PRE_BOIL_VOLUME": "PRE_BOIL",
+    "ORIGINAL_GRAVITY": "POST_BOIL",
+    "KNOCKOUT_VOLUME": "KNOCKOUT",
+    "KNOCKOUT_TEMPERATURE": "KNOCKOUT",
+    "PITCH_TEMPERATURE": "PITCH",
+}
+
+_PHASE1A_CONTEXT = {
+    "MASH_PH": {
+        "method": "METER",
+        "sample_temperature_c": Decimal("65.00"),
+        "temperature_compensated": True,
+    },
+    "MASH_GRAVITY": {"method": "HYDROMETER", "sample_temperature_c": Decimal("20.00")},
+    "POST_MASH_GRAVITY": {"method": "HYDROMETER", "sample_temperature_c": Decimal("20.00")},
+    "PRE_BOIL_GRAVITY": {
+        "method": "HYDROMETER",
+        "sample_temperature_c": Decimal("20.00"),
+        "vessel": "KETTLE",
+    },
+    "ORIGINAL_GRAVITY": {"method": "HYDROMETER", "sample_temperature_c": Decimal("20.00")},
+    "MASH_IN_TEMPERATURE": {"method": "PROBE"},
+    "MASH_REST_TEMPERATURE": {"method": "PROBE"},
+    "KNOCKOUT_TEMPERATURE": {"method": "PROBE", "vessel": "RECEIVING"},
+    "KNOCKOUT_VOLUME": {"method": "SIGHT_GLASS", "vessel": "RECEIVING"},
+    "PRE_BOIL_VOLUME": {"method": "SIGHT_GLASS", "vessel": "KETTLE"},
+    "PITCH_TEMPERATURE": {"method": "PROBE"},
+}
+
+
+def _measurement_context(command: MeasurementCommand) -> dict:
+    kind = command.measurement_type
+    defaults = dict(_PHASE1A_CONTEXT.get(kind, {}))
+    method = getattr(command, "method", None) or defaults.get("method")
+    sample_temperature_c = getattr(command, "sample_temperature_c", None)
+    if sample_temperature_c is None:
+        sample_temperature_c = defaults.get("sample_temperature_c")
+    compensated = getattr(command, "temperature_compensated", None)
+    if compensated is None:
+        compensated = defaults.get("temperature_compensated")
+    vessel = getattr(command, "vessel", None) or defaults.get("vessel")
+    if kind in {"PRE_BOIL_GRAVITY", "PRE_BOIL_VOLUME"}:
+        vessel = vessel or "KETTLE"
+    if kind in {"KNOCKOUT_VOLUME", "KNOCKOUT_TEMPERATURE"}:
+        vessel = vessel or "RECEIVING"
+    if kind in {
+        "MASH_IN_TEMPERATURE",
+        "MASH_REST_TEMPERATURE",
+        "MASH_PH",
+        "POST_MASH_GRAVITY",
+        "PRE_BOIL_GRAVITY",
+        "PRE_BOIL_VOLUME",
+        "ORIGINAL_GRAVITY",
+        "KNOCKOUT_VOLUME",
+        "KNOCKOUT_TEMPERATURE",
+        "PITCH_TEMPERATURE",
+        "MASH_GRAVITY",
+    } and not method:
+        raise DomainError(
+            "Measurement method is required", 422, code="MEASUREMENT_CONTEXT_REQUIRED"
+        )
+    if kind == "MASH_PH" and (sample_temperature_c is None or compensated is None):
+        raise DomainError(
+            "Mash pH requires sample temperature and temperature-compensated flag",
+            422,
+            code="MEASUREMENT_CONTEXT_REQUIRED",
+        )
+    if kind in {"POST_MASH_GRAVITY", "PRE_BOIL_GRAVITY", "ORIGINAL_GRAVITY", "MASH_GRAVITY"}:
+        if method in {"HYDROMETER", "REFRACTOMETER"} and sample_temperature_c is None:
+            raise DomainError(
+                "Temperature-sensitive gravity requires sample temperature",
+                422,
+                code="MEASUREMENT_CONTEXT_REQUIRED",
+            )
+    if kind in {"PRE_BOIL_GRAVITY", "PRE_BOIL_VOLUME", "KNOCKOUT_VOLUME"} and not vessel:
+        raise DomainError("Volume/gravity vessel context is required", 422)
+    return {
+        "method": method,
+        "sample_temperature_c": sample_temperature_c,
+        "temperature_compensated": compensated,
+        "vessel": vessel,
+        "raw_value": getattr(command, "raw_value", None) or command.value,
+        "raw_unit": getattr(command, "raw_unit", None) or command.unit,
+        "conversion_model_id": getattr(command, "conversion_model_id", None),
+    }
+
+
 def _aware(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=UTC)
 
@@ -82,12 +176,15 @@ def start_session(
 
 
 def mark_ready(db: Session, user: User, session_id: uuid.UUID) -> BrewSession:
+    from brewing_api.application.phase3.checklists import satisfy_preflight_checklists
+
     session = get_session(db, user, session_id)
     if session.status != "PLANNED":
         raise ConflictError("Only a planned brew session can enter READY")
     if not session.logical_plan_hash:
         raise DomainError("Preflight failed: execution plan was not materialized", 422)
     session.status = "READY"
+    satisfy_preflight_checklists(db, session.id, user.id)
     journal(db, session.id, "BREW_SESSION_READY", "Brew session preflight passed", actor_id=user.id)
     audit(db, user.id, "BREW_SESSION_READY", "BrewSession", session.id)
     _bump(session)
@@ -413,6 +510,10 @@ def record_measurement(
     if measured_at > now + timedelta(minutes=5):
         raise DomainError("observed_at cannot be more than five minutes in the future", 422)
     entry_method = getattr(command, "entry_method", None) or "MANUAL"
+    context = _measurement_context(command)
+    process_point = PROCESS_POINTS.get(command.measurement_type)
+    if process_point is None:
+        raise DomainError("Unsupported measurement type")
     measurement = Measurement(
         brew_stage_id=stage.id,
         measurement_type=command.measurement_type,
@@ -422,13 +523,18 @@ def record_measurement(
         note=command.note,
         instrument=command.instrument,
         provenance="BREWER",
-        process_point="MASH" if "MASH" in command.measurement_type else command.measurement_type,
-        raw_value=command.value,
-        raw_unit=command.unit,
+        process_point=process_point,
+        raw_value=context["raw_value"],
+        raw_unit=context["raw_unit"],
         canonical_value=command.value,
         canonical_unit=expected_unit,
         recorded_at=now,
         entry_method=entry_method,
+        method=context["method"],
+        sample_temperature_c=context["sample_temperature_c"],
+        temperature_compensated=context["temperature_compensated"],
+        vessel=context["vessel"],
+        conversion_model_id=context["conversion_model_id"],
         actor_user_id=user.id,
         definition_version="phase3-measurement-v1",
         late_entry=late,
@@ -633,11 +739,22 @@ def complete_mash(db: Session, user: User, stage_id: uuid.UUID) -> BrewStage:
         ).all()
     )
     required = {"MASH_PH", "MASH_GRAVITY"}
-    if not is_legacy_plan(session) and "POST_MASH_GRAVITY" in kinds:
+    if not is_legacy_plan(session):
         required = {"MASH_PH", "POST_MASH_GRAVITY"}
     missing = required - kinds
     if missing:
         raise DomainError(f"Required measurements missing: {', '.join(sorted(missing))}")
+    blockers = list(
+        db.scalars(
+            select(BrewStageRequirement).where(
+                BrewStageRequirement.stage_instance_id == stage.id,
+                BrewStageRequirement.required.is_(True),
+                BrewStageRequirement.status.in_(("PENDING", "DUE")),
+            )
+        ).all()
+    )
+    if blockers and not is_legacy_plan(session):
+        raise DomainError("Required measurements or actions are unsatisfied")
     now = utc_now()
     stage.status = "COMPLETED"
     stage.completed_at = now

@@ -43,7 +43,7 @@ class RecipeResponse(BaseModel):
 
 class BrewSessionCreate(BaseModel):
     recipe_version_id: uuid.UUID
-    operation_id: str | None = Field(default=None, max_length=64)
+    operation_id: str = Field(min_length=1, max_length=64)
     plan_preview_hash: str | None = None
     addition_repeat_declarations: list[dict] | None = None
 
@@ -56,15 +56,42 @@ class MeasurementCreate(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
     instrument: str | None = Field(default=None, max_length=160)
     entry_method: Literal["MANUAL", "VOICE_CONFIRMED"] = "MANUAL"
-    operation_id: str | None = Field(default=None, max_length=64)
+    operation_id: str = Field(min_length=1, max_length=64)
     late_entry_reason: str | None = Field(default=None, max_length=1000)
+    method: str | None = Field(default=None, max_length=32)
+    sample_temperature_c: Decimal | None = None
+    temperature_compensated: bool | None = None
+    vessel: str | None = Field(default=None, max_length=40)
+    raw_value: Decimal | None = None
+    raw_unit: str | None = Field(default=None, max_length=16)
+    conversion_model_id: str | None = Field(default=None, max_length=80)
 
     def model_post_init(self, __context: object) -> None:
         if self.measurement_type == "MASH_PH" and not Decimal("0") <= self.value <= Decimal("14"):
             raise ValueError("Mash pH must be between 0 and 14")
-        gravity_is_valid = Decimal("1.000") <= self.value <= Decimal("1.200")
-        if self.measurement_type in {"MASH_GRAVITY", "POST_MASH_GRAVITY"} and not gravity_is_valid:
-            raise ValueError("Mash gravity must be between 1.000 and 1.200 SG")
+        gravity_types = {
+            "MASH_GRAVITY",
+            "POST_MASH_GRAVITY",
+            "PRE_BOIL_GRAVITY",
+            "ORIGINAL_GRAVITY",
+        }
+        if self.measurement_type == "MASH_GRAVITY":
+            gravity_is_valid = Decimal("1.000") <= self.value <= Decimal("1.200")
+            if not gravity_is_valid:
+                raise ValueError("Mash gravity must be between 1.000 and 1.200 SG")
+        elif self.measurement_type in gravity_types:
+            gravity_is_valid = Decimal("0.900") <= self.value <= Decimal("1.300")
+            if not gravity_is_valid:
+                raise ValueError("Gravity must be between 0.900 and 1.300 SG")
+        if self.measurement_type in {
+            "MASH_IN_TEMPERATURE",
+            "MASH_REST_TEMPERATURE",
+            "KNOCKOUT_TEMPERATURE",
+            "PITCH_TEMPERATURE",
+        } and not Decimal("-10") <= self.value <= Decimal("120"):
+            raise ValueError("Temperature must be between -10 and 120 degC")
+        if self.measurement_type in {"PRE_BOIL_VOLUME", "KNOCKOUT_VOLUME"} and self.value <= 0:
+            raise ValueError("Volume must be greater than 0 L")
 
 
 class IdStatusResponse(BaseModel):

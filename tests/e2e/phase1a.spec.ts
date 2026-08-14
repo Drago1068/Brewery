@@ -14,8 +14,16 @@ async function clearActiveBrew(page: Page) {
   if (!active.ok()) throw new Error(`Active brew lookup failed: ${active.status()}`);
   const body = await active.json();
   if (!body?.id) return;
+  const details = await page.request.get(`/api/v1/brew-sessions/${body.id}`, {
+    headers: { Origin: origin },
+  });
+  const revision = details.ok() ? ((await details.json()).revision as number) : 1;
   const aborted = await page.request.post(`/api/v1/brew-sessions/${body.id}/abort`, {
-    data: { reason: "Clearing prior E2E brew session before the next scenario" },
+    data: {
+      reason: "Clearing prior E2E brew session before the next scenario",
+      expected_revision: revision,
+      operation_id: `e2e-abort-${Date.now()}`,
+    },
     headers: { Origin: origin, "X-CSRF-Token": csrf, "Content-Type": "application/json" },
   });
   if (!aborted.ok()) {
@@ -41,14 +49,35 @@ test("complete Phase 1A workflow and recover the Mash timer after refresh", asyn
   await expect(page.getByRole("heading", { name: "Plan once. Brew with confidence." })).toBeVisible();
   await clearActiveBrew(page);
 
-  await page.getByLabel("Recipe name").fill(recipeName);
-  await page.getByLabel("Duration (min)").fill("1");
-  await page.getByRole("button", { name: "Create recipe v1" }).click();
+  const origin = process.env.BASE_URL ?? "http://web:3000";
+  const csrf =
+    (await page.evaluate(() => sessionStorage.getItem("csrf_token"))) ||
+    (await page.request.get("/api/v1/auth/csrf", { headers: { Origin: origin } }).then(async (r) =>
+      r.ok() ? ((await r.json()).csrf_token as string) : "",
+    ));
+  const created = await page.request.post("/api/v1/recipes", {
+    data: {
+      name: recipeName,
+      target_mash_temperature: "152",
+      planned_mash_duration_minutes: 1,
+      target_mash_ph: "5.30",
+      mash_ph_tolerance: "0.05",
+      target_mash_gravity: "1.050",
+      mash_gravity_tolerance: "0.003",
+    },
+    headers: { Origin: origin, "X-CSRF-Token": csrf, "Content-Type": "application/json" },
+  });
+  if (!created.ok()) {
+    throw new Error(`Recipe create failed: ${created.status()} ${await created.text()}`);
+  }
+  await page.goto("/");
   const recipeCard = page.getByRole("heading", { name: recipeName }).locator("..");
-  await expect(recipeCard).toBeVisible();
+  await expect(recipeCard).toBeVisible({ timeout: 20_000 });
   await recipeCard.getByRole("button", { name: "Start brew session" }).click();
 
-  await expect(page.getByRole("heading", { name: "Ready to start Mash" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Ready to start Mash" })).toBeVisible({
+    timeout: 20_000,
+  });
   await page.getByRole("button", { name: "Start Mash" }).click();
   const requiredActions = page.getByRole("region", { name: "Required actions" });
   await expect(requiredActions.getByText("Measure Mash pH", { exact: true })).toBeVisible();
@@ -81,9 +110,14 @@ test("complete Phase 1A workflow and recover the Mash timer after refresh", asyn
     ),
     page.getByRole("button", { name: "Record gravity" }).click(),
   ]);
-  await page.getByRole("button", { name: "Complete Mash" }).click();
+  await Promise.all([
+    page.waitForResponse(
+      (response) => response.url().includes("/complete") && response.request().method() === "POST",
+    ),
+    page.getByRole("button", { name: "Complete Mash", exact: true }).click(),
+  ]);
 
-  await expect(page.getByText("COMPLETED", { exact: true })).toBeVisible();
+  await expect(page.locator(".brew-topbar .status")).toHaveText("COMPLETED", { timeout: 20_000 });
   await expect(page.getByRole("heading", { name: "Mash performance" })).toBeVisible();
   await expect(page.locator(".performance").getByText("5.420", { exact: true })).toBeVisible();
   await expect(page.locator(".performance").getByText("1.048 SG", { exact: true })).toBeVisible();

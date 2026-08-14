@@ -121,3 +121,49 @@ PHASE_4_10_OPERATIONAL_LEAKAGE=NO for fermentation curves, inventory consumption
 PHASE_3_ACCEPTANCE=NOT_YET_GRANTED
 PHASE_4_IMPLEMENTATION=NOT_AUTHORIZED
 PRODUCTION_DEPLOYMENT=NOT_AUTHORIZED
+
+## Remediation after failed independent review (`5edadd36…`)
+
+Independent review artifact (immutable FAIL):
+`docs/evidence/PHASE_3_INDEPENDENT_IMPLEMENTATION_REVIEW.md`
+
+Remediation mapping:
+`docs/evidence/PHASE_3_INDEPENDENT_IMPLEMENTATION_REMEDIATION.md`
+
+1:1 traceability rebuild:
+`docs/evidence/PHASE_3_TRACEABILITY.md`
+
+### Blocking findings closed in remediation
+
+- P3-IMPL-001: removed production `/performance-bench` mutation; isolated harness only
+- P3-IMPL-002: stage-aware Brew-Day UI + canonical Playwright flow
+- P3-IMPL-003: required `operation_id` / OCC fingerprints
+- P3-IMPL-004: REPEAT vs RETURN inference under session lock
+- P3-IMPL-005: POST_MASH process-point mapping
+- P3-IMPL-006: migration 0003 composite FKs, correction FK, append-only triggers
+- P3-IMPL-007: persistent `MEDIA_ROOT` volume + media-byte backup/restore proof
+- P3-IMPL-008: one-to-one FR/AC/ADV traceability including P3-FR-098…102
+- P3-IMPL-009: isolated performance harness; no SKIPPED-as-pass; n defaults 100
+- P3-IMPL-010: random CSRF token + configured origins
+- P3-IMPL-011: Ruff PASS
+- P3-IMPL-012: viewport/keyboard coverage retained for stage-aware UI
+
+### Spec counts (accepted hash)
+
+- FUNCTIONAL_REQUIREMENTS_EXPECTED=97 (IDs 001–102 minus 048/049/067/068/069; includes 098–102)
+- ACCEPTANCE_CRITERIA_EXPECTED=63
+- ADVERSARIAL_SCENARIOS_EXPECTED=58
+
+### Remediation validation (representative)
+
+| Gate | Result |
+|---|---|
+| Ruff | PASS |
+| SQLite pytest | PASS |
+| Disposable PostgreSQL migration 0002↔0003 | PASS |
+| Disposable PostgreSQL invariants (cross-session, AdditionEvent immutability, correction FK) | PASS |
+| Isolated performance harness / no authoritative mutation | PASS |
+| Media backup/restore metadata+bytes | PASS |
+| Canonical Playwright PRE_BREW→BREW_COMPLETE | see e2e gate on remediation candidate |
+
+READY_FOR_CODEX_INDEPENDENT_IMPLEMENTATION_RE_REVIEW is set only on the remediation candidate commit after full gate evidence.

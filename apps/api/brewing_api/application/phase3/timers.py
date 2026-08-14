@@ -470,3 +470,77 @@ def extend_timer(
     db.commit()
     db.refresh(timer)
     return timer
+
+
+def start_auxiliary_timer(
+    db: Session,
+    user: User,
+    stage_id: uuid.UUID,
+    name: str,
+    planned_duration_seconds: int,
+    operation_id: str | None,
+    expected_revision: int | None = None,
+) -> BrewTimer:
+    from brewing_api.application.brew_day import _stage_for_user
+    from brewing_api.application.phase3.commands import _lock_revision, _require_active
+
+    stage, session = _stage_for_user(db, user, stage_id)
+    document = {
+        "stage_id": str(stage_id),
+        "name": name,
+        "planned_duration_seconds": planned_duration_seconds,
+    }
+    replay = replay_or_conflict(
+        db, user.id, "start_auxiliary_timer", "BrewStage", stage.id, operation_id, document
+    )
+    if replay and replay.result_resource_id:
+        found = db.get(BrewTimer, replay.result_resource_id)
+        if found:
+            return found
+    _require_active(session)
+    _lock_revision(session, expected_revision)
+    if stage.status not in {"ACTIVE", "PAUSED"}:
+        raise ConflictError("Auxiliary timers require an active or paused stage")
+    if not name or len(name) > 80:
+        raise DomainError("Timer name must be 1 to 80 characters", 422)
+    if planned_duration_seconds <= 0:
+        raise DomainError("Timer duration must be positive", 422)
+    now = utc_now()
+    timer = BrewTimer(
+        brew_stage_id=stage.id,
+        brew_session_id=session.id,
+        name=name,
+        started_at=now,
+        planned_duration_seconds=planned_duration_seconds,
+        deadline_at=now + timedelta(seconds=planned_duration_seconds),
+        clock_basis="WALL_CLOCK",
+        timer_type="AUXILIARY",
+    )
+    db.add(timer)
+    db.flush()
+    journal(
+        db,
+        session.id,
+        "BREW_TIMER_STARTED",
+        f"{name} started",
+        stage.id,
+        actor_id=user.id,
+        operation_id=operation_id,
+    )
+    audit(db, user.id, "BREW_TIMER_STARTED", "BrewTimer", timer.id)
+    _bump(session)
+    store_success(
+        db,
+        user.id,
+        "start_auxiliary_timer",
+        "BrewStage",
+        stage.id,
+        operation_id,
+        document,
+        {"id": str(timer.id), "status": timer.status},
+        "BrewTimer",
+        timer.id,
+    )
+    db.commit()
+    db.refresh(timer)
+    return timer

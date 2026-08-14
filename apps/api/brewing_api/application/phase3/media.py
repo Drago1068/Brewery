@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import struct
 import uuid
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from brewing_api.application.errors import ConflictError, DomainError, NotFoundE
 from brewing_api.application.events import audit, journal
 from brewing_api.application.phase3.operations import replay_or_conflict, store_success
 from brewing_api.domain.brew_day.models import BrewAttachment
+from brewing_api.domain.brew_sessions.models import BrewStage
 from brewing_api.domain.identity.models import User
 from brewing_api.platform.config import get_settings
 from brewing_api.platform.time import utc_now
@@ -27,6 +29,7 @@ MAX_FILE = 10 * 1024 * 1024
 MAX_SESSION_COUNT = 20
 MAX_SESSION_BYTES = 100 * 1024 * 1024
 UNSAFE_MARKERS = (b"<svg", b"<html", b"<?xml", b"<script", b"%PDF")
+MAX_DIMENSION = 20000
 
 
 def _media_root() -> Path:
@@ -35,19 +38,49 @@ def _media_root() -> Path:
     return path
 
 
+def _decode_jpeg(payload: bytes) -> None:
+    if len(payload) < 32 or not payload.startswith(b"\xff\xd8\xff"):
+        raise DomainError("JPEG decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
+    if b"\xff\xd9" not in payload:
+        raise DomainError("JPEG decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
+    if b"\xff\xc0" not in payload and b"\xff\xc2" not in payload:
+        raise DomainError("JPEG decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
+
+
+def _decode_png(payload: bytes) -> None:
+    if len(payload) < 33 or payload[:8] != b"\x89PNG\r\n\x1a\n":
+        raise DomainError("PNG decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
+    length = struct.unpack(">I", payload[8:12])[0]
+    if length != 13 or payload[12:16] != b"IHDR":
+        raise DomainError("PNG decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
+    width, height = struct.unpack(">II", payload[16:24])
+    if width < 1 or height < 1 or width > MAX_DIMENSION or height > MAX_DIMENSION:
+        raise DomainError("PNG decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
+    if b"IEND" not in payload[-16:]:
+        raise DomainError("PNG decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
+
+
+def _decode_webp(payload: bytes) -> None:
+    if len(payload) < 16 or payload[:4] != b"RIFF" or payload[8:12] != b"WEBP":
+        raise DomainError("WebP decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
+    if payload[12:16] not in {b"VP8 ", b"VP8L", b"VP8X"}:
+        raise DomainError("WebP decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
+
+
 def _sniff(declared: str, payload: bytes) -> str:
     lowered = payload[:200].lower()
     if any(marker in lowered for marker in UNSAFE_MARKERS):
         raise DomainError("Unsafe media content", 415, code="UNSUPPORTED_MEDIA")
     if declared not in ALLOWED:
         raise DomainError("MIME type is not allowed", 415, code="UNSUPPORTED_MEDIA")
-    if declared == "image/jpeg" and payload.startswith(b"\xff\xd8\xff"):
+    if declared == "image/jpeg":
+        _decode_jpeg(payload)
         return declared
-    if declared == "image/png" and payload.startswith(b"\x89PNG\r\n\x1a\n"):
-        if b"IHDR" not in payload[:64]:
-            raise DomainError("PNG decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
+    if declared == "image/png":
+        _decode_png(payload)
         return declared
-    if declared == "image/webp" and payload.startswith(b"RIFF") and payload[8:12] == b"WEBP":
+    if declared == "image/webp":
+        _decode_webp(payload)
         return declared
     raise DomainError("MIME and signature do not agree", 415, code="UNSUPPORTED_MEDIA")
 
@@ -62,19 +95,6 @@ def upload_attachment(
     stage_id: uuid.UUID | None = None,
 ) -> BrewAttachment:
     session = get_session(db, user, session_id)
-    document = {
-        "filename": (upload.filename or "")[:255],
-        "content_type": upload.content_type,
-        "caption": caption,
-        "stage_id": str(stage_id) if stage_id else None,
-    }
-    replay = replay_or_conflict(
-        db, user.id, "upload_attachment", "BrewSession", session.id, operation_id, document
-    )
-    if replay and replay.result_resource_id:
-        found = db.get(BrewAttachment, replay.result_resource_id)
-        if found:
-            return found
     if session.status != "ACTIVE":
         raise ConflictError("Attachments can be uploaded only while the session is ACTIVE")
     if caption and len(caption) > 1000:
@@ -86,6 +106,28 @@ def upload_attachment(
     if len(payload) > MAX_FILE:
         raise DomainError("Attachment exceeds 10 MiB", 413, code="ATTACHMENT_TOO_LARGE")
     content_type = _sniff(upload.content_type or "", payload)
+    checksum = hashlib.sha256(payload).hexdigest()
+    if stage_id:
+        stage = db.get(BrewStage, stage_id)
+        if stage is None or stage.brew_session_id != session.id:
+            raise DomainError(
+                "stage_id does not belong to this session", 422, code="STAGE_OWNERSHIP"
+            )
+    document = {
+        "filename": (upload.filename or "")[:255],
+        "content_type": content_type,
+        "caption": caption,
+        "stage_id": str(stage_id) if stage_id else None,
+        "sha256": checksum,
+        "byte_length": len(payload),
+    }
+    replay = replay_or_conflict(
+        db, user.id, "upload_attachment", "BrewSession", session.id, operation_id, document
+    )
+    if replay and replay.result_resource_id:
+        found = db.get(BrewAttachment, replay.result_resource_id)
+        if found:
+            return found
     retained = list(
         db.scalars(
             select(BrewAttachment).where(
@@ -101,14 +143,13 @@ def upload_attachment(
     destination = _media_root() / storage_key
     temp_path = _media_root() / f".tmp-{storage_key}"
     temp_path.write_bytes(payload)
-    temp_path.replace(destination)
     attachment = BrewAttachment(
         brew_session_id=session.id,
         stage_instance_id=stage_id,
         storage_key=storage_key,
         content_type=content_type,
         byte_length=len(payload),
-        sha256=hashlib.sha256(payload).hexdigest(),
+        sha256=checksum,
         original_filename=raw_name[:255],
         caption=caption,
         actor_user_id=user.id,
@@ -140,6 +181,7 @@ def upload_attachment(
         attachment.id,
     )
     db.commit()
+    temp_path.replace(destination)
     db.refresh(attachment)
     return attachment
 
@@ -210,11 +252,24 @@ def soft_remove_attachment(
 
 
 def reconcile_orphans(max_age_hours: int = 24) -> int:
+    from brewing_api.platform.database import SessionLocal
+
     root = _media_root()
     removed = 0
     cutoff = utc_now().timestamp() - max_age_hours * 3600
-    for path in root.glob(".tmp-*"):
-        if path.is_file() and path.stat().st_mtime < cutoff:
+    with SessionLocal() as db:
+        referenced = set(db.scalars(select(BrewAttachment.storage_key)).all())
+    if not root.exists():
+        return 0
+    for path in root.iterdir():
+        if not path.is_file():
+            continue
+        if path.name.startswith(".tmp-"):
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
+            continue
+        if path.name not in referenced and path.stat().st_mtime < cutoff:
             path.unlink()
             removed += 1
     return removed

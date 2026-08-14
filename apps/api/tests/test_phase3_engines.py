@@ -56,14 +56,15 @@ def test_voice_proposal_is_not_a_commit():
 def test_idempotent_pause_replays_same_result(active_mash):
     client = active_mash["client"]
     session_id = active_mash["session_id"]
+    revision = client.get(f"/api/v1/brew-sessions/{session_id}").json()["revision"]
     first = client.post(
         f"/api/v1/brew-sessions/{session_id}/pause",
-        json={"operation_id": "pause-1"},
+        json={"operation_id": "pause-1", "expected_revision": revision},
     )
     assert first.status_code == 200
     second = client.post(
         f"/api/v1/brew-sessions/{session_id}/pause",
-        json={"operation_id": "pause-1"},
+        json={"operation_id": "pause-1", "expected_revision": revision},
     )
     assert second.status_code == 200
     assert first.json()["id"] == second.json()["id"]

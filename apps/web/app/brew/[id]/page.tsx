@@ -14,6 +14,20 @@ import {
   variance,
 } from "@/lib/brew";
 
+const MEASUREMENT_DEFAULTS: Record<string, { unit: string; method?: string; vessel?: string }> = {
+  MASH_PH: { unit: "pH", method: "METER" },
+  MASH_GRAVITY: { unit: "SG", method: "HYDROMETER" },
+  POST_MASH_GRAVITY: { unit: "SG", method: "HYDROMETER" },
+  PRE_BOIL_GRAVITY: { unit: "SG", method: "HYDROMETER", vessel: "KETTLE" },
+  PRE_BOIL_VOLUME: { unit: "L", method: "SIGHT_GLASS", vessel: "KETTLE" },
+  ORIGINAL_GRAVITY: { unit: "SG", method: "HYDROMETER" },
+  MASH_IN_TEMPERATURE: { unit: "degC", method: "PROBE" },
+  MASH_REST_TEMPERATURE: { unit: "degC", method: "PROBE" },
+  KNOCKOUT_TEMPERATURE: { unit: "degC", method: "PROBE", vessel: "RECEIVING" },
+  KNOCKOUT_VOLUME: { unit: "L", method: "SIGHT_GLASS", vessel: "RECEIVING" },
+  PITCH_TEMPERATURE: { unit: "degC", method: "PROBE" },
+};
+
 export default function BrewDayPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -25,6 +39,14 @@ export default function BrewDayPage() {
   const [note, setNote] = useState("");
   const [voiceText, setVoiceText] = useState("");
   const [voiceDraft, setVoiceDraft] = useState<VoiceProposal | null>(null);
+  const [auxName, setAuxName] = useState("Auxiliary timer");
+  const [auxSeconds, setAuxSeconds] = useState(300);
+  const [measType, setMeasType] = useState("MASH_PH");
+  const [measValue, setMeasValue] = useState("");
+  const [waiverReason, setWaiverReason] = useState("");
+  const [pitchNote, setPitchNote] = useState("");
+  const [repeatReason, setRepeatReason] = useState("Runtime repeat requested by brewer");
+  const [abortReason, setAbortReason] = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -62,7 +84,11 @@ export default function BrewDayPage() {
     try {
       await apiFetch(path, {
         method: "POST",
-        body: body ? JSON.stringify({ operation_id: newOperationId(), expected_revision: brew?.revision, ...body }) : undefined,
+        body: JSON.stringify({
+          operation_id: newOperationId(),
+          expected_revision: brew?.revision,
+          ...body,
+        }),
       });
       await refresh();
     } catch (reason) {
@@ -79,23 +105,24 @@ export default function BrewDayPage() {
 
   async function record(
     event: FormEvent<HTMLFormElement>,
-    type: "MASH_PH" | "MASH_GRAVITY",
+    type: string,
     entryMethod = "MANUAL",
     preset?: string,
   ) {
     event.preventDefault();
     const formEl = event.currentTarget;
-    const stageId = brew?.mash?.id;
+    const stageId = brew?.current_stage?.id ?? brew?.mash?.id;
     if (!stageId) {
-      setError("Mash stage is not ready for measurements.");
+      setError("No active stage is ready for measurements.");
       return;
     }
     const form = formEl ? new FormData(formEl) : null;
-    const value = preset ?? (form?.get("value") as string | null);
+    const value = preset ?? (form?.get("value") as string | null) ?? measValue;
     if (!value) {
       setError("Measurement value is required.");
       return;
     }
+    const defaults = MEASUREMENT_DEFAULTS[type] ?? { unit: "pH", method: "OTHER" };
     setBusy(true);
     setError("");
     try {
@@ -104,23 +131,26 @@ export default function BrewDayPage() {
         body: JSON.stringify({
           measurement_type: type,
           value,
-          unit: type === "MASH_PH" ? "pH" : "SG",
+          unit: defaults.unit,
           note: form?.get("note") || null,
           instrument: form?.get("instrument") || null,
           entry_method: entryMethod,
           operation_id: newOperationId(),
+          method: defaults.method,
+          sample_temperature_c: type.includes("PH") || type.includes("GRAVITY") ? "20.00" : undefined,
+          temperature_compensated: type === "MASH_PH" ? true : undefined,
+          vessel: defaults.vessel,
         }),
       });
       setVoiceDraft(null);
       setVoiceText("");
+      setMeasValue("");
       await refresh();
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 409) {
         setError(`${reason.message} Refreshing authoritative state…`);
         await refresh();
       } else if (reason instanceof ApiError) {
-        setError(reason.message);
-      } else if (reason instanceof Error) {
         setError(reason.message);
       } else {
         setError("Measurement failed.");
@@ -130,19 +160,60 @@ export default function BrewDayPage() {
     }
   }
 
+  async function uploadPhoto(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const file = form.get("file");
+    if (!(file instanceof File) || !file.size) {
+      setError("Choose a photo to upload.");
+      return;
+    }
+    const body = new FormData();
+    body.set("file", file);
+    body.set("operation_id", newOperationId());
+    body.set("caption", String(form.get("caption") || ""));
+    if (brew?.current_stage?.id) body.set("stage_id", brew.current_stage.id);
+    setBusy(true);
+    setError("");
+    try {
+      await apiFetch(`/brew-sessions/${id}/attachments`, { method: "POST", body });
+      await refresh();
+      event.currentTarget.reset();
+    } catch (reason) {
+      setError(reason instanceof ApiError ? reason.message : "Photo upload failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!brew) return <div className="loading" aria-live="polite">Restoring authoritative brew state…</div>;
 
   const pH = latestMeasurement(brew.mash?.measurements ?? [], "MASH_PH");
-  const gravity = latestMeasurement(brew.mash?.measurements ?? [], "MASH_GRAVITY");
-  const due = brew.mash?.notifications.filter((item) => item.status === "DUE") ?? [];
-  const currentName = brew.current_stage?.name ?? "Mash";
+  const gravity =
+    latestMeasurement(brew.mash?.measurements ?? [], "MASH_GRAVITY") ??
+    latestMeasurement(brew.mash?.measurements ?? [], "POST_MASH_GRAVITY");
+  const due =
+    (brew.due_reminders?.length
+      ? brew.due_reminders
+      : brew.mash?.notifications.filter((item) => item.status === "DUE")) ?? [];
+  const currentName = brew.current_stage?.canonical_stage_type ?? brew.current_stage?.name ?? "Brew day";
+  const stages = brew.stages ?? [];
+  const pending = stages.find((item) => item.status === "PENDING");
+  const mashStage = stages.find((item) => (item.canonical_stage_type || item.name) === "MASH");
+  const showStartMash = Boolean(
+    mashStage &&
+      mashStage.status === "PENDING" &&
+      (!brew.mash || brew.mash.status === "PENDING") &&
+      !brew.current_stage &&
+      pending?.id === mashStage.id,
+  );
 
   return (
     <div className="brew-shell">
       <section className="brew-topbar">
         <div>
-          <div className="eyebrow">Brew-Day Mode</div>
-          <h1>Mash</h1>
+          <div className="eyebrow">Brew-Day OS</div>
+          <h1>{currentName.replaceAll("_", " ")}</h1>
           <p>
             Session {brew.id.slice(0, 8)} · {currentName} · rev {brew.revision ?? 1}
             {brew.plan_kind ? ` · plan ${brew.plan_kind}` : ""}
@@ -152,6 +223,19 @@ export default function BrewDayPage() {
       </section>
       {error && <div className="alert error" role="alert">{error}</div>}
 
+      <section className="card" aria-label="Stage progress">
+        <h2>Stage progress</h2>
+        <ol className="timer-list">
+          {stages.map((stage) => (
+            <li key={stage.id}>
+              <strong>{stage.canonical_stage_type ?? stage.name}</strong>
+              <span>{stage.status}</span>
+              <span>#{stage.occurrence_number}</span>
+            </li>
+          ))}
+        </ol>
+      </section>
+
       {brew.next_required_action && (
         <section className="now-panel" aria-label="What to do now">
           <div className="eyebrow">Now</div>
@@ -160,7 +244,7 @@ export default function BrewDayPage() {
         </section>
       )}
 
-      {!brew.mash || brew.mash.status === "PENDING" ? (
+      {showStartMash ? (
         <section className="card start-stage">
           <div>
             <div className="eyebrow">Current action</div>
@@ -171,7 +255,24 @@ export default function BrewDayPage() {
             Start Mash
           </button>
         </section>
-      ) : (
+      ) : pending && !brew.current_stage && brew.status === "ACTIVE" ? (
+        <section className="card start-stage">
+          <div>
+            <div className="eyebrow">Current action</div>
+            <h2>Ready to start {pending.canonical_stage_type ?? pending.name}</h2>
+          </div>
+          <button
+            className="primary giant"
+            disabled={busy}
+            data-testid="start-current-stage"
+            onClick={() => action(`/brew-sessions/stages/${pending.id}/start`)}
+          >
+            Start {pending.canonical_stage_type ?? pending.name}
+          </button>
+        </section>
+      ) : null}
+
+      {(brew.mash || brew.current_stage) && (
         <>
           <div className="brew-toolbar">
             {brew.status === "ACTIVE" && (
@@ -184,37 +285,105 @@ export default function BrewDayPage() {
                 Resume session
               </button>
             )}
+            {brew.current_stage &&
+              brew.current_stage.status === "ACTIVE" &&
+              (brew.current_stage.canonical_stage_type || brew.current_stage.name) !== "MASH" && (
+              <button
+                className="secondary dark"
+                disabled={busy}
+                onClick={() => action(`/brew-sessions/stages/${brew.current_stage!.id}/complete`)}
+              >
+                Complete {brew.current_stage.canonical_stage_type ?? brew.current_stage.name}
+              </button>
+            )}
+            {pending && pending.required === false && (
+              <button
+                className="secondary dark"
+                disabled={busy}
+                onClick={() =>
+                  action(`/brew-sessions/stages/${pending.id}/skip`, {
+                    reason: "Optional stage skipped by brewer",
+                  })
+                }
+              >
+                Skip {pending.canonical_stage_type ?? pending.name}
+              </button>
+            )}
           </div>
 
-          <section className="timer-panel" aria-live="polite" aria-label="Mash timer status">
-            <span>Mash timer</span>
-            <strong data-testid="mash-timer" role="timer" aria-label={`Elapsed ${formatDuration(timerSeconds)}`}>
-              {formatDuration(timerSeconds)}
-            </strong>
-            <div className="timer-track">
-              <span
-                style={{
-                  width: `${Math.min(100, (timerSeconds / (brew.mash.timer?.planned_duration_seconds || 1)) * 100)}%`,
-                }}
-              />
-            </div>
-            <small>Target {brew.planned.mash_duration_minutes} minutes · Restores after refresh</small>
-          </section>
-
-          {(brew.timers?.length ?? 0) > 1 && (
-            <section className="card" aria-label="Active timers">
-              <h2>Active timers</h2>
-              <ul className="timer-list">
-                {brew.timers!.map((timer) => (
-                  <li key={timer.id}>
-                    <strong>{timer.name}</strong>
-                    <span>{timer.status}</span>
-                    <span>{formatDuration(timer.elapsed_seconds)}</span>
-                  </li>
-                ))}
-              </ul>
+          {brew.mash?.timer && (
+            <section className="timer-panel" aria-live="polite" aria-label="Mash timer status">
+              <span>Mash timer</span>
+              <strong data-testid="mash-timer" role="timer" aria-label={`Elapsed ${formatDuration(timerSeconds)}`}>
+                {formatDuration(timerSeconds)}
+              </strong>
+              <div className="timer-track">
+                <span
+                  style={{
+                    width: `${Math.min(100, (timerSeconds / (brew.mash.timer.planned_duration_seconds || 1)) * 100)}%`,
+                  }}
+                />
+              </div>
+              <small>Target {brew.planned.mash_duration_minutes} minutes · Restores after refresh</small>
             </section>
           )}
+
+          <section className="card" aria-label="Active timers">
+            <h2>Active timers</h2>
+            <ul className="timer-list" aria-label="Active timers">
+              {(brew.timers ?? []).map((timer) => (
+                <li key={timer.id}>
+                  <strong>{timer.name}</strong>
+                  <span>{timer.status}</span>
+                  <span role="timer">{formatDuration(timer.elapsed_seconds)}</span>
+                  {timer.status === "RUNNING" && (
+                    <button className="secondary dark" disabled={busy} onClick={() => action(`/brew-sessions/timers/${timer.id}/pause`)}>
+                      Pause
+                    </button>
+                  )}
+                  {timer.status === "PAUSED" && (
+                    <button className="secondary dark" disabled={busy} onClick={() => action(`/brew-sessions/timers/${timer.id}/resume`)}>
+                      Resume
+                    </button>
+                  )}
+                  {(timer.status === "EXPIRED" || timer.status === "COMPLETED") && (
+                    <button className="secondary dark" disabled={busy} onClick={() => action(`/brew-sessions/timers/${timer.id}/acknowledge`)}>
+                      Acknowledge
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {brew.current_stage && (
+              <form
+                className="measurement-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  action(`/brew-sessions/stages/${brew.current_stage!.id}/timers`, {
+                    name: `${auxName} ${Date.now() % 10000}`,
+                    planned_duration_seconds: auxSeconds,
+                  });
+                }}
+              >
+                <label>
+                  Auxiliary timer name
+                  <input value={auxName} onChange={(event) => setAuxName(event.target.value)} />
+                </label>
+                <label>
+                  Duration (seconds)
+                  <input
+                    type="number"
+                    min={1}
+                    value={auxSeconds}
+                    onChange={(event) => setAuxSeconds(Number(event.target.value))}
+                  />
+                </label>
+                <button className="primary" disabled={busy}>
+                  Start auxiliary timer
+                </button>
+              </form>
+            )}
+          </section>
 
           {due.length > 0 && (
             <section className="prompts" aria-label="Required actions">
@@ -223,7 +392,7 @@ export default function BrewDayPage() {
                   <span className="prompt-icon">!</span>
                   <div>
                     <strong>{item.message}</strong>
-                    <small>Required Mash observation</small>
+                    <small>Required observation</small>
                   </div>
                   {item.status === "DUE" && (
                     <button
@@ -239,7 +408,7 @@ export default function BrewDayPage() {
             </section>
           )}
 
-          {brew.mash.status === "ACTIVE" && (
+          {brew.mash?.status === "ACTIVE" && (
             <div className="measurement-grid">
               <MeasurementCard title="Mash pH" target={`${brew.planned.mash_ph} ± ${brew.planned.mash_ph_tolerance}`} done={pH}>
                 <form onSubmit={(event) => record(event, "MASH_PH")} className="measurement-form">
@@ -255,7 +424,9 @@ export default function BrewDayPage() {
                     Note
                     <input name="note" placeholder="Optional brew-day note" />
                   </label>
-                  <button type="submit" className="primary full" disabled={busy}>Record pH</button>
+                  <button type="submit" className="primary full" disabled={busy}>
+                    Record pH
+                  </button>
                 </form>
               </MeasurementCard>
               <MeasurementCard
@@ -263,10 +434,15 @@ export default function BrewDayPage() {
                 target={`${brew.planned.mash_gravity} ± ${brew.planned.mash_gravity_tolerance} SG`}
                 done={gravity}
               >
-                <form onSubmit={(event) => record(event, "MASH_GRAVITY")} className="measurement-form">
+                <form
+                  onSubmit={(event) =>
+                    record(event, brew.plan_kind?.toLowerCase().includes("legacy") ? "MASH_GRAVITY" : "POST_MASH_GRAVITY")
+                  }
+                  className="measurement-form"
+                >
                   <label>
                     Gravity reading
-                    <input name="value" type="number" min="1" max="1.2" step="0.001" required inputMode="decimal" />
+                    <input name="value" type="number" min="0.9" max="1.3" step="0.001" required inputMode="decimal" />
                   </label>
                   <label>
                     Instrument
@@ -276,13 +452,55 @@ export default function BrewDayPage() {
                     Note
                     <input name="note" placeholder="Optional brew-day note" />
                   </label>
-                  <button type="submit" className="primary full" disabled={busy}>Record gravity</button>
+                  <button type="submit" className="primary full" disabled={busy}>
+                    Record gravity
+                  </button>
                 </form>
               </MeasurementCard>
             </div>
           )}
 
-          {brew.mash.status === "ACTIVE" && (
+          {brew.current_stage?.status === "ACTIVE" && (
+            <section className="card" aria-label="Measurements">
+              <h2>Measurements</h2>
+              <form
+                className="measurement-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  record(event, measType);
+                }}
+              >
+                <label>
+                  Type
+                  <select
+                    aria-label="Measurement type"
+                    value={measType}
+                    onChange={(event) => setMeasType(event.target.value)}
+                  >
+                    {Object.keys(MEASUREMENT_DEFAULTS).map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Value
+                  <input
+                    aria-label="Measurement value"
+                    value={measValue}
+                    onChange={(event) => setMeasValue(event.target.value)}
+                    required
+                  />
+                </label>
+                <button className="primary" disabled={busy}>
+                  Record measurement
+                </button>
+              </form>
+            </section>
+          )}
+
+          {brew.mash?.status === "ACTIVE" && (
             <section className="card voice-card">
               <div className="eyebrow">Voice confirmation boundary</div>
               <h2>Confirm before commit</h2>
@@ -295,22 +513,26 @@ export default function BrewDayPage() {
                   placeholder="five point two pH"
                 />
               </label>
-              <button
-                className="secondary dark"
-                type="button"
-                onClick={() => setVoiceDraft(parseVoiceProposal(voiceText))}
-              >
+              <button className="secondary dark" type="button" onClick={() => setVoiceDraft(parseVoiceProposal(voiceText))}>
                 Parse transcript
               </button>
               {voiceDraft && (
                 <form
                   className="voice-confirm"
                   onSubmit={(event) =>
-                    record(event, voiceDraft.field === "MASH_GRAVITY" ? "MASH_GRAVITY" : "MASH_PH", "VOICE_CONFIRMED", voiceDraft.value)
+                    record(
+                      event,
+                      voiceDraft.field === "MASH_GRAVITY" ? "MASH_GRAVITY" : "MASH_PH",
+                      "VOICE_CONFIRMED",
+                      voiceDraft.value,
+                    )
                   }
                 >
                   <p>
-                    Proposed {voiceDraft.field}: <strong>{voiceDraft.value} {voiceDraft.unit}</strong>
+                    Proposed {voiceDraft.field}:{" "}
+                    <strong>
+                      {voiceDraft.value} {voiceDraft.unit}
+                    </strong>
                   </p>
                   <label>
                     Corrected value
@@ -320,26 +542,31 @@ export default function BrewDayPage() {
                       onChange={(event) => setVoiceDraft({ ...voiceDraft, value: event.target.value })}
                     />
                   </label>
-                  <button className="primary" disabled={busy}>Confirm voice measurement</button>
+                  <button className="primary" disabled={busy}>
+                    Confirm voice measurement
+                  </button>
+                  <button className="secondary dark" type="button" disabled={busy} onClick={() => setVoiceDraft(null)}>
+                    Reject proposal
+                  </button>
                 </form>
               )}
             </section>
           )}
 
-          {(brew.requirements ?? []).filter((item) => item.class === "ADDITION").length > 0 && (
-            <section className="card" aria-label="Upcoming additions">
-              <h2>Upcoming additions</h2>
-              <ul className="timer-list">
-                {(brew.requirements ?? [])
-                  .filter((item) => item.class === "ADDITION")
-                  .map((item) => (
-                    <li key={item.id}>
-                      <strong>{item.definition_key ?? "Addition"}</strong>
-                      <span>{item.status}</span>
-                      <span>
-                        {item.planned_amount} {item.planned_unit}
-                      </span>
-                      {item.status === "PENDING" && brew.status === "ACTIVE" && (
+          <section className="card" aria-label="Upcoming additions">
+            <h2>Upcoming additions</h2>
+            <ul className="timer-list">
+              {(brew.requirements ?? [])
+                .filter((item) => item.class === "ADDITION")
+                .map((item) => (
+                  <li key={item.id}>
+                    <strong>{item.definition_key ?? "Addition"}</strong>
+                    <span>{item.status}</span>
+                    <span>
+                      {item.planned_amount} {item.planned_unit}
+                    </span>
+                    {item.status === "PENDING" && brew.status === "ACTIVE" && (
+                      <>
                         <button
                           className="secondary dark"
                           disabled={busy}
@@ -352,14 +579,98 @@ export default function BrewDayPage() {
                         >
                           Record executed
                         </button>
-                      )}
-                    </li>
-                  ))}
-              </ul>
-            </section>
-          )}
+                        <button
+                          className="secondary dark"
+                          disabled={busy}
+                          onClick={() =>
+                            action(`/brew-sessions/${id}/requirements/${item.id}/additions`, {
+                              quantity: item.planned_amount,
+                              unit: item.planned_unit,
+                              execution_status: "LATE",
+                            })
+                          }
+                        >
+                          Record late
+                        </button>
+                      </>
+                    )}
+                  </li>
+                ))}
+            </ul>
+            {(brew.additions ?? []).map((item) => (
+              <div key={item.id}>
+                <small>
+                  Event {item.id.slice(0, 8)} · {item.status} · {item.actual_quantity} {item.actual_unit}
+                </small>
+                <button
+                  className="secondary dark"
+                  disabled={busy}
+                  onClick={() =>
+                    action(`/brew-sessions/${id}/addition-events/${item.id}/corrections`, {
+                      quantity: item.actual_quantity ?? item.planned_amount,
+                      unit: item.actual_unit ?? item.planned_unit,
+                      reason: "Corrected addition quantity on brew day",
+                    })
+                  }
+                >
+                  Correct addition
+                </button>
+              </div>
+            ))}
+          </section>
 
-          {brew.mash.status === "ACTIVE" && (
+          <section className="card" aria-label="Checklists and waivers">
+            <h2>Checklists and waivers</h2>
+            <ul className="timer-list">
+              {(brew.requirements ?? [])
+                .filter(
+                  (item) =>
+                    item.class === "CHECKLIST" &&
+                    item.status === "PENDING" &&
+                    item.definition_key !== "YEAST_ADDITION_FACT",
+                )
+                .map((item) => (
+                  <li key={`checklist-${item.id}`}>
+                    <strong>{item.definition_key ?? "Checklist"}</strong>
+                    <button
+                      className="primary"
+                      disabled={busy}
+                      data-testid={`complete-checklist-${item.definition_key ?? item.id}`}
+                      onClick={() =>
+                        action(`/brew-sessions/${id}/requirements/${item.id}/complete`, {})
+                      }
+                    >
+                      Mark complete
+                    </button>
+                  </li>
+                ))}
+              {(brew.requirements ?? [])
+                .filter((item) => item.required && item.waivable && item.status === "PENDING")
+                .map((item) => (
+                  <li key={item.id}>
+                    <strong>{item.definition_key ?? item.class}</strong>
+                    <input
+                      placeholder="Waiver reason (required)"
+                      value={waiverReason}
+                      onChange={(event) => setWaiverReason(event.target.value)}
+                    />
+                    <button
+                      className="secondary dark"
+                      disabled={busy || waiverReason.length < 10}
+                      onClick={() =>
+                        action(`/brew-sessions/${id}/requirements/${item.id}/waivers`, {
+                          reason: waiverReason,
+                        })
+                      }
+                    >
+                      Waive
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          </section>
+
+          {brew.mash?.status === "ACTIVE" && (
             <button
               className="complete-button"
               disabled={busy || !pH || !gravity}
@@ -370,7 +681,7 @@ export default function BrewDayPage() {
           )}
 
           <section className="card">
-            <h2>Notes</h2>
+            <h2>Notes and media</h2>
             <form
               className="measurement-form"
               onSubmit={(event) => {
@@ -383,13 +694,86 @@ export default function BrewDayPage() {
                 Brew-day note
                 <input value={note} onChange={(event) => setNote(event.target.value)} maxLength={4000} />
               </label>
-              <button className="primary" disabled={busy || !note}>Add note</button>
+              <button className="primary" disabled={busy || !note}>
+                Add note
+              </button>
             </form>
             <ul className="note-list">
               {(brew.notes ?? []).map((item) => (
                 <li key={item.id}>{item.body}</li>
               ))}
             </ul>
+            <form className="measurement-form" onSubmit={uploadPhoto}>
+              <label>
+                Photo
+                <input name="file" type="file" accept="image/png,image/jpeg,image/webp" />
+              </label>
+              <label>
+                Caption
+                <input name="caption" maxLength={1000} />
+              </label>
+              <button className="primary" disabled={busy}>
+                Upload photo
+              </button>
+            </form>
+            <ul className="note-list">
+              {(brew.attachments ?? []).map((item) => (
+                <li key={item.id}>
+                  {item.caption || item.id.slice(0, 8)} · {item.content_type}
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <section className="card" aria-label="Repeat return and pitch">
+            <h2>Session actions</h2>
+            {mashStage && mashStage.status === "COMPLETED" && (
+              <>
+                <label>
+                  Repeat/return reason
+                  <input value={repeatReason} onChange={(event) => setRepeatReason(event.target.value)} />
+                </label>
+                <button
+                  className="secondary dark"
+                  disabled={busy}
+                  onClick={() => action(`/brew-sessions/stages/${mashStage.id}/repeat`, { reason: repeatReason })}
+                >
+                  Repeat Mash
+                </button>
+                <button
+                  className="secondary dark"
+                  disabled={busy}
+                  onClick={() => action(`/brew-sessions/stages/${mashStage.id}/return`, { reason: repeatReason })}
+                >
+                  Controlled return
+                </button>
+              </>
+            )}
+            <label>
+              Yeast pitch note
+              <input value={pitchNote} onChange={(event) => setPitchNote(event.target.value)} />
+            </label>
+            <button
+              className="primary"
+              disabled={busy || !pitchNote}
+              onClick={() => action(`/brew-sessions/${id}/pitch-handoff`, { yeast_addition_note: pitchNote })}
+            >
+              Record yeast pitch
+            </button>
+            <button className="primary" disabled={busy} onClick={() => action(`/brew-sessions/${id}/complete`)}>
+              Complete brew session
+            </button>
+            <label>
+              Abort reason
+              <input value={abortReason} onChange={(event) => setAbortReason(event.target.value)} />
+            </label>
+            <button
+              className="secondary dark"
+              disabled={busy || abortReason.length < 10}
+              onClick={() => action(`/brew-sessions/${id}/abort`, { reason: abortReason })}
+            >
+              Abort session
+            </button>
           </section>
 
           <section className="performance card">
@@ -400,7 +784,7 @@ export default function BrewDayPage() {
               </div>
             </div>
             <div className="performance-grid">
-              <Performance label="Mash temperature" target={`${brew.planned.mash_temperature} °F`} actual="Not captured in Phase 1A" />
+              <Performance label="Mash temperature" target={`${brew.planned.mash_temperature} °F`} actual="See stage measurements" />
               <Performance
                 label="Mash pH"
                 target={brew.planned.mash_ph}
@@ -511,10 +895,8 @@ function Performance({
           </div>
         )}
       </dl>
-      <span
-        className={`result ${outside ? "outside" : actual && actual !== "Not captured in Phase 1A" ? "within" : "pending"}`}
-      >
-        {outside ? "Outside tolerance" : actual && actual !== "Not captured in Phase 1A" ? "Within tolerance" : "Not recorded"}
+      <span className={`result ${outside ? "outside" : actual ? "within" : "pending"}`}>
+        {outside ? "Outside tolerance" : actual ? "Within tolerance" : "Not recorded"}
       </span>
     </div>
   );

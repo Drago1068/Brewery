@@ -6,6 +6,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     Numeric,
@@ -63,6 +64,7 @@ class BrewSession(UuidTimestampMixin, Base):
 class BrewStage(UuidTimestampMixin, Base):
     __tablename__ = "brew_stages"
     __table_args__ = (
+        UniqueConstraint("id", "brew_session_id", name="uq_stage_session"),
         UniqueConstraint(
             "brew_session_id", "plan_step_id", "occurrence_number", name="uq_stage_occurrence"
         ),
@@ -102,13 +104,21 @@ class BrewStage(UuidTimestampMixin, Base):
 
 class BrewTimer(UuidTimestampMixin, Base):
     __tablename__ = "brew_timers"
-    __table_args__ = (UniqueConstraint("brew_stage_id", "name"),)
+    __table_args__ = (
+        UniqueConstraint("brew_stage_id", "name"),
+        UniqueConstraint("id", "brew_session_id", name="uq_timer_session"),
+        ForeignKeyConstraint(
+            ["brew_stage_id", "brew_session_id"],
+            ["brew_stages.id", "brew_stages.brew_session_id"],
+            name="fk_timer_stage_session",
+        ),
+    )
 
     brew_stage_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("brew_stages.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    brew_session_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("brew_sessions.id", ondelete="CASCADE"), index=True
+    brew_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("brew_sessions.id", ondelete="CASCADE"), index=True, nullable=False
     )
     name: Mapped[str] = mapped_column(String(80), default="Mash timer", nullable=False)
     status: Mapped[str] = mapped_column(String(24), default="RUNNING", nullable=False)

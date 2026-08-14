@@ -1,3 +1,4 @@
+import os
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -6,7 +7,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from brewing_api.application.phase3.tokens import derive_csrf_token
+from brewing_api.application.phase3.tokens import csrf_digest
 from brewing_api.domain.identity.models import AuthSession
 from brewing_api.platform.config import get_settings
 from brewing_api.platform.database import SessionLocal
@@ -24,9 +25,6 @@ def reset_rate_limits() -> None:
 def allowed_origins(settings) -> set[str]:
     origins = set(settings.cors_origins or [])
     origins.add(settings.public_origin)
-    origins.add("http://testserver")
-    origins.add("http://web:3000")
-    origins.add("http://localhost:18101")
     return {item.rstrip("/") for item in origins if item}
 
 
@@ -47,9 +45,11 @@ def _enforce_rate_limit(user_id: str, is_upload: bool) -> JSONResponse | None:
     window = _rate_window[key]
     cutoff = now - timedelta(seconds=60)
     _rate_window[key] = [stamp for stamp in window if stamp > cutoff]
-    import os
-
-    default_limit = "500" if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("TESTING") == "1" else "120"
+    default_limit = (
+        "500"
+        if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("TESTING") == "1"
+        else "120"
+    )
     limit = 10 if is_upload else int(os.environ.get("PHASE3_RATE_LIMIT_MUTATIONS", default_limit))
     if len(_rate_window[key]) >= limit:
         return JSONResponse(
@@ -89,9 +89,13 @@ class Phase3SecurityMiddleware(BaseHTTPMiddleware):
             )
             if session is None:
                 return await call_next(request)
-            expected = derive_csrf_token(session.id, settings.session_secret)
             provided = request.headers.get("x-csrf-token")
-            if not provided or provided != expected:
+            expected_digest = session.csrf_token_hash
+            if (
+                not provided
+                or not expected_digest
+                or csrf_digest(provided, settings.session_secret) != expected_digest
+            ):
                 return JSONResponse(
                     status_code=403,
                     content={

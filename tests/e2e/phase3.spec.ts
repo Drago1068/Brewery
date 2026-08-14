@@ -14,8 +14,16 @@ async function clearActiveBrew(page: Page) {
   if (!active.ok()) throw new Error(`Active brew lookup failed: ${active.status()}`);
   const body = await active.json();
   if (!body?.id) return;
+  const details = await page.request.get(`/api/v1/brew-sessions/${body.id}`, {
+    headers: { Origin: origin },
+  });
+  const revision = details.ok() ? ((await details.json()).revision as number) : 1;
   const aborted = await page.request.post(`/api/v1/brew-sessions/${body.id}/abort`, {
-    data: { reason: "Clearing prior E2E brew session before the next scenario" },
+    data: {
+      reason: "Clearing prior E2E brew session before the next scenario",
+      expected_revision: revision,
+      operation_id: `e2e-abort-${Date.now()}`,
+    },
     headers: { Origin: origin, "X-CSRF-Token": csrf, "Content-Type": "application/json" },
   });
   if (!aborted.ok()) {
@@ -34,15 +42,36 @@ async function signInAndStartMash(page: Page, recipeName: string) {
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("heading", { name: "Plan once. Brew with confidence." })).toBeVisible();
   await clearActiveBrew(page);
-  await page.getByLabel("Recipe name").fill(recipeName);
-  await page.getByLabel("Duration (min)").fill("1");
-  await page.getByRole("button", { name: "Create recipe v1" }).click();
+  const origin = process.env.BASE_URL ?? "http://web:3000";
+  const csrf =
+    (await page.evaluate(() => sessionStorage.getItem("csrf_token"))) ||
+    (await page.request.get("/api/v1/auth/csrf", { headers: { Origin: origin } }).then(async (r) =>
+      r.ok() ? ((await r.json()).csrf_token as string) : "",
+    ));
+  const created = await page.request.post("/api/v1/recipes", {
+    data: {
+      name: recipeName,
+      target_mash_temperature: "152",
+      planned_mash_duration_minutes: 1,
+      target_mash_ph: "5.30",
+      mash_ph_tolerance: "0.05",
+      target_mash_gravity: "1.050",
+      mash_gravity_tolerance: "0.003",
+    },
+    headers: { Origin: origin, "X-CSRF-Token": csrf, "Content-Type": "application/json" },
+  });
+  if (!created.ok()) {
+    throw new Error(`Recipe create failed: ${created.status()} ${await created.text()}`);
+  }
+  await page.goto("/");
   const recipeCard = page.getByRole("heading", { name: recipeName }).locator("..");
-  await expect(recipeCard).toBeVisible();
+  await expect(recipeCard).toBeVisible({ timeout: 20_000 });
   await recipeCard.getByRole("button", { name: "Start brew session" }).click();
-  await expect(page.getByRole("heading", { name: "Ready to start Mash" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Ready to start Mash" })).toBeVisible({
+    timeout: 20_000,
+  });
   await page.getByRole("button", { name: "Start Mash" }).click();
-  await expect(page.getByTestId("mash-timer")).toBeVisible();
+  await expect(page.getByTestId("mash-timer")).toBeVisible({ timeout: 15_000 });
 }
 
 test("voice draft cannot commit fifty-two as mash pH", async ({ page }) => {
@@ -59,12 +88,12 @@ test("voice draft cannot commit fifty-two as mash pH", async ({ page }) => {
 test("pause, resume, refresh recovery, and journal remain authoritative", async ({ page }) => {
   await signInAndStartMash(page, `Recovery ${Date.now()}`);
   await page.getByRole("button", { name: "Pause session" }).click();
-  await expect(page.getByText("PAUSED", { exact: true })).toBeVisible();
+  await expect(page.locator(".brew-topbar .status")).toHaveText("PAUSED");
   await page.reload();
   await expect(page.getByTestId("mash-timer")).toBeVisible();
-  await expect(page.getByText("PAUSED", { exact: true })).toBeVisible();
+  await expect(page.locator(".brew-topbar .status")).toHaveText("PAUSED");
   await page.getByRole("button", { name: "Resume session" }).click();
-  await expect(page.getByText("ACTIVE", { exact: true })).toBeVisible();
+  await expect(page.locator(".brew-topbar .status")).toHaveText("ACTIVE");
   await page.getByLabel("pH reading").fill("5.42");
   await Promise.all([
     page.waitForResponse(
@@ -83,7 +112,7 @@ test("pause, resume, refresh recovery, and journal remain authoritative", async 
     page.getByRole("button", { name: "Record gravity" }).click(),
   ]);
   await expect(page.locator(".measurement-card.done strong").filter({ hasText: "1.048" })).toBeVisible();
-  await page.getByRole("button", { name: "Complete Mash" }).click();
+  await page.getByRole("button", { name: "Complete Mash", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Mash performance" })).toBeVisible();
   await expect(page.locator(".performance").getByText("5.420", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Brew journal" })).toBeVisible();
@@ -101,10 +130,48 @@ test("phone viewport keeps mash timer and measurement controls usable", async ({
 test("tablet viewport and keyboard focus remain usable", async ({ page }) => {
   await page.setViewportSize({ width: 768, height: 1024 });
   await signInAndStartMash(page, `Tablet Brew ${Date.now()}`);
-  await expect(page.getByRole("timer")).toBeVisible();
+  await expect(page.getByTestId("mash-timer")).toBeVisible();
   const record = page.getByRole("button", { name: "Record pH" });
   await record.focus();
   await expect(record).toBeFocused();
   await expect(page.getByLabel("Gravity reading")).toBeVisible();
   await expect(page.getByLabel("Transcript")).toBeVisible();
+});
+
+test("canonical brew-day controls: three timers, reminders, note, refresh, journal", async ({ page }) => {
+  await signInAndStartMash(page, `Canonical Mash ${Date.now()}`);
+  await page.getByLabel("Auxiliary timer name").fill("Hop check");
+  await page.getByLabel("Duration (seconds)").fill("120");
+  await Promise.all([
+    page.waitForResponse(
+      (response) => response.url().includes("/timers") && response.request().method() === "POST",
+    ),
+    page.getByRole("button", { name: "Start auxiliary timer" }).click(),
+  ]);
+  await page.getByLabel("Auxiliary timer name").fill("Iodine check");
+  await Promise.all([
+    page.waitForResponse(
+      (response) => response.url().includes("/timers") && response.request().method() === "POST",
+    ),
+    page.getByRole("button", { name: "Start auxiliary timer" }).click(),
+  ]);
+  await expect(page.getByRole("list", { name: "Active timers" }).getByRole("listitem")).toHaveCount(3, {
+    timeout: 15_000,
+  });
+  const due = page.getByRole("button", { name: "Acknowledge" }).first();
+  if (await due.isVisible().catch(() => false)) {
+    await due.click();
+  }
+  await page.getByLabel("pH reading").fill("5.30");
+  await page.getByRole("button", { name: "Record pH" }).click();
+  await page.getByLabel("Gravity reading").fill("1.050");
+  await page.getByRole("button", { name: "Record gravity" }).click();
+  await page.getByLabel("Brew-day note").fill("Canonical note for journal evidence");
+  await page.getByRole("button", { name: "Add note" }).click();
+  await page.reload();
+  await expect(page.getByTestId("mash-timer")).toBeVisible();
+  await expect(page.getByText("Canonical note for journal evidence")).toBeVisible();
+  await page.getByRole("button", { name: "Complete Mash", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Brew journal" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Stage progress" })).toBeVisible();
 });

@@ -37,7 +37,7 @@ def csrf(
     from sqlalchemy import select
 
     from brewing_api.application.auth import token_digest
-    from brewing_api.application.phase3.csrf import derive_csrf_token
+    from brewing_api.application.phase3.tokens import csrf_digest, generate_csrf_token
     from brewing_api.domain.identity.models import AuthSession
     from brewing_api.platform.time import utc_now
 
@@ -51,7 +51,10 @@ def csrf(
         from brewing_api.application.errors import DomainError
 
         raise DomainError("Authentication required", 401)
-    return {"csrf_token": derive_csrf_token(session.id, settings.session_secret)}
+    token = generate_csrf_token()
+    session.csrf_token_hash = csrf_digest(token, settings.session_secret)
+    db.commit()
+    return {"csrf_token": token}
 
 
 @router.post("/logout", status_code=204)

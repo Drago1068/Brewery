@@ -1,7 +1,15 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from brewing_api.domain.common import UuidTimestampMixin
@@ -10,13 +18,21 @@ from brewing_api.platform.database import Base
 
 class Notification(UuidTimestampMixin, Base):
     __tablename__ = "notifications"
-    __table_args__ = (UniqueConstraint("brew_stage_id", "notification_type"),)
+    __table_args__ = (
+        UniqueConstraint("brew_stage_id", "notification_type"),
+        UniqueConstraint("id", "brew_session_id", name="uq_notification_session"),
+        ForeignKeyConstraint(
+            ["brew_stage_id", "brew_session_id"],
+            ["brew_stages.id", "brew_stages.brew_session_id"],
+            name="fk_notification_stage_session",
+        ),
+    )
 
     brew_stage_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("brew_stages.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    brew_session_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("brew_sessions.id", ondelete="CASCADE"), index=True
+    brew_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("brew_sessions.id", ondelete="CASCADE"), index=True, nullable=False
     )
     notification_type: Mapped[str] = mapped_column(String(80), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)

@@ -521,9 +521,130 @@ def upgrade() -> None:
         FOR EACH ROW EXECUTE FUNCTION phase3_protect_requirement_templates();
         """
     )
+    op.execute(
+        "UPDATE brew_timers SET brew_session_id = ("
+        "SELECT brew_session_id FROM brew_stages "
+        "WHERE brew_stages.id = brew_timers.brew_stage_id"
+        ") WHERE brew_session_id IS NULL"
+    )
+    op.execute(
+        "UPDATE notifications SET brew_session_id = ("
+        "SELECT brew_session_id FROM brew_stages "
+        "WHERE brew_stages.id = notifications.brew_stage_id"
+        ") WHERE brew_session_id IS NULL"
+    )
+    op.alter_column("brew_timers", "brew_session_id", nullable=False)
+    op.alter_column("notifications", "brew_session_id", nullable=False)
+    op.create_unique_constraint("uq_stage_session", "brew_stages", ["id", "brew_session_id"])
+    op.create_unique_constraint("uq_timer_session", "brew_timers", ["id", "brew_session_id"])
+    op.create_unique_constraint(
+        "uq_notification_session", "notifications", ["id", "brew_session_id"]
+    )
+    op.create_unique_constraint(
+        "uq_addition_event_session", "brew_addition_events", ["id", "brew_session_id"]
+    )
+    op.create_foreign_key(
+        "fk_timer_stage_session",
+        "brew_timers",
+        "brew_stages",
+        ["brew_stage_id", "brew_session_id"],
+        ["id", "brew_session_id"],
+    )
+    op.create_foreign_key(
+        "fk_notification_stage_session",
+        "notifications",
+        "brew_stages",
+        ["brew_stage_id", "brew_session_id"],
+        ["id", "brew_session_id"],
+    )
+    op.create_foreign_key(
+        "fk_addition_event_stage_session",
+        "brew_addition_events",
+        "brew_stages",
+        ["stage_instance_id", "brew_session_id"],
+        ["id", "brew_session_id"],
+    )
+    op.create_foreign_key(
+        "fk_addition_correction_of",
+        "brew_addition_corrections",
+        "brew_addition_events",
+        ["correction_of_id"],
+        ["id"],
+        ondelete="RESTRICT",
+    )
+    op.create_foreign_key(
+        "fk_addition_correction_event_session",
+        "brew_addition_corrections",
+        "brew_addition_events",
+        ["correction_of_id", "brew_session_id"],
+        ["id", "brew_session_id"],
+    )
+    op.create_foreign_key(
+        "fk_addition_correction_stage_session",
+        "brew_addition_corrections",
+        "brew_stages",
+        ["stage_instance_id", "brew_session_id"],
+        ["id", "brew_session_id"],
+    )
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION phase3_protect_append_only() RETURNS trigger AS $$
+        BEGIN
+          RAISE EXCEPTION 'immutable append-only historical fact cannot be mutated';
+        END;
+        $$ LANGUAGE plpgsql;
+        """
+    )
+    for table in (
+        "brew_addition_events",
+        "brew_addition_corrections",
+        "brew_timer_revisions",
+        "brew_journal_events",
+        "brew_reminder_history",
+        "brew_waivers",
+        "brew_pitch_handoffs",
+        "measurements",
+    ):
+        op.execute(
+            f"""
+            CREATE TRIGGER {table}_append_only
+            BEFORE UPDATE OR DELETE ON {table}
+            FOR EACH ROW EXECUTE FUNCTION phase3_protect_append_only();
+            """
+        )
 
 
 def downgrade() -> None:
+    for table in (
+        "measurements",
+        "brew_pitch_handoffs",
+        "brew_waivers",
+        "brew_reminder_history",
+        "brew_journal_events",
+        "brew_timer_revisions",
+        "brew_addition_corrections",
+        "brew_addition_events",
+    ):
+        op.execute(f"DROP TRIGGER IF EXISTS {table}_append_only ON {table}")
+    op.execute("DROP FUNCTION IF EXISTS phase3_protect_append_only()")
+    op.drop_constraint(
+        "fk_addition_correction_stage_session", "brew_addition_corrections", type_="foreignkey"
+    )
+    op.drop_constraint(
+        "fk_addition_correction_event_session", "brew_addition_corrections", type_="foreignkey"
+    )
+    op.drop_constraint("fk_addition_correction_of", "brew_addition_corrections", type_="foreignkey")
+    op.drop_constraint(
+        "fk_addition_event_stage_session", "brew_addition_events", type_="foreignkey"
+    )
+    op.drop_constraint("fk_notification_stage_session", "notifications", type_="foreignkey")
+    op.drop_constraint("fk_timer_stage_session", "brew_timers", type_="foreignkey")
+    op.drop_constraint("uq_addition_event_session", "brew_addition_events", type_="unique")
+    op.drop_constraint("uq_notification_session", "notifications", type_="unique")
+    op.drop_constraint("uq_timer_session", "brew_timers", type_="unique")
+    op.drop_constraint("uq_stage_session", "brew_stages", type_="unique")
+    op.alter_column("notifications", "brew_session_id", nullable=True)
+    op.alter_column("brew_timers", "brew_session_id", nullable=True)
     op.execute(
         "DROP TRIGGER IF EXISTS brew_requirement_templates_immutable ON brew_requirement_templates"
     )

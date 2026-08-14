@@ -35,7 +35,9 @@ def _require_active(session: BrewSession) -> None:
 
 
 def _lock_revision(session: BrewSession, expected: int | None) -> None:
-    if expected is not None and session.revision != expected:
+    if expected is None:
+        raise DomainError("expected_revision is required", 422, code="REVISION_REQUIRED")
+    if session.revision != expected:
         raise ConflictError(
             "Stale session revision",
             code="STALE_REVISION",
@@ -384,7 +386,11 @@ def repeat_or_return_stage(
     operation_id: str | None,
 ) -> BrewStage:
     source, session = _stage_for_user(db, user, stage_id)
-    document = {"stage_id": str(stage_id), "kind": kind, "reason": reason}
+    locked = db.execute(
+        select(BrewSession).where(BrewSession.id == session.id).with_for_update()
+    ).scalar_one()
+    session = locked
+    document = {"stage_id": str(stage_id), "kind": kind.upper(), "reason": reason}
     replay = replay_or_conflict(
         db, user.id, "repeat_or_return", "BrewStage", source.id, operation_id, document
     )
@@ -394,6 +400,8 @@ def repeat_or_return_stage(
             return found
     _require_active(session)
     _lock_revision(session, expected_revision)
+    if not operation_id:
+        raise DomainError("operation_id is required", 422, code="OPERATION_ID_REQUIRED")
     if source.status != "COMPLETED":
         raise ConflictError("Repeat/return requires a completed source occurrence")
     if not reason:
@@ -413,7 +421,10 @@ def repeat_or_return_stage(
         if item.created_at > source.created_at and item.status in {"COMPLETED", "SKIPPED"}
     ]
     inferred = "RETURN" if later else "REPEAT"
-    if kind.upper() not in {inferred, kind.upper()} and kind.upper() not in {"REPEAT", "RETURN"}:
+    requested = kind.upper()
+    if requested not in {"REPEAT", "RETURN"}:
+        raise DomainError("Repeat/return kind must be REPEAT or RETURN", 422)
+    if requested != inferred:
         raise ConflictError("Repeat/return kind is not valid for the current chronology")
     matching = [
         item
@@ -571,6 +582,17 @@ def record_pitch_handoff(
         actor_user_id=user.id,
     )
     db.add(handoff)
+    db.flush()
+    for item in db.scalars(
+        select(BrewStageRequirement).where(BrewStageRequirement.brew_session_id == session.id)
+    ).all():
+        if (item.payload or {}).get("definition_key") == "YEAST_ADDITION_FACT" and item.status in {
+            "PENDING",
+            "DUE",
+        }:
+            item.status = "COMPLETED"
+            item.satisfaction_source_type = "PITCH_HANDOFF"
+            item.satisfaction_source_id = handoff.id
     journal(db, session.id, "YEAST_PITCH_RECORDED", "Yeast pitch recorded", actor_id=user.id)
     audit(db, user.id, "YEAST_PITCH_RECORDED", "BrewPitchHandoff", session.id)
     _bump(session)

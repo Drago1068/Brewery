@@ -35,11 +35,14 @@ services:
       REDIS_URL: redis://redis:6379/0
       BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-brewer}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?Set BOOTSTRAP_ADMIN_PASSWORD in .env}
+      PHASE3_RATE_LIMIT_MUTATIONS: ${PHASE3_RATE_LIMIT_MUTATIONS:-500}
       SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:18101,http://web:3000}
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:18101}
-      MEDIA_ROOT: /tmp/brewing-media
+      MEDIA_ROOT: /var/lib/brewing/media
+    volumes:
+      - brewing_media:/var/lib/brewing/media
     ports:
       - "127.0.0.1:${API_PORT:-18100}:8000"
     depends_on:
@@ -91,6 +94,7 @@ services:
 
 volumes:
   postgres_data:
+  brewing_media:
 
 networks:
   internal:

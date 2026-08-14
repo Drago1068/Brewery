@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brewing_api.application.errors import DomainError
-from brewing_api.application.phase3.tokens import csrf_digest, derive_csrf_token
+from brewing_api.application.phase3.tokens import csrf_digest, generate_csrf_token
 from brewing_api.domain.identity.models import AuthSession, User
 from brewing_api.platform.config import Settings
 from brewing_api.platform.time import utc_now
@@ -44,7 +44,7 @@ def login(db: Session, settings: Settings, username: str, password: str) -> tupl
     )
     db.add(session)
     db.flush()
-    csrf = derive_csrf_token(session.id, settings.session_secret)
+    csrf = generate_csrf_token()
     session.csrf_token_hash = csrf_digest(csrf, settings.session_secret)
     db.commit()
     return user, token, csrf

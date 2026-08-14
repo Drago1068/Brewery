@@ -84,7 +84,7 @@ def replay_or_conflict(
     document: dict[str, Any],
 ) -> BrewOperation | None:
     if not operation_id:
-        return None
+        raise DomainError("operation_id is required", 422, code="OPERATION_ID_REQUIRED")
     if len(operation_id) > 64:
         raise DomainError(
             "operation_id must be at most 64 characters", 422, code="INVALID_OPERATION_ID"
@@ -132,7 +132,7 @@ def store_success(
     terminal: bool = False,
 ) -> None:
     if not operation_id:
-        return
+        raise DomainError("operation_id is required", 422, code="OPERATION_ID_REQUIRED")
     persist_operation(
         db,
         actor_id,

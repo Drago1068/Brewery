@@ -7,6 +7,8 @@ export type Measurement = {
   note?: string;
   instrument?: string;
   provenance: string;
+  process_point?: string;
+  method?: string;
   correction_of_id?: string;
   deviation?: { variance: string; tolerance: string; status: string };
 };
@@ -48,13 +50,19 @@ export type BrewDetails = {
       due_at: string;
     }>;
   };
-  current_stage?: { id: string; name: string; status: string; canonical_stage_type?: string };
+  current_stage?: {
+    id: string;
+    name: string;
+    status: string;
+    canonical_stage_type?: string;
+  };
   stages?: Array<{
     id: string;
     name: string;
     status: string;
     occurrence_number: number;
     required: boolean;
+    canonical_stage_type?: string;
   }>;
   timers?: Array<{
     id: string;
@@ -63,6 +71,8 @@ export type BrewDetails = {
     planned_duration_seconds: number;
     elapsed_seconds: number;
     deadline_at?: string;
+    timer_type?: string;
+    brew_stage_id?: string;
   }>;
   due_reminders?: Array<{
     id: string;
@@ -75,11 +85,22 @@ export type BrewDetails = {
     class: string;
     status: string;
     required: boolean;
+    waivable?: boolean;
     definition_key?: string;
     planned_amount?: string;
     planned_unit?: string;
   }>;
-  additions?: Array<{ id: string; status: string; actual_quantity?: string }>;
+  additions?: Array<{
+    id: string;
+    status: string;
+    actual_quantity?: string;
+    actual_unit?: string;
+    planned_amount?: string;
+    planned_unit?: string;
+    requirement_id?: string;
+  }>;
+  waivers?: Array<{ id: string; status: string; reason: string; requirement_id: string }>;
+  attachments?: Array<{ id: string; status: string; content_type: string; caption?: string }>;
   notes?: Array<{ id: string; body: string; created_at: string }>;
   next_required_action?: string | null;
   journal: Array<{

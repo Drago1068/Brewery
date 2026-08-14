@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Form, UploadFile, status
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from brewing_api.application import brew_day as service
 from brewing_api.application.phase3 import additions as addition_service
@@ -22,9 +22,10 @@ preview_router = APIRouter(tags=["brew-day"])
 
 
 class SessionCommand(BaseModel):
-    operation_id: str | None = None
+    operation_id: str = Field(min_length=1, max_length=64)
     expected_revision: int | None = None
     reason: str | None = None
+    name: str | None = None
     extra_seconds: int | None = None
     body: str | None = None
     yeast_addition_note: str | None = None
@@ -93,6 +94,8 @@ def serialize_details(details: dict) -> dict:
                     "note": item.note,
                     "instrument": item.instrument,
                     "provenance": item.provenance,
+                    "process_point": item.process_point,
+                    "method": item.method,
                     "correction_of_id": (
                         str(item.correction_of_id) if item.correction_of_id else None
                     ),
@@ -161,6 +164,9 @@ def serialize_details(details: dict) -> dict:
                 "elapsed_seconds": service.timer_elapsed_seconds(item),
                 "deadline_at": item.deadline_at,
                 "clock_basis": item.clock_basis,
+                "timer_type": item.timer_type,
+                "brew_stage_id": str(item.brew_stage_id),
+                "paused_at": item.paused_at,
             }
             for item in details.get("timers", [])
         ],
@@ -202,6 +208,7 @@ def serialize_details(details: dict) -> dict:
                 "actual_quantity": _decimal(item.actual_quantity),
                 "actual_unit": item.actual_unit,
                 "requirement_id": str(item.requirement_id),
+                "stage_instance_id": str(item.stage_instance_id),
             }
             for item in details.get("additions", [])
         ],
@@ -244,7 +251,9 @@ def create_session(command: BrewSessionCreate, db: Db, user: CurrentUser) -> IdS
 
 
 @router.post("/{session_id}/start", response_model=IdStatusResponse)
-def start_session(session_id: uuid.UUID, db: Db, user: CurrentUser) -> IdStatusResponse:
+def start_session(
+    session_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand | None = None
+) -> IdStatusResponse:
     session = service.activate_session(db, user, session_id)
     return IdStatusResponse(id=session.id, status=session.status)
 
@@ -262,7 +271,9 @@ def complete_session(session_id: uuid.UUID, db: Db, user: CurrentUser) -> IdStat
 
 
 @router.post("/{session_id}/mash/start", response_model=IdStatusResponse)
-def start_mash(session_id: uuid.UUID, db: Db, user: CurrentUser) -> IdStatusResponse:
+def start_mash(
+    session_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand | None = None
+) -> IdStatusResponse:
     stage = service.start_mash(db, user, session_id)
     return IdStatusResponse(id=stage.id, status=stage.status)
 
@@ -303,7 +314,9 @@ def correction(
 
 
 @router.post("/stages/{stage_id}/complete", response_model=IdStatusResponse)
-def complete(stage_id: uuid.UUID, db: Db, user: CurrentUser) -> IdStatusResponse:
+def complete(
+    stage_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand | None = None
+) -> IdStatusResponse:
     stage = phase3.complete_stage(db, user, stage_id)
     return IdStatusResponse(id=stage.id, status=stage.status)
 
@@ -409,6 +422,22 @@ def extend_stage(
     return IdStatusResponse(id=stage.id, status=stage.status)
 
 
+@router.post("/stages/{stage_instance_id}/timers", status_code=status.HTTP_201_CREATED)
+def start_auxiliary_timer(
+    stage_instance_id: uuid.UUID, command: SessionCommand, db: Db, user: CurrentUser
+) -> IdStatusResponse:
+    timer = timer_service.start_auxiliary_timer(
+        db,
+        user,
+        stage_instance_id,
+        command.name or command.body or "Auxiliary timer",
+        command.planned_duration_seconds or 300,
+        command.operation_id,
+        command.expected_revision,
+    )
+    return IdStatusResponse(id=timer.id, status=timer.status)
+
+
 @router.post("/stages/{stage_instance_id}/repeat", response_model=IdStatusResponse)
 def repeat_stage(
     stage_instance_id: uuid.UUID, command: SessionCommand, db: Db, user: CurrentUser
@@ -442,7 +471,9 @@ def return_stage(
 
 
 @router.post("/reminders/{reminder_id}/acknowledge", response_model=IdStatusResponse)
-def ack_reminder(reminder_id: uuid.UUID, db: Db, user: CurrentUser) -> IdStatusResponse:
+def ack_reminder(
+    reminder_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand | None = None
+) -> IdStatusResponse:
     reminder = phase3.acknowledge_reminder(db, user, reminder_id)
     return IdStatusResponse(id=reminder.id, status=reminder.status)
 
@@ -565,6 +596,27 @@ def waive(
         command.expected_revision,
     )
     return {"id": str(waiver.id), "status": waiver.status}
+
+
+@router.post("/{session_id}/requirements/{requirement_id}/complete", status_code=200)
+def complete_requirement(
+    session_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+    command: SessionCommand,
+    db: Db,
+    user: CurrentUser,
+) -> dict:
+    from brewing_api.application.phase3 import checklists as checklist_service
+
+    requirement = checklist_service.complete_checklist(
+        db,
+        user,
+        session_id,
+        requirement_id,
+        command.operation_id or "",
+        command.expected_revision,
+    )
+    return {"id": str(requirement.requirement_id), "status": requirement.status}
 
 
 @router.post("/timers/{timer_id}/pause", response_model=IdStatusResponse)
@@ -709,13 +761,3 @@ def voice_proposal(command: SessionCommand) -> dict:
     return {"proposal": proposal, "committed": False}
 
 
-@router.post("/{session_id}/performance-bench")
-def performance_bench(session_id: uuid.UUID, db: Db, user: CurrentUser) -> dict:
-    from brewing_api.application.phase3.performance import (
-        run_performance_suite,
-        seed_representative_session,
-    )
-
-    session = service.get_session(db, user, session_id)
-    seed_representative_session(db, user, session)
-    return run_performance_suite(db, user, session.id)
