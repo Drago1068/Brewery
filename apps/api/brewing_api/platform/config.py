@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     session_cookie_secure: bool = False
     session_ttl_hours: int = 12
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
+    public_origin: str = "http://localhost:18101"
+    media_root: str = "/tmp/brewing-media"
 
     @field_validator("cors_origins", mode="before")
     @classmethod

@@ -21,4 +21,3 @@ def ready(db: Db) -> dict[str, str]:
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Dependency readiness check failed") from exc
     return {"status": "ready"}
-

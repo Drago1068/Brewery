@@ -1,2 +1,1 @@
 """Persisted workflow notification domain."""
-

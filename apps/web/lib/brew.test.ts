@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatDuration, latestMeasurement, variance, type Measurement } from "./brew";
+import { formatDuration, latestMeasurement, parseVoiceProposal, variance, type Measurement } from "./brew";
 
 describe("brew presentation helpers", () => {
   it("formats a persisted elapsed duration", () => {
@@ -15,6 +15,19 @@ describe("brew presentation helpers", () => {
     ] as Measurement[];
     expect(latestMeasurement(measurements, "MASH_PH")?.value).toBe("5.40");
     expect(measurements[0].value).toBe("5.42");
+  });
+
+  it("parses voice transcripts as uncommitted drafts", () => {
+    const draft = parseVoiceProposal("five point two pH");
+    expect(draft).toEqual({
+      transcript: "five point two pH",
+      field: "MASH_PH",
+      value: "5.2",
+      unit: "pH",
+      action: "record_measurement",
+      committed: "false",
+    });
+    expect(parseVoiceProposal("fifty two pH")?.value).toBe("52");
   });
 
   it("keeps planned and actual values separate when calculating display variance", () => {

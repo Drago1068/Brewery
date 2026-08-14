@@ -44,7 +44,7 @@ def test_migration_head_and_immutability_are_enforced_by_postgres():
     with engine.connect() as connection, connection.begin():
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0002_phase2_brewing_core"
+            == "0003_phase3_brew_day_os"
         )
         connection.execute(
             text(

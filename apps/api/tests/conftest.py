@@ -6,6 +6,8 @@ os.environ["REDIS_URL"] = "redis://localhost:6379/15"
 os.environ["BOOTSTRAP_ADMIN_USERNAME"] = "brewer"
 os.environ["BOOTSTRAP_ADMIN_PASSWORD"] = "test-password-not-a-secret"
 os.environ["SESSION_SECRET"] = "test-session-secret-with-at-least-32-characters"
+os.environ["PUBLIC_ORIGIN"] = "http://testserver"
+os.environ["CORS_ORIGINS"] = "http://testserver"
 
 import pytest
 from fastapi.testclient import TestClient
@@ -28,6 +30,19 @@ def clean_database():
 @pytest.fixture
 def client():
     with TestClient(app) as test_client:
+        test_client.headers["Origin"] = "http://testserver"
+        original_post = test_client.post
+
+        def post_with_csrf(*args, **kwargs):
+            response = original_post(*args, **kwargs)
+            path = str(args[0]) if args else ""
+            if "/auth/login" in path and response.status_code == 200:
+                token = response.json().get("csrf_token")
+                if token:
+                    test_client.headers["X-CSRF-Token"] = token
+            return response
+
+        test_client.post = post_with_csrf  # type: ignore[method-assign]
         yield test_client
 
 
@@ -38,6 +53,7 @@ def authenticated_client(client: TestClient):
         json={"username": "brewer", "password": "test-password-not-a-secret"},
     )
     assert response.status_code == 200
+    client.headers["X-CSRF-Token"] = response.json()["csrf_token"]
     return client
 
 
@@ -62,9 +78,7 @@ def active_mash(authenticated_client: TestClient, recipe_payload: dict):
     )
     session_id = session_response.json()["id"]
     authenticated_client.post(f"/api/v1/brew-sessions/{session_id}/start")
-    mash_response = authenticated_client.post(
-        f"/api/v1/brew-sessions/{session_id}/mash/start"
-    )
+    mash_response = authenticated_client.post(f"/api/v1/brew-sessions/{session_id}/mash/start")
     return {
         "client": authenticated_client,
         "recipe": recipe,

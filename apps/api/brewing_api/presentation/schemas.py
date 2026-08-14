@@ -43,21 +43,27 @@ class RecipeResponse(BaseModel):
 
 class BrewSessionCreate(BaseModel):
     recipe_version_id: uuid.UUID
+    operation_id: str | None = Field(default=None, max_length=64)
+    plan_preview_hash: str | None = None
+    addition_repeat_declarations: list[dict] | None = None
 
 
 class MeasurementCreate(BaseModel):
-    measurement_type: Literal["MASH_PH", "MASH_GRAVITY"]
+    measurement_type: str
     value: Decimal
-    unit: Literal["pH", "SG"]
+    unit: str
     measured_at: datetime | None = None
     note: str | None = Field(default=None, max_length=2000)
     instrument: str | None = Field(default=None, max_length=160)
+    entry_method: Literal["MANUAL", "VOICE_CONFIRMED"] = "MANUAL"
+    operation_id: str | None = Field(default=None, max_length=64)
+    late_entry_reason: str | None = Field(default=None, max_length=1000)
 
     def model_post_init(self, __context: object) -> None:
         if self.measurement_type == "MASH_PH" and not Decimal("0") <= self.value <= Decimal("14"):
             raise ValueError("Mash pH must be between 0 and 14")
         gravity_is_valid = Decimal("1.000") <= self.value <= Decimal("1.200")
-        if self.measurement_type == "MASH_GRAVITY" and not gravity_is_valid:
+        if self.measurement_type in {"MASH_GRAVITY", "POST_MASH_GRAVITY"} and not gravity_is_valid:
             raise ValueError("Mash gravity must be between 1.000 and 1.200 SG")
 
 

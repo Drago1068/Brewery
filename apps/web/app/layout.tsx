@@ -25,7 +25,7 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
           </nav>
         </header>
         <main>{children}</main>
-        <footer>Phase 2 · Private brewing workspace · Deterministic calculations</footer>
+        <footer>Phase 3 · Private brewing workspace · Deterministic calculations</footer>
       </body>
     </html>
   );

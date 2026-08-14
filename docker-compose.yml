@@ -37,7 +37,9 @@ services:
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?Set BOOTSTRAP_ADMIN_PASSWORD in .env}
       SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:18101}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:18101,http://web:3000}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:18101}
+      MEDIA_ROOT: /tmp/brewing-media
     ports:
       - "127.0.0.1:${API_PORT:-18100}:8000"
     depends_on:

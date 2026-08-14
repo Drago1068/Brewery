@@ -12,9 +12,7 @@ def test_management_endpoint_requires_authentication(client: TestClient):
     assert response.status_code == 401
 
 
-def test_login_and_create_recipe_version(
-    authenticated_client: TestClient, recipe_payload: dict
-):
+def test_login_and_create_recipe_version(authenticated_client: TestClient, recipe_payload: dict):
     response = authenticated_client.post("/api/v1/recipes", json=recipe_payload)
     assert response.status_code == 201
     body = response.json()
