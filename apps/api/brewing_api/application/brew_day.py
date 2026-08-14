@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from brewing_api.application.errors import ConflictError, DomainError, NotFoundError
 from brewing_api.application.events import audit, journal
 from brewing_api.application.phase3.identities_compat import first_mash_stage, is_legacy_plan
+from brewing_api.application.phase3.operations import replay_or_conflict, store_success
 from brewing_api.application.phase3.plan import build_plan, persist_plan
 from brewing_api.application.recipes import get_owned_version
 from brewing_api.domain.audit.models import BrewJournalEvent
@@ -80,10 +81,27 @@ def start_session(
     return session
 
 
-def activate_session(db: Session, user: User, session_id: uuid.UUID) -> BrewSession:
+def mark_ready(db: Session, user: User, session_id: uuid.UUID) -> BrewSession:
     session = get_session(db, user, session_id)
     if session.status != "PLANNED":
-        raise ConflictError("Only a planned brew session can be started")
+        raise ConflictError("Only a planned brew session can enter READY")
+    if not session.logical_plan_hash:
+        raise DomainError("Preflight failed: execution plan was not materialized", 422)
+    session.status = "READY"
+    journal(db, session.id, "BREW_SESSION_READY", "Brew session preflight passed", actor_id=user.id)
+    audit(db, user.id, "BREW_SESSION_READY", "BrewSession", session.id)
+    _bump(session)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+def activate_session(db: Session, user: User, session_id: uuid.UUID) -> BrewSession:
+    session = get_session(db, user, session_id)
+    if session.status == "PLANNED":
+        session = mark_ready(db, user, session_id)
+    if session.status != "READY":
+        raise ConflictError("Only a ready brew session can be started")
     active = db.scalar(
         select(BrewSession).where(
             BrewSession.user_id == user.id,
@@ -93,13 +111,34 @@ def activate_session(db: Session, user: User, session_id: uuid.UUID) -> BrewSess
     )
     if active:
         raise ConflictError("An active brew session already exists")
-    session.status = "READY"
-    db.flush()
     session.status = "ACTIVE"
     session.started_at = utc_now()
     _bump(session)
     journal(db, session.id, "BREW_SESSION_STARTED", "Brew session started", actor_id=user.id)
     audit(db, user.id, "BREW_SESSION_STARTED", "BrewSession", session.id)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+def complete_session(db: Session, user: User, session_id: uuid.UUID) -> BrewSession:
+    session = get_session(db, user, session_id)
+    if session.status != "ACTIVE":
+        raise ConflictError("Only an active brew session can be completed")
+    stages = list(
+        db.scalars(select(BrewStage).where(BrewStage.brew_session_id == session.id)).all()
+    )
+    for stage in stages:
+        if stage.required and stage.status not in {"COMPLETED", "SKIPPED"}:
+            raise DomainError(f"Required stage incomplete: {stage.name}")
+        if not stage.required and stage.status not in {"COMPLETED", "SKIPPED", "PENDING"}:
+            raise DomainError(f"Optional stage unresolved: {stage.name}")
+    now = utc_now()
+    session.status = "COMPLETED"
+    session.completed_at = now
+    journal(db, session.id, "BREW_SESSION_COMPLETED", "Brew session completed", actor_id=user.id)
+    audit(db, user.id, "BREW_SESSION_COMPLETED", "BrewSession", session.id)
+    _bump(session)
     db.commit()
     db.refresh(session)
     return session
@@ -318,6 +357,25 @@ def record_measurement(
     db: Session, user: User, stage_id: uuid.UUID, command: MeasurementCommand
 ) -> tuple[Measurement, Deviation | None]:
     stage, session = _stage_for_user(db, user, stage_id)
+    operation_id = getattr(command, "operation_id", None)
+    document = {
+        "stage_id": str(stage_id),
+        "measurement_type": command.measurement_type,
+        "value": str(command.value),
+        "unit": command.unit,
+        "note": command.note,
+        "instrument": command.instrument,
+        "entry_method": getattr(command, "entry_method", None) or "MANUAL",
+        "late_entry_reason": getattr(command, "late_entry_reason", None),
+    }
+    replay = replay_or_conflict(
+        db, user.id, "record_measurement", "BrewStage", stage.id, operation_id, document
+    )
+    if replay and replay.result_resource_id:
+        found = db.get(Measurement, replay.result_resource_id)
+        if found:
+            deviation = db.scalar(select(Deviation).where(Deviation.measurement_id == found.id))
+            return found, deviation
     if session.status == "PAUSED":
         raise ConflictError("Normal measurements cannot be recorded while the session is paused")
     if session.status == "ABORTED":
@@ -355,7 +413,6 @@ def record_measurement(
     if measured_at > now + timedelta(minutes=5):
         raise DomainError("observed_at cannot be more than five minutes in the future", 422)
     entry_method = getattr(command, "entry_method", None) or "MANUAL"
-    operation_id = getattr(command, "operation_id", None)
     measurement = Measurement(
         brew_stage_id=stage.id,
         measurement_type=command.measurement_type,
@@ -480,6 +537,19 @@ def record_measurement(
         )
     audit(db, user.id, "BREW_MEASUREMENT_RECORDED", "Measurement", measurement.id)
     _bump(session)
+    store_success(
+        db,
+        user.id,
+        "record_measurement",
+        "BrewStage",
+        stage.id,
+        operation_id,
+        document,
+        {"id": str(measurement.id), "type": measurement.measurement_type},
+        "Measurement",
+        measurement.id,
+        http_status=201,
+    )
     db.commit()
     db.refresh(measurement)
     if deviation:

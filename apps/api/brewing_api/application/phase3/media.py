@@ -79,6 +79,9 @@ def upload_attachment(
         raise ConflictError("Attachments can be uploaded only while the session is ACTIVE")
     if caption and len(caption) > 1000:
         raise DomainError("Caption must be at most 1000 characters", 422)
+    raw_name = (upload.filename or "upload").replace("\\", "/")
+    if ".." in raw_name or raw_name.startswith("/") or "/" in raw_name:
+        raise DomainError("Unsafe filename", 422, code="UNSAFE_FILENAME")
     payload = upload.file.read()
     if len(payload) > MAX_FILE:
         raise DomainError("Attachment exceeds 10 MiB", 413, code="ATTACHMENT_TOO_LARGE")
@@ -106,7 +109,7 @@ def upload_attachment(
         content_type=content_type,
         byte_length=len(payload),
         sha256=hashlib.sha256(payload).hexdigest(),
-        original_filename=(upload.filename or "upload")[:255],
+        original_filename=raw_name[:255],
         caption=caption,
         actor_user_id=user.id,
         operation_id=operation_id,

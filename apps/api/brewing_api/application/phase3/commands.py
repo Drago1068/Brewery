@@ -415,15 +415,15 @@ def repeat_or_return_stage(
     inferred = "RETURN" if later else "REPEAT"
     if kind.upper() not in {inferred, kind.upper()} and kind.upper() not in {"REPEAT", "RETURN"}:
         raise ConflictError("Repeat/return kind is not valid for the current chronology")
-    max_occ = max(
-        item.occurrence_number
+    matching = [
+        item
         for item in db.scalars(
-            select(BrewStage).where(
-                BrewStage.brew_session_id == session.id,
-                BrewStage.plan_step_id == source.plan_step_id,
-            )
+            select(BrewStage).where(BrewStage.brew_session_id == session.id)
         ).all()
-    )
+        if item.plan_step_id == source.plan_step_id
+        or (source.plan_step_id is None and item.id == source.id)
+    ]
+    max_occ = max((item.occurrence_number for item in matching), default=source.occurrence_number)
     now = utc_now()
     new_stage = BrewStage(
         brew_session_id=session.id,

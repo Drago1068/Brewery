@@ -249,6 +249,18 @@ def start_session(session_id: uuid.UUID, db: Db, user: CurrentUser) -> IdStatusR
     return IdStatusResponse(id=session.id, status=session.status)
 
 
+@router.post("/{session_id}/ready", response_model=IdStatusResponse)
+def ready_session(session_id: uuid.UUID, db: Db, user: CurrentUser) -> IdStatusResponse:
+    session = service.mark_ready(db, user, session_id)
+    return IdStatusResponse(id=session.id, status=session.status)
+
+
+@router.post("/{session_id}/complete", response_model=IdStatusResponse)
+def complete_session(session_id: uuid.UUID, db: Db, user: CurrentUser) -> IdStatusResponse:
+    session = service.complete_session(db, user, session_id)
+    return IdStatusResponse(id=session.id, status=session.status)
+
+
 @router.post("/{session_id}/mash/start", response_model=IdStatusResponse)
 def start_mash(session_id: uuid.UUID, db: Db, user: CurrentUser) -> IdStatusResponse:
     stage = service.start_mash(db, user, session_id)
@@ -695,3 +707,15 @@ def voice_proposal(command: SessionCommand) -> dict:
     if proposal is None:
         return {"proposal": None, "committed": False}
     return {"proposal": proposal, "committed": False}
+
+
+@router.post("/{session_id}/performance-bench")
+def performance_bench(session_id: uuid.UUID, db: Db, user: CurrentUser) -> dict:
+    from brewing_api.application.phase3.performance import (
+        run_performance_suite,
+        seed_representative_session,
+    )
+
+    session = service.get_session(db, user, session_id)
+    seed_representative_session(db, user, session)
+    return run_performance_suite(db, user, session.id)

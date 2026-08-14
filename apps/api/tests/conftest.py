@@ -15,16 +15,30 @@ from fastapi.testclient import TestClient
 from brewing_api.domain import model_registry  # noqa: F401
 from brewing_api.main import app
 from brewing_api.platform.database import Base, engine
+from brewing_api.application.phase3.csrf import reset_rate_limits
 
 
 @pytest.fixture(autouse=True)
 def clean_database():
+    reset_rate_limits()
     if os.environ.get("TEST_USE_POSTGRES") == "1":
+        from sqlalchemy import text
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE brew_sessions "
+                    "SET status = 'ABORTED', aborted_at = NOW(), abort_reason = 'pytest cleanup' "
+                    "WHERE status IN ('ACTIVE', 'PAUSED')"
+                )
+            )
         yield
+        reset_rate_limits()
         return
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     yield
+    reset_rate_limits()
 
 
 @pytest.fixture
@@ -72,13 +86,26 @@ def recipe_payload():
 
 @pytest.fixture
 def active_mash(authenticated_client: TestClient, recipe_payload: dict):
+    existing = authenticated_client.get("/api/v1/brew-sessions/active")
+    if existing.status_code == 200:
+        body = existing.json()
+        if body and body.get("id"):
+            aborted = authenticated_client.post(
+                f"/api/v1/brew-sessions/{body['id']}/abort",
+                json={"reason": "Clearing prior test brew session before fixture"},
+            )
+            assert aborted.status_code == 200, aborted.text
+
     recipe = authenticated_client.post("/api/v1/recipes", json=recipe_payload).json()
     session_response = authenticated_client.post(
         "/api/v1/brew-sessions", json={"recipe_version_id": recipe["version_id"]}
     )
+    assert session_response.status_code == 201, session_response.text
     session_id = session_response.json()["id"]
-    authenticated_client.post(f"/api/v1/brew-sessions/{session_id}/start")
+    started = authenticated_client.post(f"/api/v1/brew-sessions/{session_id}/start")
+    assert started.status_code == 200, started.text
     mash_response = authenticated_client.post(f"/api/v1/brew-sessions/{session_id}/mash/start")
+    assert mash_response.status_code == 200, mash_response.text
     return {
         "client": authenticated_client,
         "recipe": recipe,

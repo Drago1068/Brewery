@@ -46,8 +46,12 @@ def upgrade() -> None:
         batch.add_column(sa.Column("paused_at", timestamp))
         batch.add_column(sa.Column("plan_step_id", uuid))
         batch.add_column(sa.Column("canonical_stage_type", sa.String(40)))
-        batch.add_column(sa.Column("occurrence_number", sa.Integer(), server_default="1", nullable=False))
-        batch.add_column(sa.Column("required", sa.Boolean(), server_default=sa.true(), nullable=False))
+        batch.add_column(
+            sa.Column("occurrence_number", sa.Integer(), server_default="1", nullable=False)
+        )
+        batch.add_column(
+            sa.Column("required", sa.Boolean(), server_default=sa.true(), nullable=False)
+        )
         batch.add_column(sa.Column("runtime_occurrence_kind", sa.String(24)))
         batch.add_column(sa.Column("runtime_source_stage_id", uuid))
         batch.add_column(sa.Column("runtime_reason", sa.Text()))
@@ -85,16 +89,26 @@ def upgrade() -> None:
         )
         batch.add_column(sa.Column("paused_by", sa.String(32)))
         batch.add_column(
-            sa.Column("continues_after_stage", sa.Boolean(), server_default=sa.false(), nullable=False)
+            sa.Column(
+                "continues_after_stage", sa.Boolean(), server_default=sa.false(), nullable=False
+            )
         )
         batch.add_column(sa.Column("replaces_timer_id", uuid))
         batch.add_column(sa.Column("addition_requirement_id", uuid))
         batch.add_column(sa.Column("cancel_reason", sa.Text()))
         batch.create_foreign_key(
-            "fk_brew_timers_session", "brew_sessions", ["brew_session_id"], ["id"], ondelete="CASCADE"
+            "fk_brew_timers_session",
+            "brew_sessions",
+            ["brew_session_id"],
+            ["id"],
+            ondelete="CASCADE",
         )
         batch.create_foreign_key(
-            "fk_brew_timers_replaces", "brew_timers", ["replaces_timer_id"], ["id"], ondelete="SET NULL"
+            "fk_brew_timers_replaces",
+            "brew_timers",
+            ["replaces_timer_id"],
+            ["id"],
+            ondelete="SET NULL",
         )
 
     with op.batch_alter_table("measurements") as batch:
@@ -155,7 +169,11 @@ def upgrade() -> None:
         batch.add_column(sa.Column("corrective_action", sa.Text()))
         batch.add_column(sa.Column("model_id", sa.String(80)))
         batch.create_foreign_key(
-            "fk_deviations_session", "brew_sessions", ["brew_session_id"], ["id"], ondelete="CASCADE"
+            "fk_deviations_session",
+            "brew_sessions",
+            ["brew_session_id"],
+            ["id"],
+            ondelete="CASCADE",
         )
         batch.create_foreign_key(
             "fk_deviations_stage", "brew_stages", ["brew_stage_id"], ["id"], ondelete="CASCADE"
@@ -506,7 +524,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("DROP TRIGGER IF EXISTS brew_requirement_templates_immutable ON brew_requirement_templates")
+    op.execute(
+        "DROP TRIGGER IF EXISTS brew_requirement_templates_immutable ON brew_requirement_templates"
+    )
     op.execute("DROP TRIGGER IF EXISTS brew_plan_steps_immutable ON brew_plan_steps")
     op.execute("DROP FUNCTION IF EXISTS phase3_protect_requirement_templates()")
     op.execute("DROP FUNCTION IF EXISTS phase3_protect_plan_steps()")
@@ -527,8 +547,109 @@ def downgrade() -> None:
     ]:
         op.drop_table(table)
     op.drop_index("ix_journal_order", table_name="brew_journal_events")
+    with op.batch_alter_table("audit_events") as batch:
+        batch.drop_column("operation_id")
+        batch.drop_column("correlation_id")
+    with op.batch_alter_table("brew_journal_events") as batch:
+        batch.drop_column("causation_id")
+        batch.drop_column("correlation_id")
+        batch.drop_column("operation_id")
+        batch.drop_column("actor_user_id")
+        batch.drop_column("recorded_at")
+        batch.drop_column("occurred_at")
+        batch.drop_column("schema_version")
+    with op.batch_alter_table("deviations") as batch:
+        batch.drop_constraint("fk_deviations_stage", type_="foreignkey")
+        batch.drop_constraint("fk_deviations_session", type_="foreignkey")
+        batch.drop_column("model_id")
+        batch.drop_column("corrective_action")
+        batch.drop_column("description")
+        batch.drop_column("category")
+        batch.drop_column("comparison_status")
+        batch.drop_column("brew_stage_id")
+        batch.drop_column("brew_session_id")
+        batch.alter_column("measurement_id", nullable=False)
+    with op.batch_alter_table("notifications") as batch:
+        batch.drop_constraint("fk_notifications_session", type_="foreignkey")
+        batch.drop_column("expired_at")
+        batch.drop_column("skip_reason")
+        batch.drop_column("schema_version")
+        batch.drop_column("priority")
+        batch.drop_column("resolution_source_id")
+        batch.drop_column("resolution_source_type")
+        batch.drop_column("satisfaction_source_id")
+        batch.drop_column("satisfaction_source_type")
+        batch.drop_column("requirement_template_id")
+        batch.drop_column("requirement_id")
+        batch.drop_column("completed_at")
+        batch.drop_column("brew_session_id")
+    with op.batch_alter_table("measurements") as batch:
+        batch.drop_column("operation_id")
+        batch.drop_column("actor_user_id")
+        batch.drop_column("definition_version")
+        batch.drop_column("context")
+        batch.drop_column("available_at_original_session_completion")
+        batch.drop_column("available_at_original_stage_completion")
+        batch.drop_column("late_entry_reason")
+        batch.drop_column("late_entry")
+        batch.drop_column("requirement_id")
+        batch.drop_column("conversion_model_id")
+        batch.drop_column("vessel")
+        batch.drop_column("temperature_compensated")
+        batch.drop_column("sample_temperature_c")
+        batch.drop_column("method")
+        batch.drop_column("entry_method")
+        batch.drop_column("recorded_at")
+        batch.drop_column("canonical_unit")
+        batch.drop_column("canonical_value")
+        batch.drop_column("raw_unit")
+        batch.drop_column("raw_value")
+        batch.drop_column("process_point")
+    with op.batch_alter_table("brew_timers") as batch:
+        batch.drop_constraint("fk_brew_timers_replaces", type_="foreignkey")
+        batch.drop_constraint("fk_brew_timers_session", type_="foreignkey")
+        batch.drop_column("cancel_reason")
+        batch.drop_column("addition_requirement_id")
+        batch.drop_column("replaces_timer_id")
+        batch.drop_column("continues_after_stage")
+        batch.drop_column("paused_by")
+        batch.drop_column("timer_type")
+        batch.drop_column("revision")
+        batch.drop_column("cancelled_at")
+        batch.drop_column("acknowledged_at")
+        batch.drop_column("expired_at")
+        batch.drop_column("deadline_at")
+        batch.drop_column("clock_basis")
+        batch.drop_column("brew_session_id")
     with op.batch_alter_table("brew_stages") as batch:
         batch.drop_constraint("uq_stage_occurrence", type_="unique")
+        batch.drop_constraint("fk_brew_stages_runtime_source", type_="foreignkey")
+        batch.drop_column("accumulated_pause_seconds")
+        batch.drop_column("wall_clock_duration_seconds")
+        batch.drop_column("active_duration_seconds")
+        batch.drop_column("requirement_set_fingerprint")
+        batch.drop_column("skip_reason")
+        batch.drop_column("revision")
+        batch.drop_column("runtime_reason")
+        batch.drop_column("runtime_source_stage_id")
+        batch.drop_column("runtime_occurrence_kind")
+        batch.drop_column("required")
+        batch.drop_column("occurrence_number")
+        batch.drop_column("canonical_stage_type")
+        batch.drop_column("plan_step_id")
+        batch.drop_column("paused_at")
     op.create_unique_constraint(
         "brew_stages_brew_session_id_name_key", "brew_stages", ["brew_session_id", "name"]
     )
+    with op.batch_alter_table("brew_sessions") as batch:
+        batch.drop_column("materialized_at")
+        batch.drop_column("plan_preview_hash")
+        batch.drop_column("logical_plan_hash")
+        batch.drop_column("materialization_rule_version")
+        batch.drop_column("plan_kind")
+        batch.drop_column("revision")
+        batch.drop_column("abort_reason")
+        batch.drop_column("aborted_at")
+        batch.drop_column("paused_at")
+    with op.batch_alter_table("auth_sessions") as batch:
+        batch.drop_column("csrf_token_hash")

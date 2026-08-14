@@ -9,6 +9,7 @@ import {
   VoiceProposal,
   formatDuration,
   latestMeasurement,
+  newOperationId,
   parseVoiceProposal,
   variance,
 } from "@/lib/brew";
@@ -61,11 +62,16 @@ export default function BrewDayPage() {
     try {
       await apiFetch(path, {
         method: "POST",
-        body: body ? JSON.stringify({ operation_id: crypto.randomUUID(), ...body }) : undefined,
+        body: body ? JSON.stringify({ operation_id: newOperationId(), expected_revision: brew?.revision, ...body }) : undefined,
       });
       await refresh();
     } catch (reason) {
-      setError(reason instanceof ApiError ? reason.message : "Action failed.");
+      if (reason instanceof ApiError && reason.status === 409) {
+        setError(`${reason.message} Refreshing authoritative state…`);
+        await refresh();
+      } else {
+        setError(reason instanceof ApiError ? reason.message : "Action failed.");
+      }
     } finally {
       setBusy(false);
     }
@@ -78,27 +84,47 @@ export default function BrewDayPage() {
     preset?: string,
   ) {
     event.preventDefault();
+    const formEl = event.currentTarget;
+    const stageId = brew?.mash?.id;
+    if (!stageId) {
+      setError("Mash stage is not ready for measurements.");
+      return;
+    }
+    const form = formEl ? new FormData(formEl) : null;
+    const value = preset ?? (form?.get("value") as string | null);
+    if (!value) {
+      setError("Measurement value is required.");
+      return;
+    }
     setBusy(true);
     setError("");
-    const form = new FormData(event.currentTarget);
     try {
-      await apiFetch(`/brew-sessions/stages/${brew?.mash?.id}/measurements`, {
+      await apiFetch(`/brew-sessions/stages/${stageId}/measurements`, {
         method: "POST",
         body: JSON.stringify({
           measurement_type: type,
-          value: preset ?? form.get("value"),
+          value,
           unit: type === "MASH_PH" ? "pH" : "SG",
-          note: form.get("note") || null,
-          instrument: form.get("instrument") || null,
+          note: form?.get("note") || null,
+          instrument: form?.get("instrument") || null,
           entry_method: entryMethod,
-          operation_id: crypto.randomUUID(),
+          operation_id: newOperationId(),
         }),
       });
       setVoiceDraft(null);
       setVoiceText("");
       await refresh();
     } catch (reason) {
-      setError(reason instanceof ApiError ? reason.message : "Measurement failed.");
+      if (reason instanceof ApiError && reason.status === 409) {
+        setError(`${reason.message} Refreshing authoritative state…`);
+        await refresh();
+      } else if (reason instanceof ApiError) {
+        setError(reason.message);
+      } else if (reason instanceof Error) {
+        setError(reason.message);
+      } else {
+        setError("Measurement failed.");
+      }
     } finally {
       setBusy(false);
     }
@@ -117,7 +143,10 @@ export default function BrewDayPage() {
         <div>
           <div className="eyebrow">Brew-Day Mode</div>
           <h1>Mash</h1>
-          <p>Session {brew.id.slice(0, 8)} · {currentName} · rev {brew.revision ?? 1}</p>
+          <p>
+            Session {brew.id.slice(0, 8)} · {currentName} · rev {brew.revision ?? 1}
+            {brew.plan_kind ? ` · plan ${brew.plan_kind}` : ""}
+          </p>
         </div>
         <span className={`status ${brew.status.toLowerCase()}`}>{brew.status}</span>
       </section>
@@ -157,9 +186,11 @@ export default function BrewDayPage() {
             )}
           </div>
 
-          <section className="timer-panel" aria-live="polite">
+          <section className="timer-panel" aria-live="polite" aria-label="Mash timer status">
             <span>Mash timer</span>
-            <strong data-testid="mash-timer">{formatDuration(timerSeconds)}</strong>
+            <strong data-testid="mash-timer" role="timer" aria-label={`Elapsed ${formatDuration(timerSeconds)}`}>
+              {formatDuration(timerSeconds)}
+            </strong>
             <div className="timer-track">
               <span
                 style={{
@@ -224,7 +255,7 @@ export default function BrewDayPage() {
                     Note
                     <input name="note" placeholder="Optional brew-day note" />
                   </label>
-                  <button className="primary full" disabled={busy}>Record pH</button>
+                  <button type="submit" className="primary full" disabled={busy}>Record pH</button>
                 </form>
               </MeasurementCard>
               <MeasurementCard
@@ -245,7 +276,7 @@ export default function BrewDayPage() {
                     Note
                     <input name="note" placeholder="Optional brew-day note" />
                   </label>
-                  <button className="primary full" disabled={busy}>Record gravity</button>
+                  <button type="submit" className="primary full" disabled={busy}>Record gravity</button>
                 </form>
               </MeasurementCard>
             </div>

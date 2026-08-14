@@ -344,6 +344,8 @@ def replace_timer(
         raise DomainError("Replacement requires a reason of at least 10 characters", 422)
     if planned_duration_seconds <= 0:
         raise DomainError("Replacement duration must be positive", 422)
+    if original.status == "CANCELLED":
+        raise ConflictError("Timer has already been replaced or cancelled")
     now = utc_now()
     original.status = "CANCELLED"
     original.cancelled_at = now
@@ -352,7 +354,7 @@ def replace_timer(
     replacement = BrewTimer(
         brew_stage_id=stage.id,
         brew_session_id=session.id,
-        name=f"{original.name} replacement",
+        name=f"{original.name} replacement {uuid.uuid4().hex[:8]}",
         started_at=now,
         planned_duration_seconds=planned_duration_seconds,
         deadline_at=now + timedelta(seconds=planned_duration_seconds),

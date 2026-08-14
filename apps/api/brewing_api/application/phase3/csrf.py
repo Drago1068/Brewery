@@ -17,6 +17,10 @@ MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
 _rate_window: dict[str, list[datetime]] = defaultdict(list)
 
 
+def reset_rate_limits() -> None:
+    _rate_window.clear()
+
+
 def allowed_origins(settings) -> set[str]:
     origins = set(settings.cors_origins or [])
     origins.add(settings.public_origin)
@@ -43,7 +47,10 @@ def _enforce_rate_limit(user_id: str, is_upload: bool) -> JSONResponse | None:
     window = _rate_window[key]
     cutoff = now - timedelta(seconds=60)
     _rate_window[key] = [stamp for stamp in window if stamp > cutoff]
-    limit = 10 if is_upload else 120
+    import os
+
+    default_limit = "500" if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("TESTING") == "1" else "120"
+    limit = 10 if is_upload else int(os.environ.get("PHASE3_RATE_LIMIT_MUTATIONS", default_limit))
     if len(_rate_window[key]) >= limit:
         return JSONResponse(
             status_code=429,

@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { formatDuration, latestMeasurement, parseVoiceProposal, variance, type Measurement } from "./brew";
+import {
+  formatDuration,
+  latestMeasurement,
+  newOperationId,
+  parseVoiceProposal,
+  variance,
+  type Measurement,
+} from "./brew";
 
 describe("brew presentation helpers", () => {
   it("formats a persisted elapsed duration", () => {
@@ -34,5 +41,10 @@ describe("brew presentation helpers", () => {
     expect(variance("1.048", "1.050")).toBe("-0.002");
     expect(variance("5.42", "5.30")).toBe("+0.12");
   });
-});
 
+  it("creates operation ids without requiring a secure crypto context", () => {
+    const id = newOperationId();
+    expect(id.length).toBeGreaterThan(8);
+    expect(newOperationId()).not.toBe(id);
+  });
+});
