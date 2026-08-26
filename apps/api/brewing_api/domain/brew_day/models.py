@@ -75,6 +75,11 @@ class BrewStageRequirement(UuidTimestampMixin, Base):
             "requirement_class",
             name="uq_stage_requirement_template",
         ),
+        ForeignKeyConstraint(
+            ["stage_instance_id", "brew_session_id"],
+            ["brew_stages.id", "brew_stages.brew_session_id"],
+            name="fk_stage_requirement_stage_session",
+        ),
     )
 
     brew_session_id: Mapped[uuid.UUID] = mapped_column(
@@ -147,6 +152,11 @@ class BrewAdditionCorrection(UuidTimestampMixin, Base):
             ["correction_of_id", "brew_session_id"],
             ["brew_addition_events.id", "brew_addition_events.brew_session_id"],
             name="fk_addition_correction_event_session",
+        ),
+        ForeignKeyConstraint(
+            ["original_addition_event_id", "brew_session_id"],
+            ["brew_addition_events.id", "brew_addition_events.brew_session_id"],
+            name="fk_addition_correction_original_session",
         ),
         ForeignKeyConstraint(
             ["stage_instance_id", "brew_session_id"],
@@ -241,6 +251,13 @@ class BrewNote(UuidTimestampMixin, Base):
 
 class BrewAttachment(UuidTimestampMixin, Base):
     __tablename__ = "brew_attachments"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["stage_instance_id", "brew_session_id"],
+            ["brew_stages.id", "brew_stages.brew_session_id"],
+            name="fk_attachment_stage_session",
+        ),
+    )
 
     brew_session_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("brew_sessions.id", ondelete="CASCADE"), index=True, nullable=False

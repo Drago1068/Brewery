@@ -324,12 +324,14 @@ def replace_timer(
     reason: str,
     planned_duration_seconds: int,
     operation_id: str | None = None,
+    expected_revision: int | None = None,
 ) -> BrewTimer:
     original, stage, session = _timer_for_user(db, user, timer_id)
     document = {
         "timer_id": str(timer_id),
         "reason": reason,
         "planned_duration_seconds": planned_duration_seconds,
+        "expected_revision": expected_revision,
     }
     replay = replay_or_conflict(
         db, user.id, "replace_timer", "BrewTimer", original.id, operation_id, document
@@ -338,6 +340,9 @@ def replace_timer(
         found = db.get(BrewTimer, replay.result_resource_id)
         if found:
             return found
+    from brewing_api.application.brew_day import _lock_revision
+
+    _lock_revision(session, expected_revision)
     if session.status != "ACTIVE":
         raise ConflictError("Brew session must be ACTIVE")
     if not reason or len(reason) < 10:
@@ -406,12 +411,14 @@ def extend_timer(
     extra_seconds: int,
     reason: str,
     operation_id: str | None = None,
+    expected_revision: int | None = None,
 ) -> BrewTimer:
     timer, stage, session = _timer_for_user(db, user, timer_id)
     document = {
         "timer_id": str(timer_id),
         "extra_seconds": extra_seconds,
         "reason": reason,
+        "expected_revision": expected_revision,
     }
     replay = replay_or_conflict(
         db, user.id, "extend_timer", "BrewTimer", timer.id, operation_id, document
@@ -420,6 +427,9 @@ def extend_timer(
         found = db.get(BrewTimer, replay.result_resource_id)
         if found:
             return found
+    from brewing_api.application.brew_day import _lock_revision
+
+    _lock_revision(session, expected_revision)
     if extra_seconds <= 0:
         raise DomainError("Extension must be positive", 422)
     if not reason:

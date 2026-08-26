@@ -2,7 +2,18 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Numeric, String, Text, Uuid
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from brewing_api.domain.common import UuidTimestampMixin
@@ -11,9 +22,26 @@ from brewing_api.platform.database import Base
 
 class Measurement(UuidTimestampMixin, Base):
     __tablename__ = "measurements"
+    __table_args__ = (
+        UniqueConstraint("id", "brew_session_id", name="uq_measurement_session"),
+        UniqueConstraint("id", "brew_stage_id", name="uq_measurement_stage_session"),
+        ForeignKeyConstraint(
+            ["brew_stage_id", "brew_session_id"],
+            ["brew_stages.id", "brew_stages.brew_session_id"],
+            name="fk_measurement_stage_session",
+        ),
+        ForeignKeyConstraint(
+            ["correction_of_id", "brew_session_id"],
+            ["measurements.id", "measurements.brew_session_id"],
+            name="fk_measurement_correction_session",
+        ),
+    )
 
     brew_stage_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("brew_stages.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    brew_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("brew_sessions.id", ondelete="CASCADE"), index=True, nullable=False
     )
     measurement_type: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
     value: Mapped[Decimal] = mapped_column(Numeric(8, 3), nullable=False)

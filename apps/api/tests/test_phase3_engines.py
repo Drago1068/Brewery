@@ -45,6 +45,19 @@ def _requirement(session_id: str, stage_id: str) -> uuid.UUID:
     return requirement_id
 
 
+def _mash_ph(value: str = "5.30", **extra) -> dict:
+    return {
+        "measurement_type": "MASH_PH",
+        "value": value,
+        "unit": "pH",
+        "operation_id": str(uuid.uuid4()),
+        "method": "METER",
+        "sample_temperature_c": "65.00",
+        "temperature_compensated": True,
+        **extra,
+    }
+
+
 def test_voice_proposal_is_not_a_commit():
     proposal = parse_voice_proposal("five point two pH")
     assert proposal is not None
@@ -81,7 +94,10 @@ def test_stale_revision_is_conflict(active_mash):
     details = client.get(f"/api/v1/brew-sessions/{active_mash['session_id']}").json()
     response = client.post(
         f"/api/v1/brew-sessions/{active_mash['session_id']}/pause",
-        json={"expected_revision": details["revision"] - 1},
+        json={
+            "operation_id": str(uuid.uuid4()),
+            "expected_revision": details["revision"] - 1,
+        },
     )
     assert response.status_code == 409
     assert response.json()["code"] == "STALE_REVISION"
@@ -89,11 +105,15 @@ def test_stale_revision_is_conflict(active_mash):
 
 def test_timer_replace_preserves_original_identity(active_mash):
     client = active_mash["client"]
+    command = active_mash["command"]
     details = client.get(f"/api/v1/brew-sessions/{active_mash['session_id']}").json()
     timer_id = details["timers"][0]["id"]
     replaced = client.post(
         f"/api/v1/brew-sessions/timers/{timer_id}/replace",
-        json={"reason": "Probe failed and timer purpose changed", "planned_duration_seconds": 90},
+        json=command(
+            reason="Probe failed and timer purpose changed",
+            planned_duration_seconds=90,
+        ),
     )
     assert replaced.status_code == 200
     after = client.get(f"/api/v1/brew-sessions/{active_mash['session_id']}").json()
@@ -108,11 +128,12 @@ def test_timer_replace_preserves_original_identity(active_mash):
 
 def test_timer_extend_appends_revision(active_mash):
     client = active_mash["client"]
+    command = active_mash["command"]
     details = client.get(f"/api/v1/brew-sessions/{active_mash['session_id']}").json()
     timer_id = details["timers"][0]["id"]
     response = client.post(
         f"/api/v1/brew-sessions/timers/{timer_id}/extend",
-        json={"extra_seconds": 30, "reason": "mash rest needed more conversion time"},
+        json=command(extra_seconds=30, reason="mash rest needed more conversion time"),
     )
     assert response.status_code == 200
     with SessionLocal() as db:
@@ -128,6 +149,7 @@ def test_timer_extend_appends_revision(active_mash):
 
 def test_expired_timer_survives_reconnect(active_mash):
     client = active_mash["client"]
+    command = active_mash["command"]
     details = client.get(f"/api/v1/brew-sessions/{active_mash['session_id']}").json()
     timer_id = uuid.UUID(details["timers"][0]["id"])
     with SessionLocal() as db:
@@ -136,24 +158,29 @@ def test_expired_timer_survives_reconnect(active_mash):
         db.commit()
     recovered = client.get(f"/api/v1/brew-sessions/{active_mash['session_id']}").json()
     assert recovered["timers"][0]["status"] == "EXPIRED"
-    ack = client.post(f"/api/v1/brew-sessions/timers/{timer_id}/acknowledge")
+    ack = client.post(
+        f"/api/v1/brew-sessions/timers/{timer_id}/acknowledge",
+        json=command(),
+    )
     assert ack.json()["status"] == "ACKNOWLEDGED"
 
 
 def test_addition_execution_has_zero_inventory_effect(active_mash):
     client = active_mash["client"]
     session_id = active_mash["session_id"]
+    command = active_mash["command"]
     requirement_id = _requirement(session_id, active_mash["stage_id"])
     with SessionLocal() as db:
         before = inventory_transaction_count(db)
+    body = command(quantity="10", unit="g", operation_id="add-1")
     executed = client.post(
         f"/api/v1/brew-sessions/{session_id}/requirements/{requirement_id}/additions",
-        json={"quantity": "10", "unit": "g", "operation_id": "add-1"},
+        json=body,
     )
     assert executed.status_code == 201
     replay = client.post(
         f"/api/v1/brew-sessions/{session_id}/requirements/{requirement_id}/additions",
-        json={"quantity": "10", "unit": "g", "operation_id": "add-1"},
+        json=body,
     )
     assert replay.json()["id"] == executed.json()["id"]
     with SessionLocal() as db:
@@ -163,15 +190,14 @@ def test_addition_execution_has_zero_inventory_effect(active_mash):
 def test_waiver_does_not_count_as_measurement(active_mash):
     client = active_mash["client"]
     session_id = active_mash["session_id"]
+    command = active_mash["command"]
     requirement_id = _requirement(session_id, active_mash["stage_id"])
-    details = client.get(f"/api/v1/brew-sessions/{session_id}").json()
     waived = client.post(
         f"/api/v1/brew-sessions/{session_id}/requirements/{requirement_id}/waivers",
-        json={
-            "reason": "Could not verify hop charge visually",
-            "operation_id": "waiver-1",
-            "expected_revision": details["revision"],
-        },
+        json=command(
+            reason="Could not verify hop charge visually",
+            operation_id="waiver-1",
+        ),
     )
     assert waived.status_code == 201
     audit = client.get(f"/api/v1/brew-sessions/{session_id}/completion-audit").json()
@@ -181,16 +207,17 @@ def test_waiver_does_not_count_as_measurement(active_mash):
 
 def test_voice_proposal_endpoint_does_not_record_measurement(active_mash):
     client = active_mash["client"]
+    command = active_mash["command"]
     parsed = client.post(
         "/api/v1/brew-sessions/voice/proposals",
-        json={"transcript": "fifty two pH"},
+        json=command(transcript="fifty two pH"),
     )
     assert parsed.status_code == 200
     assert parsed.json()["committed"] is False
     assert parsed.json()["proposal"]["value"] == "52"
     rejected = client.post(
         f"/api/v1/brew-sessions/stages/{active_mash['stage_id']}/measurements",
-        json={"measurement_type": "MASH_PH", "value": "52", "unit": "pH"},
+        json=_mash_ph("52"),
     )
     assert rejected.status_code == 422
 
@@ -230,6 +257,22 @@ def test_media_allowlist_and_headers(active_mash, tmp_path, monkeypatch):
     assert replay.json()["id"] == attachment_id
 
 
+def test_truncated_png_is_rejected_by_decoder(active_mash, tmp_path, monkeypatch):
+    from brewing_api.platform import config
+
+    monkeypatch.setenv("MEDIA_ROOT", str(tmp_path))
+    config.get_settings.cache_clear()
+    client = active_mash["client"]
+    session_id = active_mash["session_id"]
+    truncated = client.post(
+        f"/api/v1/brew-sessions/{session_id}/attachments",
+        files={"file": ("trunc.png", PNG[:24], "image/png")},
+        data={"operation_id": "media-trunc"},
+    )
+    assert truncated.status_code == 422
+    assert truncated.json()["code"] == "MEDIA_DECODE_FAILED"
+
+
 def test_cross_owner_session_is_hidden(active_mash):
     client = active_mash["client"]
     session_id = active_mash["session_id"]
@@ -266,13 +309,14 @@ def test_dashboard_projection_p95_under_threshold(active_mash):
 
 def test_abort_blocks_new_measurement(active_mash):
     client = active_mash["client"]
+    command = active_mash["command"]
     client.post(
         f"/api/v1/brew-sessions/{active_mash['session_id']}/abort",
-        json={"reason": "Kettle failure forced an immediate stop"},
+        json=command(reason="Kettle failure forced an immediate stop"),
     )
     response = client.post(
         f"/api/v1/brew-sessions/stages/{active_mash['stage_id']}/measurements",
-        json={"measurement_type": "MASH_PH", "value": "5.30", "unit": "pH"},
+        json=_mash_ph("5.30"),
     )
     assert response.status_code == 409
     assert response.json()["code"] == "TERMINAL_SESSION_EVIDENCE_PROHIBITED"

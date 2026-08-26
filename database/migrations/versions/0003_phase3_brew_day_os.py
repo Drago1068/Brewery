@@ -112,6 +112,7 @@ def upgrade() -> None:
         )
 
     with op.batch_alter_table("measurements") as batch:
+        batch.add_column(sa.Column("brew_session_id", uuid))
         batch.add_column(sa.Column("process_point", sa.String(40)))
         batch.add_column(sa.Column("raw_value", sa.Numeric(12, 4)))
         batch.add_column(sa.Column("raw_unit", sa.String(16)))
@@ -135,6 +136,13 @@ def upgrade() -> None:
         batch.add_column(sa.Column("definition_version", sa.String(64)))
         batch.add_column(sa.Column("actor_user_id", uuid))
         batch.add_column(sa.Column("operation_id", sa.String(64)))
+        batch.create_foreign_key(
+            "fk_measurements_session",
+            "brew_sessions",
+            ["brew_session_id"],
+            ["id"],
+            ondelete="CASCADE",
+        )
 
     with op.batch_alter_table("notifications") as batch:
         batch.add_column(sa.Column("brew_session_id", uuid))
@@ -533,8 +541,15 @@ def upgrade() -> None:
         "WHERE brew_stages.id = notifications.brew_stage_id"
         ") WHERE brew_session_id IS NULL"
     )
+    op.execute(
+        "UPDATE measurements SET brew_session_id = ("
+        "SELECT brew_session_id FROM brew_stages "
+        "WHERE brew_stages.id = measurements.brew_stage_id"
+        ") WHERE brew_session_id IS NULL"
+    )
     op.alter_column("brew_timers", "brew_session_id", nullable=False)
     op.alter_column("notifications", "brew_session_id", nullable=False)
+    op.alter_column("measurements", "brew_session_id", nullable=False)
     op.create_unique_constraint("uq_stage_session", "brew_stages", ["id", "brew_session_id"])
     op.create_unique_constraint("uq_timer_session", "brew_timers", ["id", "brew_session_id"])
     op.create_unique_constraint(
@@ -542,6 +557,12 @@ def upgrade() -> None:
     )
     op.create_unique_constraint(
         "uq_addition_event_session", "brew_addition_events", ["id", "brew_session_id"]
+    )
+    op.create_unique_constraint(
+        "uq_measurement_session", "measurements", ["id", "brew_session_id"]
+    )
+    op.create_unique_constraint(
+        "uq_measurement_stage_session", "measurements", ["id", "brew_stage_id"]
     )
     op.create_foreign_key(
         "fk_timer_stage_session",
@@ -586,6 +607,62 @@ def upgrade() -> None:
         ["stage_instance_id", "brew_session_id"],
         ["id", "brew_session_id"],
     )
+    op.create_foreign_key(
+        "fk_addition_correction_original_session",
+        "brew_addition_corrections",
+        "brew_addition_events",
+        ["original_addition_event_id", "brew_session_id"],
+        ["id", "brew_session_id"],
+    )
+    op.create_foreign_key(
+        "fk_attachment_stage_session",
+        "brew_attachments",
+        "brew_stages",
+        ["stage_instance_id", "brew_session_id"],
+        ["id", "brew_session_id"],
+    )
+    op.create_foreign_key(
+        "fk_stage_requirement_stage_session",
+        "brew_stage_requirements",
+        "brew_stages",
+        ["stage_instance_id", "brew_session_id"],
+        ["id", "brew_session_id"],
+    )
+    op.create_foreign_key(
+        "fk_note_stage_session",
+        "brew_notes",
+        "brew_stages",
+        ["stage_instance_id", "brew_session_id"],
+        ["id", "brew_session_id"],
+    )
+    op.create_foreign_key(
+        "fk_waiver_stage_session",
+        "brew_waivers",
+        "brew_stages",
+        ["stage_instance_id", "brew_session_id"],
+        ["id", "brew_session_id"],
+    )
+    op.create_foreign_key(
+        "fk_timer_revision_timer_session",
+        "brew_timer_revisions",
+        "brew_timers",
+        ["timer_id", "brew_session_id"],
+        ["id", "brew_session_id"],
+    )
+    op.create_foreign_key(
+        "fk_measurement_stage_session",
+        "measurements",
+        "brew_stages",
+        ["brew_stage_id", "brew_session_id"],
+        ["id", "brew_session_id"],
+    )
+    op.create_foreign_key(
+        "fk_measurement_correction_session",
+        "measurements",
+        "measurements",
+        ["correction_of_id", "brew_session_id"],
+        ["id", "brew_session_id"],
+    )
     op.execute(
         """
         CREATE OR REPLACE FUNCTION phase3_protect_append_only() RETURNS trigger AS $$
@@ -628,6 +705,24 @@ def downgrade() -> None:
         op.execute(f"DROP TRIGGER IF EXISTS {table}_append_only ON {table}")
     op.execute("DROP FUNCTION IF EXISTS phase3_protect_append_only()")
     op.drop_constraint(
+        "fk_measurement_correction_session", "measurements", type_="foreignkey"
+    )
+    op.drop_constraint("fk_measurement_stage_session", "measurements", type_="foreignkey")
+    op.drop_constraint(
+        "fk_timer_revision_timer_session", "brew_timer_revisions", type_="foreignkey"
+    )
+    op.drop_constraint("fk_waiver_stage_session", "brew_waivers", type_="foreignkey")
+    op.drop_constraint("fk_note_stage_session", "brew_notes", type_="foreignkey")
+    op.drop_constraint(
+        "fk_stage_requirement_stage_session", "brew_stage_requirements", type_="foreignkey"
+    )
+    op.drop_constraint("fk_attachment_stage_session", "brew_attachments", type_="foreignkey")
+    op.drop_constraint(
+        "fk_addition_correction_original_session",
+        "brew_addition_corrections",
+        type_="foreignkey",
+    )
+    op.drop_constraint(
         "fk_addition_correction_stage_session", "brew_addition_corrections", type_="foreignkey"
     )
     op.drop_constraint(
@@ -639,10 +734,13 @@ def downgrade() -> None:
     )
     op.drop_constraint("fk_notification_stage_session", "notifications", type_="foreignkey")
     op.drop_constraint("fk_timer_stage_session", "brew_timers", type_="foreignkey")
+    op.drop_constraint("uq_measurement_stage_session", "measurements", type_="unique")
+    op.drop_constraint("uq_measurement_session", "measurements", type_="unique")
     op.drop_constraint("uq_addition_event_session", "brew_addition_events", type_="unique")
     op.drop_constraint("uq_notification_session", "notifications", type_="unique")
     op.drop_constraint("uq_timer_session", "brew_timers", type_="unique")
     op.drop_constraint("uq_stage_session", "brew_stages", type_="unique")
+    op.alter_column("measurements", "brew_session_id", nullable=True)
     op.alter_column("notifications", "brew_session_id", nullable=True)
     op.alter_column("brew_timers", "brew_session_id", nullable=True)
     op.execute(
@@ -705,6 +803,7 @@ def downgrade() -> None:
         batch.drop_column("completed_at")
         batch.drop_column("brew_session_id")
     with op.batch_alter_table("measurements") as batch:
+        batch.drop_constraint("fk_measurements_session", type_="foreignkey")
         batch.drop_column("operation_id")
         batch.drop_column("actor_user_id")
         batch.drop_column("definition_version")
@@ -726,6 +825,7 @@ def downgrade() -> None:
         batch.drop_column("raw_unit")
         batch.drop_column("raw_value")
         batch.drop_column("process_point")
+        batch.drop_column("brew_session_id")
     with op.batch_alter_table("brew_timers") as batch:
         batch.drop_constraint("fk_brew_timers_replaces", type_="foreignkey")
         batch.drop_constraint("fk_brew_timers_session", type_="foreignkey")

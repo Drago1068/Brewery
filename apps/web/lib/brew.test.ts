@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   formatDuration,
   latestMeasurement,
+  measurementCommand,
   newOperationId,
   parseVoiceProposal,
+  sessionCommand,
   variance,
   type Measurement,
 } from "./brew";
@@ -46,5 +48,24 @@ describe("brew presentation helpers", () => {
     const id = newOperationId();
     expect(id.length).toBeGreaterThan(8);
     expect(newOperationId()).not.toBe(id);
+  });
+
+  it("sends operation identity and expected revision on session commands", () => {
+    const body = sessionCommand(4, { reason: "timer extension" });
+    expect(body.expected_revision).toBe(4);
+    expect(String(body.operation_id).length).toBeGreaterThan(8);
+    expect(body.reason).toBe("timer extension");
+  });
+
+  it("includes observed measurement context instead of inventing method later", () => {
+    const body = measurementCommand("MASH_PH", "5.32", {
+      method: "METER",
+      sample_temperature_c: "65.00",
+      temperature_compensated: true,
+    });
+    expect(body.method).toBe("METER");
+    expect(body.sample_temperature_c).toBe("65.00");
+    expect(body.temperature_compensated).toBe(true);
+    expect(body.operation_id).toBeTruthy();
   });
 });

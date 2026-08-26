@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-import struct
+import os
 import uuid
+from io import BytesIO
 from pathlib import Path
 
 from fastapi import UploadFile
+from PIL import Image, ImageFile, UnidentifiedImageError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from starlette.responses import Response
@@ -25,11 +27,16 @@ ALLOWED = {
     "image/png": (b"\x89PNG\r\n\x1a\n",),
     "image/webp": (b"RIFF",),
 }
+_PIL_FORMATS = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp"}
 MAX_FILE = 10 * 1024 * 1024
 MAX_SESSION_COUNT = 20
 MAX_SESSION_BYTES = 100 * 1024 * 1024
 UNSAFE_MARKERS = (b"<svg", b"<html", b"<?xml", b"<script", b"%PDF")
 MAX_DIMENSION = 20000
+MAX_PIXELS = 20_000_000
+
+ImageFile.LOAD_TRUNCATED_IMAGES = False
+Image.MAX_IMAGE_PIXELS = MAX_PIXELS
 
 
 def _media_root() -> Path:
@@ -38,33 +45,37 @@ def _media_root() -> Path:
     return path
 
 
-def _decode_jpeg(payload: bytes) -> None:
-    if len(payload) < 32 or not payload.startswith(b"\xff\xd8\xff"):
-        raise DomainError("JPEG decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
-    if b"\xff\xd9" not in payload:
-        raise DomainError("JPEG decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
-    if b"\xff\xc0" not in payload and b"\xff\xc2" not in payload:
-        raise DomainError("JPEG decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
+def _magic_matches(declared: str, payload: bytes) -> bool:
+    if declared == "image/webp":
+        return len(payload) >= 12 and payload[:4] == b"RIFF" and payload[8:12] == b"WEBP"
+    return any(payload.startswith(marker) for marker in ALLOWED[declared])
 
 
-def _decode_png(payload: bytes) -> None:
-    if len(payload) < 33 or payload[:8] != b"\x89PNG\r\n\x1a\n":
-        raise DomainError("PNG decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
-    length = struct.unpack(">I", payload[8:12])[0]
-    if length != 13 or payload[12:16] != b"IHDR":
-        raise DomainError("PNG decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
-    width, height = struct.unpack(">II", payload[16:24])
-    if width < 1 or height < 1 or width > MAX_DIMENSION or height > MAX_DIMENSION:
-        raise DomainError("PNG decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
-    if b"IEND" not in payload[-16:]:
-        raise DomainError("PNG decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
-
-
-def _decode_webp(payload: bytes) -> None:
-    if len(payload) < 16 or payload[:4] != b"RIFF" or payload[8:12] != b"WEBP":
-        raise DomainError("WebP decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
-    if payload[12:16] not in {b"VP8 ", b"VP8L", b"VP8X"}:
-        raise DomainError("WebP decoder probe failed", 422, code="MEDIA_DECODE_FAILED")
+def _decode_with_pillow(payload: bytes, declared: str) -> None:
+    try:
+        with Image.open(BytesIO(payload)) as probe:
+            probe.verify()
+        with Image.open(BytesIO(payload)) as image:
+            image.load()
+            if image.width < 1 or image.height < 1:
+                raise DomainError("Image decoder rejected payload", 422, code="MEDIA_DECODE_FAILED")
+            if image.width > MAX_DIMENSION or image.height > MAX_DIMENSION:
+                raise DomainError("Image decoder rejected payload", 422, code="MEDIA_DECODE_FAILED")
+            detected = _PIL_FORMATS.get(image.format)
+            if detected != declared:
+                raise DomainError(
+                    "MIME and decoded format do not agree", 415, code="UNSUPPORTED_MEDIA"
+                )
+    except DomainError:
+        raise
+    except Image.DecompressionBombError as exc:
+        raise DomainError(
+            "Image exceeds bounded decoder limits", 422, code="MEDIA_DECODE_FAILED"
+        ) from exc
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as exc:
+        raise DomainError(
+            "Image decoder rejected payload", 422, code="MEDIA_DECODE_FAILED"
+        ) from exc
 
 
 def _sniff(declared: str, payload: bytes) -> str:
@@ -73,16 +84,41 @@ def _sniff(declared: str, payload: bytes) -> str:
         raise DomainError("Unsafe media content", 415, code="UNSUPPORTED_MEDIA")
     if declared not in ALLOWED:
         raise DomainError("MIME type is not allowed", 415, code="UNSUPPORTED_MEDIA")
-    if declared == "image/jpeg":
-        _decode_jpeg(payload)
-        return declared
-    if declared == "image/png":
-        _decode_png(payload)
-        return declared
-    if declared == "image/webp":
-        _decode_webp(payload)
-        return declared
-    raise DomainError("MIME and signature do not agree", 415, code="UNSUPPORTED_MEDIA")
+    if not _magic_matches(declared, payload):
+        raise DomainError("MIME and signature do not agree", 415, code="UNSUPPORTED_MEDIA")
+    _decode_with_pillow(payload, declared)
+    return declared
+
+
+def _promote_bytes(payload: bytes, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = destination.parent / f".tmp-{destination.name}-{uuid.uuid4().hex[:8]}"
+    try:
+        with open(temp_path, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, destination)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+    try:
+        fd = os.open(destination, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+    try:
+        flags = getattr(os, "O_DIRECTORY", os.O_RDONLY)
+        dir_fd = os.open(str(destination.parent), flags)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
+        pass
 
 
 def upload_attachment(
@@ -141,47 +177,50 @@ def upload_attachment(
         raise ConflictError("Attachment quota exceeded", code="ATTACHMENT_QUOTA_EXCEEDED")
     storage_key = uuid.uuid4().hex
     destination = _media_root() / storage_key
-    temp_path = _media_root() / f".tmp-{storage_key}"
-    temp_path.write_bytes(payload)
-    attachment = BrewAttachment(
-        brew_session_id=session.id,
-        stage_instance_id=stage_id,
-        storage_key=storage_key,
-        content_type=content_type,
-        byte_length=len(payload),
-        sha256=checksum,
-        original_filename=raw_name[:255],
-        caption=caption,
-        actor_user_id=user.id,
-        operation_id=operation_id,
-    )
-    db.add(attachment)
-    db.flush()
-    journal(
-        db,
-        session.id,
-        "BREW_MEDIA_ATTACHED",
-        "Photo attached",
-        stage_id,
-        {"attachment_id": str(attachment.id), "sha256": attachment.sha256},
-        actor_id=user.id,
-        operation_id=operation_id,
-    )
-    audit(db, user.id, "BREW_MEDIA_ATTACHED", "BrewAttachment", attachment.id)
-    store_success(
-        db,
-        user.id,
-        "upload_attachment",
-        "BrewSession",
-        session.id,
-        operation_id,
-        document,
-        {"id": str(attachment.id), "status": attachment.status},
-        "BrewAttachment",
-        attachment.id,
-    )
-    db.commit()
-    temp_path.replace(destination)
+    _promote_bytes(payload, destination)
+    try:
+        attachment = BrewAttachment(
+            brew_session_id=session.id,
+            stage_instance_id=stage_id,
+            storage_key=storage_key,
+            content_type=content_type,
+            byte_length=len(payload),
+            sha256=checksum,
+            original_filename=raw_name[:255],
+            caption=caption,
+            actor_user_id=user.id,
+            operation_id=operation_id,
+        )
+        db.add(attachment)
+        db.flush()
+        journal(
+            db,
+            session.id,
+            "BREW_MEDIA_ATTACHED",
+            "Photo attached",
+            stage_id,
+            {"attachment_id": str(attachment.id), "sha256": attachment.sha256},
+            actor_id=user.id,
+            operation_id=operation_id,
+        )
+        audit(db, user.id, "BREW_MEDIA_ATTACHED", "BrewAttachment", attachment.id)
+        store_success(
+            db,
+            user.id,
+            "upload_attachment",
+            "BrewSession",
+            session.id,
+            operation_id,
+            document,
+            {"id": str(attachment.id), "status": attachment.status},
+            "BrewAttachment",
+            attachment.id,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        destination.unlink(missing_ok=True)
+        raise
     db.refresh(attachment)
     return attachment
 
@@ -251,13 +290,16 @@ def soft_remove_attachment(
     return attachment
 
 
-def reconcile_orphans(max_age_hours: int = 24) -> int:
+def reconcile_orphans(db: Session | None = None, max_age_hours: int = 24) -> int:
     from brewing_api.platform.database import SessionLocal
 
     root = _media_root()
     removed = 0
     cutoff = utc_now().timestamp() - max_age_hours * 3600
-    with SessionLocal() as db:
+    if db is None:
+        with SessionLocal() as owned:
+            referenced = set(owned.scalars(select(BrewAttachment.storage_key)).all())
+    else:
         referenced = set(db.scalars(select(BrewAttachment.storage_key)).all())
     if not root.exists():
         return 0

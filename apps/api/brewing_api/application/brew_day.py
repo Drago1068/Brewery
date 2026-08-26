@@ -42,6 +42,13 @@ class MeasurementCommand(Protocol):
     entry_method: str
     operation_id: str | None
     late_entry_reason: str | None
+    method: str | None
+    sample_temperature_c: Decimal | None
+    temperature_compensated: bool | None
+    vessel: str | None
+    raw_value: Decimal | None
+    raw_unit: str | None
+    conversion_model_id: str | None
 
 
 PROCESS_POINTS = {
@@ -58,83 +65,78 @@ PROCESS_POINTS = {
     "PITCH_TEMPERATURE": "PITCH",
 }
 
-_PHASE1A_CONTEXT = {
-    "MASH_PH": {
-        "method": "METER",
-        "sample_temperature_c": Decimal("65.00"),
-        "temperature_compensated": True,
-    },
-    "MASH_GRAVITY": {"method": "HYDROMETER", "sample_temperature_c": Decimal("20.00")},
-    "POST_MASH_GRAVITY": {"method": "HYDROMETER", "sample_temperature_c": Decimal("20.00")},
-    "PRE_BOIL_GRAVITY": {
-        "method": "HYDROMETER",
-        "sample_temperature_c": Decimal("20.00"),
-        "vessel": "KETTLE",
-    },
-    "ORIGINAL_GRAVITY": {"method": "HYDROMETER", "sample_temperature_c": Decimal("20.00")},
-    "MASH_IN_TEMPERATURE": {"method": "PROBE"},
-    "MASH_REST_TEMPERATURE": {"method": "PROBE"},
-    "KNOCKOUT_TEMPERATURE": {"method": "PROBE", "vessel": "RECEIVING"},
-    "KNOCKOUT_VOLUME": {"method": "SIGHT_GLASS", "vessel": "RECEIVING"},
-    "PRE_BOIL_VOLUME": {"method": "SIGHT_GLASS", "vessel": "KETTLE"},
-    "PITCH_TEMPERATURE": {"method": "PROBE"},
+_METHOD_ALLOWED = {
+    "MASH_IN_TEMPERATURE": {"THERMOMETER", "PROBE", "OTHER"},
+    "MASH_REST_TEMPERATURE": {"THERMOMETER", "PROBE", "OTHER"},
+    "MASH_PH": {"METER", "STRIP", "OTHER"},
+    "MASH_GRAVITY": {"HYDROMETER", "REFRACTOMETER", "OTHER"},
+    "POST_MASH_GRAVITY": {"HYDROMETER", "REFRACTOMETER", "OTHER"},
+    "PRE_BOIL_GRAVITY": {"HYDROMETER", "REFRACTOMETER", "OTHER"},
+    "ORIGINAL_GRAVITY": {"HYDROMETER", "REFRACTOMETER", "OTHER"},
+    "PRE_BOIL_VOLUME": {"SIGHT_GLASS", "GRADUATED", "SCALE", "OTHER"},
+    "KNOCKOUT_VOLUME": {"SIGHT_GLASS", "GRADUATED", "SCALE", "OTHER"},
+    "KNOCKOUT_TEMPERATURE": {"THERMOMETER", "PROBE", "OTHER"},
+    "PITCH_TEMPERATURE": {"THERMOMETER", "PROBE", "OTHER"},
 }
+_GRAVITY_TYPES = {"MASH_GRAVITY", "POST_MASH_GRAVITY", "PRE_BOIL_GRAVITY", "ORIGINAL_GRAVITY"}
+_TEMPERATURE_SENSITIVE_METHODS = {"HYDROMETER", "REFRACTOMETER"}
+
+
+def _missing_context(message: str) -> DomainError:
+    return DomainError(message, 422, code="MEASUREMENT_CONTEXT_REQUIRED")
+
+
+def _observed_text(value: object | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _measurement_context(command: MeasurementCommand) -> dict:
     kind = command.measurement_type
-    defaults = dict(_PHASE1A_CONTEXT.get(kind, {}))
-    method = getattr(command, "method", None) or defaults.get("method")
+    method = _observed_text(getattr(command, "method", None))
     sample_temperature_c = getattr(command, "sample_temperature_c", None)
-    if sample_temperature_c is None:
-        sample_temperature_c = defaults.get("sample_temperature_c")
     compensated = getattr(command, "temperature_compensated", None)
-    if compensated is None:
-        compensated = defaults.get("temperature_compensated")
-    vessel = getattr(command, "vessel", None) or defaults.get("vessel")
-    if kind in {"PRE_BOIL_GRAVITY", "PRE_BOIL_VOLUME"}:
-        vessel = vessel or "KETTLE"
-    if kind in {"KNOCKOUT_VOLUME", "KNOCKOUT_TEMPERATURE"}:
-        vessel = vessel or "RECEIVING"
-    if kind in {
-        "MASH_IN_TEMPERATURE",
-        "MASH_REST_TEMPERATURE",
-        "MASH_PH",
-        "POST_MASH_GRAVITY",
-        "PRE_BOIL_GRAVITY",
-        "PRE_BOIL_VOLUME",
-        "ORIGINAL_GRAVITY",
-        "KNOCKOUT_VOLUME",
-        "KNOCKOUT_TEMPERATURE",
-        "PITCH_TEMPERATURE",
-        "MASH_GRAVITY",
-    } and not method:
-        raise DomainError(
-            "Measurement method is required", 422, code="MEASUREMENT_CONTEXT_REQUIRED"
-        )
+    vessel = _observed_text(getattr(command, "vessel", None))
+    raw_value = getattr(command, "raw_value", None)
+    if raw_value is None:
+        raw_value = command.value
+    raw_unit = _observed_text(getattr(command, "raw_unit", None)) or command.unit
+    conversion_model_id = _observed_text(getattr(command, "conversion_model_id", None))
+    allowed = _METHOD_ALLOWED.get(kind)
+    if allowed is not None:
+        if not method:
+            raise _missing_context("Measurement method is required")
+        if method not in allowed:
+            raise _missing_context(f"Invalid method {method} for {kind}")
     if kind == "MASH_PH" and (sample_temperature_c is None or compensated is None):
-        raise DomainError(
-            "Mash pH requires sample temperature and temperature-compensated flag",
-            422,
-            code="MEASUREMENT_CONTEXT_REQUIRED",
+        raise _missing_context(
+            "Mash pH requires sample temperature and temperature-compensated flag"
         )
-    if kind in {"POST_MASH_GRAVITY", "PRE_BOIL_GRAVITY", "ORIGINAL_GRAVITY", "MASH_GRAVITY"}:
-        if method in {"HYDROMETER", "REFRACTOMETER"} and sample_temperature_c is None:
-            raise DomainError(
-                "Temperature-sensitive gravity requires sample temperature",
-                422,
-                code="MEASUREMENT_CONTEXT_REQUIRED",
-            )
-    if kind in {"PRE_BOIL_GRAVITY", "PRE_BOIL_VOLUME", "KNOCKOUT_VOLUME"} and not vessel:
-        raise DomainError("Volume/gravity vessel context is required", 422)
+    if kind in _GRAVITY_TYPES:
+        if method in _TEMPERATURE_SENSITIVE_METHODS and sample_temperature_c is None:
+            raise _missing_context("Temperature-sensitive gravity requires sample temperature")
+    if kind in {"PRE_BOIL_GRAVITY", "PRE_BOIL_VOLUME"}:
+        if not vessel:
+            raise _missing_context("Volume/gravity vessel context is required")
+        if vessel != "KETTLE":
+            raise _missing_context(f"{kind} vessel must be KETTLE")
+    if kind in {"KNOCKOUT_VOLUME", "KNOCKOUT_TEMPERATURE"} and not vessel:
+        raise _missing_context("Knockout observations require receiving-vessel context")
+    if kind in {"PRE_BOIL_VOLUME", "KNOCKOUT_VOLUME"} and sample_temperature_c is None:
+        raise _missing_context("Volume measurements require liquid temperature")
+    converted = raw_unit != command.unit or raw_value != command.value
+    if converted and not conversion_model_id:
+        raise _missing_context("Converted measurements require conversion_model_id")
     return {
         "method": method,
         "sample_temperature_c": sample_temperature_c,
         "temperature_compensated": compensated,
         "vessel": vessel,
-        "raw_value": getattr(command, "raw_value", None) or command.value,
-        "raw_unit": getattr(command, "raw_unit", None) or command.unit,
-        "conversion_model_id": getattr(command, "conversion_model_id", None),
+        "raw_value": raw_value,
+        "raw_unit": raw_unit,
+        "conversion_model_id": conversion_model_id,
     }
 
 
@@ -144,6 +146,17 @@ def _aware(value: datetime) -> datetime:
 
 def _bump(session: BrewSession) -> None:
     session.revision = (session.revision or 1) + 1
+
+
+def _lock_revision(session: BrewSession, expected: int | None) -> None:
+    if expected is None:
+        raise DomainError("expected_revision is required", 422, code="REVISION_REQUIRED")
+    if session.revision != expected:
+        raise ConflictError(
+            "Stale session revision",
+            code="STALE_REVISION",
+            extra={"revision": session.revision},
+        )
 
 
 def start_session(
@@ -175,10 +188,9 @@ def start_session(
     return session
 
 
-def mark_ready(db: Session, user: User, session_id: uuid.UUID) -> BrewSession:
+def _enter_ready(db: Session, user: User, session: BrewSession) -> None:
     from brewing_api.application.phase3.checklists import satisfy_preflight_checklists
 
-    session = get_session(db, user, session_id)
     if session.status != "PLANNED":
         raise ConflictError("Only a planned brew session can enter READY")
     if not session.logical_plan_hash:
@@ -188,15 +200,63 @@ def mark_ready(db: Session, user: User, session_id: uuid.UUID) -> BrewSession:
     journal(db, session.id, "BREW_SESSION_READY", "Brew session preflight passed", actor_id=user.id)
     audit(db, user.id, "BREW_SESSION_READY", "BrewSession", session.id)
     _bump(session)
+
+
+def mark_ready(
+    db: Session,
+    user: User,
+    session_id: uuid.UUID,
+    expected_revision: int | None = None,
+    operation_id: str | None = None,
+) -> BrewSession:
+    session = get_session(db, user, session_id)
+    document = {"session_id": str(session_id), "expected_revision": expected_revision}
+    replay = replay_or_conflict(
+        db, user.id, "mark_ready", "BrewSession", session.id, operation_id, document
+    )
+    if replay and replay.result_resource_id:
+        found = db.get(BrewSession, replay.result_resource_id)
+        if found:
+            return found
+    _lock_revision(session, expected_revision)
+    _enter_ready(db, user, session)
+    store_success(
+        db,
+        user.id,
+        "mark_ready",
+        "BrewSession",
+        session.id,
+        operation_id,
+        document,
+        {"id": str(session.id), "status": session.status},
+        "BrewSession",
+        session.id,
+    )
     db.commit()
     db.refresh(session)
     return session
 
 
-def activate_session(db: Session, user: User, session_id: uuid.UUID) -> BrewSession:
+def activate_session(
+    db: Session,
+    user: User,
+    session_id: uuid.UUID,
+    expected_revision: int | None = None,
+    operation_id: str | None = None,
+) -> BrewSession:
     session = get_session(db, user, session_id)
+    document = {"session_id": str(session_id), "expected_revision": expected_revision}
+    replay = replay_or_conflict(
+        db, user.id, "activate_session", "BrewSession", session.id, operation_id, document
+    )
+    if replay and replay.result_resource_id:
+        found = db.get(BrewSession, replay.result_resource_id)
+        if found:
+            return found
+    _lock_revision(session, expected_revision)
     if session.status == "PLANNED":
-        session = mark_ready(db, user, session_id)
+        _enter_ready(db, user, session)
+        db.flush()
     if session.status != "READY":
         raise ConflictError("Only a ready brew session can be started")
     active = db.scalar(
@@ -213,13 +273,40 @@ def activate_session(db: Session, user: User, session_id: uuid.UUID) -> BrewSess
     _bump(session)
     journal(db, session.id, "BREW_SESSION_STARTED", "Brew session started", actor_id=user.id)
     audit(db, user.id, "BREW_SESSION_STARTED", "BrewSession", session.id)
+    store_success(
+        db,
+        user.id,
+        "activate_session",
+        "BrewSession",
+        session.id,
+        operation_id,
+        document,
+        {"id": str(session.id), "status": session.status},
+        "BrewSession",
+        session.id,
+    )
     db.commit()
     db.refresh(session)
     return session
 
 
-def complete_session(db: Session, user: User, session_id: uuid.UUID) -> BrewSession:
+def complete_session(
+    db: Session,
+    user: User,
+    session_id: uuid.UUID,
+    expected_revision: int | None = None,
+    operation_id: str | None = None,
+) -> BrewSession:
     session = get_session(db, user, session_id)
+    document = {"session_id": str(session_id), "expected_revision": expected_revision}
+    replay = replay_or_conflict(
+        db, user.id, "complete_session", "BrewSession", session.id, operation_id, document
+    )
+    if replay and replay.result_resource_id:
+        found = db.get(BrewSession, replay.result_resource_id)
+        if found:
+            return found
+    _lock_revision(session, expected_revision)
     if session.status != "ACTIVE":
         raise ConflictError("Only an active brew session can be completed")
     stages = list(
@@ -236,6 +323,19 @@ def complete_session(db: Session, user: User, session_id: uuid.UUID) -> BrewSess
     journal(db, session.id, "BREW_SESSION_COMPLETED", "Brew session completed", actor_id=user.id)
     audit(db, user.id, "BREW_SESSION_COMPLETED", "BrewSession", session.id)
     _bump(session)
+    store_success(
+        db,
+        user.id,
+        "complete_session",
+        "BrewSession",
+        session.id,
+        operation_id,
+        document,
+        {"id": str(session.id), "status": session.status},
+        "BrewSession",
+        session.id,
+        terminal=True,
+    )
     db.commit()
     db.refresh(session)
     return session
@@ -264,8 +364,23 @@ def active_session(db: Session, user: User) -> BrewSession | None:
     return session
 
 
-def start_mash(db: Session, user: User, session_id: uuid.UUID) -> BrewStage:
+def start_mash(
+    db: Session,
+    user: User,
+    session_id: uuid.UUID,
+    expected_revision: int | None = None,
+    operation_id: str | None = None,
+) -> BrewStage:
     session = get_session(db, user, session_id)
+    document = {"session_id": str(session_id), "expected_revision": expected_revision}
+    replay = replay_or_conflict(
+        db, user.id, "start_mash", "BrewSession", session.id, operation_id, document
+    )
+    if replay and replay.result_resource_id:
+        found = db.get(BrewStage, replay.result_resource_id)
+        if found:
+            return found
+    _lock_revision(session, expected_revision)
     if session.status != "ACTIVE":
         raise ConflictError("Brew session must be active before Mash starts")
     existing = first_mash_stage(db, session)
@@ -349,6 +464,18 @@ def start_mash(db: Session, user: User, session_id: uuid.UUID) -> BrewStage:
     )
     audit(db, user.id, "BREW_STAGE_STARTED", "BrewStage", stage.id)
     _bump(session)
+    store_success(
+        db,
+        user.id,
+        "start_mash",
+        "BrewSession",
+        session.id,
+        operation_id,
+        document,
+        {"id": str(stage.id), "status": stage.status},
+        "BrewStage",
+        stage.id,
+    )
     db.commit()
     db.refresh(stage)
     return stage
@@ -365,7 +492,48 @@ def _stage_for_user(db: Session, user: User, stage_id: uuid.UUID) -> tuple[BrewS
     return row
 
 
+def _same_template_id(left: object, right: object) -> bool:
+    if left is None or right is None:
+        return False
+    return str(left).lower().replace("-", "") == str(right).lower().replace("-", "")
+
+
+def apply_linked_reminder_requirements(
+    db: Session,
+    stage: BrewStage,
+    source: BrewStageRequirement,
+    *,
+    status: str,
+    source_type: str,
+    source_id: uuid.UUID,
+) -> None:
+    """Evidence on a measurement/addition also closes the linked REMINDER requirement."""
+    if source.requirement_class == "REMINDER":
+        return
+    source_key = (source.payload or {}).get("definition_key")
+    for item in db.scalars(
+        select(BrewStageRequirement).where(
+            BrewStageRequirement.stage_instance_id == stage.id,
+            BrewStageRequirement.requirement_class == "REMINDER",
+            BrewStageRequirement.status.in_(("PENDING", "DUE")),
+        )
+    ):
+        payload = item.payload or {}
+        linked = payload.get("linked_requirement_template_id")
+        key = str(payload.get("definition_key") or "")
+        matches_link = _same_template_id(linked, source.requirement_template_id)
+        matches_key = bool(source_key) and key == f"{source_key}_REMINDER"
+        if not (matches_link or matches_key):
+            continue
+        item.status = status
+        item.satisfaction_source_type = source_type
+        item.satisfaction_source_id = source_id
+
+
 def reconcile_reminders(db: Session, session: BrewSession) -> None:
+    # Timer expiry projection is authoritative from Postgres deadlines and must
+    # run for every session read, not only while an ACTIVE Mash stage exists.
+    _project_timers(db, session)
     stage = db.scalar(
         select(BrewStage).where(
             BrewStage.brew_session_id == session.id,
@@ -374,8 +542,8 @@ def reconcile_reminders(db: Session, session: BrewSession) -> None:
         )
     )
     if not stage or not stage.started_at:
+        db.commit()
         return
-    _project_timers(db, session)
     gravity = db.scalar(
         select(Notification).where(
             Notification.brew_stage_id == stage.id,
@@ -402,7 +570,7 @@ def reconcile_reminders(db: Session, session: BrewSession) -> None:
             stage.id,
             {"type": "MASH_GRAVITY"},
         )
-        db.commit()
+    db.commit()
 
 
 def _project_timers(db: Session, session: BrewSession) -> None:
@@ -514,8 +682,29 @@ def record_measurement(
     process_point = PROCESS_POINTS.get(command.measurement_type)
     if process_point is None:
         raise DomainError("Unsupported measurement type")
+    # Resolve requirement BEFORE insert so append-only measurements never need a
+    # post-flush UPDATE of requirement_id (PostgreSQL trigger forbids UPDATE).
+    matching = None
+    for item in db.scalars(
+        select(BrewStageRequirement).where(
+            BrewStageRequirement.stage_instance_id == stage.id,
+            BrewStageRequirement.requirement_class == "MEASUREMENT",
+        )
+    ):
+        key = (item.payload or {}).get("definition_key")
+        if key == command.measurement_type:
+            matching = item
+            break
+    requirement = matching or db.scalar(
+        select(BrewStageRequirement).where(
+            BrewStageRequirement.stage_instance_id == stage.id,
+            BrewStageRequirement.requirement_class == "MEASUREMENT",
+            BrewStageRequirement.status.in_(("PENDING", "DUE", "WAIVED")),
+        )
+    )
     measurement = Measurement(
         brew_stage_id=stage.id,
+        brew_session_id=session.id,
         measurement_type=command.measurement_type,
         value=command.value,
         unit=command.unit,
@@ -542,6 +731,7 @@ def record_measurement(
         available_at_original_stage_completion=not late,
         available_at_original_session_completion=session.status != "COMPLETED",
         operation_id=operation_id,
+        requirement_id=requirement.requirement_id if requirement else None,
     )
     db.add(measurement)
     db.flush()
@@ -583,25 +773,6 @@ def record_measurement(
                 actor_user_id=user.id,
             )
         )
-    requirement = db.scalar(
-        select(BrewStageRequirement).where(
-            BrewStageRequirement.stage_instance_id == stage.id,
-            BrewStageRequirement.requirement_class == "MEASUREMENT",
-            BrewStageRequirement.status.in_(("PENDING", "DUE", "WAIVED")),
-        )
-    )
-    matching = None
-    for item in db.scalars(
-        select(BrewStageRequirement).where(
-            BrewStageRequirement.stage_instance_id == stage.id,
-            BrewStageRequirement.requirement_class == "MEASUREMENT",
-        )
-    ):
-        key = (item.payload or {}).get("definition_key")
-        if key == command.measurement_type:
-            matching = item
-            break
-    requirement = matching or requirement
     if requirement:
         if requirement.status == "WAIVED":
             waiver = db.scalar(
@@ -617,7 +788,14 @@ def record_measurement(
         requirement.status = "SATISFIED"
         requirement.satisfaction_source_type = "Measurement"
         requirement.satisfaction_source_id = measurement.id
-        measurement.requirement_id = requirement.requirement_id
+        apply_linked_reminder_requirements(
+            db,
+            stage,
+            requirement,
+            status="SATISFIED",
+            source_type="Measurement",
+            source_id=measurement.id,
+        )
     journal(
         db,
         session.id,
@@ -684,8 +862,10 @@ def correct_measurement(
     if session.status in {"COMPLETED", "ABORTED"} and session.completed_at:
         if utc_now() > _aware(session.completed_at or session.aborted_at) + timedelta(days=30):
             raise ConflictError("Late entry window has closed", code="LATE_ENTRY_WINDOW_CLOSED")
+    context = _measurement_context(command)
     correction = Measurement(
         brew_stage_id=stage.id,
+        brew_session_id=session.id,
         measurement_type=original.measurement_type,
         value=command.value,
         unit=command.unit,
@@ -695,14 +875,21 @@ def correct_measurement(
         provenance="BREWER_CORRECTION",
         correction_of_id=original.id,
         process_point=original.process_point,
-        raw_value=command.value,
-        raw_unit=command.unit,
+        raw_value=context["raw_value"],
+        raw_unit=context["raw_unit"],
         canonical_value=command.value,
         canonical_unit=expected_unit,
         recorded_at=utc_now(),
-        entry_method="MANUAL",
+        entry_method=getattr(command, "entry_method", None) or "MANUAL",
+        method=context["method"],
+        sample_temperature_c=context["sample_temperature_c"],
+        temperature_compensated=context["temperature_compensated"],
+        vessel=context["vessel"],
+        conversion_model_id=context["conversion_model_id"],
         actor_user_id=user.id,
         definition_version="phase3-measurement-v1",
+        operation_id=getattr(command, "operation_id", None),
+        requirement_id=original.requirement_id,
     )
     db.add(correction)
     db.flush()
@@ -729,8 +916,23 @@ def correct_measurement(
     return correction
 
 
-def complete_mash(db: Session, user: User, stage_id: uuid.UUID) -> BrewStage:
+def complete_mash(
+    db: Session,
+    user: User,
+    stage_id: uuid.UUID,
+    expected_revision: int | None = None,
+    operation_id: str | None = None,
+) -> BrewStage:
     stage, session = _stage_for_user(db, user, stage_id)
+    document = {"stage_id": str(stage_id), "expected_revision": expected_revision}
+    replay = replay_or_conflict(
+        db, user.id, "complete_mash", "BrewStage", stage.id, operation_id, document
+    )
+    if replay and replay.result_resource_id:
+        found = db.get(BrewStage, replay.result_resource_id)
+        if found:
+            return found
+    _lock_revision(session, expected_revision)
     if stage.status != "ACTIVE":
         raise ConflictError("Mash is not active")
     kinds = set(
@@ -780,6 +982,18 @@ def complete_mash(db: Session, user: User, stage_id: uuid.UUID) -> BrewStage:
             db, session.id, "BREW_SESSION_COMPLETED", "Brew session completed", actor_id=user.id
         )
     _bump(session)
+    store_success(
+        db,
+        user.id,
+        "complete_mash",
+        "BrewStage",
+        stage.id,
+        operation_id,
+        document,
+        {"id": str(stage.id), "status": stage.status},
+        "BrewStage",
+        stage.id,
+    )
     db.commit()
     db.refresh(stage)
     return stage
@@ -795,12 +1009,30 @@ def timer_elapsed_seconds(timer: BrewTimer, now: datetime | None = None) -> int:
     )
 
 
+def session_journal_events(
+    db: Session, user: User, session_id: uuid.UUID
+) -> list[BrewJournalEvent]:
+    session = get_session(db, user, session_id)
+    return list(
+        db.scalars(
+            select(BrewJournalEvent)
+            .where(BrewJournalEvent.brew_session_id == session.id)
+            .order_by(BrewJournalEvent.created_at, BrewJournalEvent.id)
+        ).all()
+    )
+
+
+def render_journal_html(events: list[BrewJournalEvent]) -> str:
+    rows = "".join(f"<li>{item.created_at}: {item.message}</li>" for item in events)
+    return f"<html><body><h1>Brew journal</h1><ol>{rows}</ol></body></html>"
+
+
 def session_details(db: Session, user: User, session_id: uuid.UUID) -> dict:
     from brewing_api.application.phase3.media import reconcile_orphans
 
     session = get_session(db, user, session_id)
     reconcile_reminders(db, session)
-    reconcile_orphans()
+    reconcile_orphans(db)
     version = db.get(RecipeVersion, session.recipe_version_id)
     stages = list(
         db.scalars(
@@ -812,7 +1044,9 @@ def session_details(db: Session, user: User, session_id: uuid.UUID) -> dict:
     mash_candidates = [
         item for item in stages if item.name == "MASH" or item.canonical_stage_type == "MASH"
     ]
-    stage = next((item for item in mash_candidates if item.status != "PENDING"), None)
+    stage = next((item for item in mash_candidates if item.status in {"ACTIVE", "PAUSED"}), None)
+    if stage is None:
+        stage = next((item for item in mash_candidates if item.status != "PENDING"), None)
     timer = None
     measurements: list[Measurement] = []
     deviations: list[Deviation] = []

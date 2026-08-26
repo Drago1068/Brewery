@@ -39,7 +39,19 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: "Request failed" }));
-    throw new ApiError(body.detail ?? "Request failed", response.status);
+    const detail = body.detail;
+    let message = "Request failed";
+    if (typeof detail === "string") message = detail;
+    else if (Array.isArray(detail)) {
+      message = detail
+        .map((item: { msg?: string } | string) =>
+          typeof item === "string" ? item : item?.msg ?? JSON.stringify(item),
+        )
+        .join("; ");
+    } else if (detail && typeof detail === "object") {
+      message = detail.message || detail.msg || JSON.stringify(detail);
+    }
+    throw new ApiError(message, response.status);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;

@@ -7,7 +7,13 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from brewing_api.application.brew_day import _aware, _bump, get_session
+from brewing_api.application.brew_day import (
+    _aware,
+    _bump,
+    _lock_revision,
+    apply_linked_reminder_requirements,
+    get_session,
+)
 from brewing_api.application.errors import ConflictError, DomainError, NotFoundError
 from brewing_api.application.events import audit, journal
 from brewing_api.application.phase3.operations import replay_or_conflict, store_success
@@ -100,6 +106,7 @@ def execute_addition(
     note: str | None = None,
     executed_at=None,
     late_reason: str | None = None,
+    expected_revision: int | None = None,
 ) -> BrewAdditionEvent:
     requirement, stage, session = _requirement(db, user, session_id, requirement_id)
     document = {
@@ -107,6 +114,7 @@ def execute_addition(
         "quantity": str(quantity),
         "unit": unit,
         "note": note,
+        "expected_revision": expected_revision,
     }
     replay = replay_or_conflict(
         db,
@@ -121,6 +129,7 @@ def execute_addition(
         found = db.get(BrewAdditionEvent, replay.result_resource_id)
         if found:
             return found
+    _lock_revision(session, expected_revision)
     if requirement.requirement_class != "ADDITION":
         raise DomainError("Requirement is not an addition", 422)
     if session.status == "ABORTED":
@@ -182,6 +191,14 @@ def execute_addition(
     requirement.status = "SATISFIED"
     requirement.satisfaction_source_type = "AdditionEvent"
     requirement.satisfaction_source_id = event.id
+    apply_linked_reminder_requirements(
+        db,
+        stage,
+        requirement,
+        status="SATISFIED",
+        source_type="AdditionEvent",
+        source_id=event.id,
+    )
     _complete_addition_reminder(
         db, stage, requirement, "AdditionEvent", event.id, user.id, "COMPLETED"
     )
@@ -221,9 +238,14 @@ def skip_addition(
     requirement_id: uuid.UUID,
     reason: str,
     operation_id: str | None,
+    expected_revision: int | None = None,
 ) -> BrewAdditionEvent:
     requirement, stage, session = _requirement(db, user, session_id, requirement_id)
-    document = {"requirement_id": str(requirement_id), "reason": reason}
+    document = {
+        "requirement_id": str(requirement_id),
+        "reason": reason,
+        "expected_revision": expected_revision,
+    }
     replay = replay_or_conflict(
         db,
         user.id,
@@ -237,6 +259,7 @@ def skip_addition(
         found = db.get(BrewAdditionEvent, replay.result_resource_id)
         if found:
             return found
+    _lock_revision(session, expected_revision)
     if not reason or len(reason) < 10:
         raise DomainError("Skip requires a reason of at least 10 characters", 422)
     waiver = db.scalar(
@@ -263,6 +286,14 @@ def skip_addition(
     requirement.status = "WAIVED" if waiver else "SKIPPED"
     requirement.satisfaction_source_type = "Waiver" if waiver else "AdditionEvent"
     requirement.satisfaction_source_id = waiver.id if waiver else event.id
+    apply_linked_reminder_requirements(
+        db,
+        stage,
+        requirement,
+        status=requirement.status,
+        source_type=requirement.satisfaction_source_type,
+        source_id=requirement.satisfaction_source_id,
+    )
     _complete_addition_reminder(
         db,
         stage,

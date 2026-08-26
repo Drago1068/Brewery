@@ -1,59 +1,42 @@
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-async function csrfHeaders(page: Page, origin: string) {
-  const csrf =
-    (await page.evaluate(() => sessionStorage.getItem("csrf_token"))) ||
-    (await page.request
-      .get("/api/v1/auth/csrf", { headers: { Origin: origin } })
-      .then(async (r) => (r.ok() ? ((await r.json()).csrf_token as string) : "")));
-  if (!csrf) throw new Error("Missing CSRF token");
-  return { Origin: origin, "X-CSRF-Token": csrf, "Content-Type": "application/json" };
-}
+import {
+  addBrewNote,
+  assertBrewDayA11y,
+  assertRefreshRecovery,
+  clearActiveBrew,
+  clickAndWait,
+  completePendingChecklists,
+  csrfHeaders,
+  currentStageKey,
+  e2eOrigin,
+  executeVisibleAdditions,
+  postJson,
+  recordMeasurement,
+  recordVisibleStageMeasurements,
+  signIn,
+  startAuxTimer,
+  uploadCanonicalPhoto,
+  waitForBrewIdle,
+  waiveAllPending,
+} from "./helpers";
 
-async function clearActiveBrew(page: Page) {
-  const origin = process.env.BASE_URL ?? "http://web:3000";
-  const headers = await csrfHeaders(page, origin);
-  const active = await page.request.get("/api/v1/brew-sessions/active", { headers: { Origin: origin } });
-  if (!active.ok()) throw new Error(`Active brew lookup failed: ${active.status()}`);
-  const body = await active.json();
-  if (!body?.id) return;
-  const details = await page.request.get(`/api/v1/brew-sessions/${body.id}`, {
-    headers: { Origin: origin },
-  });
-  const revision = details.ok() ? ((await details.json()).revision as number) : 1;
-  const aborted = await page.request.post(`/api/v1/brew-sessions/${body.id}/abort`, {
-    data: {
-      reason: "Clearing prior E2E brew session before the next scenario",
-      expected_revision: revision,
-      operation_id: `e2e-abort-${Date.now()}`,
-    },
-    headers,
-  });
-  if (!aborted.ok()) {
-    throw new Error(`Abort failed: ${aborted.status()} ${await aborted.text()}`);
-  }
-  await page.reload();
-}
+const REQUIRED_STAGES = [
+  "PRE_BREW",
+  "WATER_PREPARATION",
+  "MASH_IN",
+  "MASH",
+  "PRE_BOIL",
+  "BOIL",
+  "WHIRLPOOL_FLAMEOUT",
+  "CHILL",
+  "TRANSFER",
+  "YEAST_PITCH",
+  "BREW_COMPLETE",
+] as const;
 
-async function signIn(page: Page) {
-  await page.goto("/login");
-  await page.getByLabel("Username").fill(process.env.E2E_USERNAME ?? "brewer");
-  await page.getByLabel("Password").fill(process.env.E2E_PASSWORD ?? "");
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Plan once. Brew with confidence." })).toBeVisible();
-}
-
-async function postJson(request: APIRequestContext, path: string, data: unknown, headers: Record<string, string>) {
-  const response = await request.post(path, { data, headers });
-  if (!response.ok()) {
-    throw new Error(`${path} failed: ${response.status()} ${await response.text()}`);
-  }
-  return response.json();
-}
-
-/** Recipe/setup via API; brew-day acceptance remains browser UI. */
 async function createPhase3Recipe(page: Page, stamp: number) {
-  const origin = process.env.BASE_URL ?? "http://web:3000";
+  const origin = e2eOrigin();
   const headers = await csrfHeaders(page, origin);
   const equipment = await postJson(
     page.request,
@@ -134,12 +117,7 @@ async function createPhase3Recipe(page: Page, stamp: number) {
       planned_mash_duration_minutes: 1,
       boil_duration_minutes: 60,
       ingredients: [
-        {
-          ingredient_id: malt.id,
-          amount: "5000",
-          unit: "g",
-          use_stage: "MASH",
-        },
+        { ingredient_id: malt.id, amount: "5000", unit: "g", use_stage: "MASH" },
         {
           ingredient_id: hop.id,
           amount: "20",
@@ -154,12 +132,7 @@ async function createPhase3Recipe(page: Page, stamp: number) {
           use_stage: "WHIRLPOOL",
           timing_minutes: 0,
         },
-        {
-          ingredient_id: yeast.id,
-          amount: "1",
-          unit: "each",
-          use_stage: "FERMENTATION",
-        },
+        { ingredient_id: yeast.id, amount: "1", unit: "each", use_stage: "FERMENTATION" },
       ],
       process_steps: [
         {
@@ -180,7 +153,7 @@ async function createPhase3Recipe(page: Page, stamp: number) {
 async function startBrewFromHome(page: Page, recipeName: string) {
   await page.goto("/");
   await clearActiveBrew(page);
-  const origin = process.env.BASE_URL ?? "http://web:3000";
+  const origin = e2eOrigin();
   const headers = await csrfHeaders(page, origin);
   const recipes = await page.request.get("/api/v1/recipes", { headers: { Origin: origin } });
   if (!recipes.ok()) throw new Error(`Recipe list failed: ${recipes.status()}`);
@@ -193,104 +166,111 @@ async function startBrewFromHome(page: Page, recipeName: string) {
     { recipe_version_id: match.version_id, operation_id: `e2e-create-${Date.now()}` },
     headers,
   );
+  const details = await page.request.get(`/api/v1/brew-sessions/${session.id}`, {
+    headers: { Origin: origin },
+  });
+  if (!details.ok()) {
+    throw new Error(`Session details failed: ${details.status()} ${await details.text()}`);
+  }
+  const revision = (await details.json()).revision as number;
   await postJson(
     page.request,
     `/api/v1/brew-sessions/${session.id}/start`,
-    { operation_id: `e2e-start-${Date.now()}` },
+    { operation_id: `e2e-start-${Date.now()}`, expected_revision: revision },
     headers,
   );
   await page.goto(`/brew/${session.id}`);
   await expect(page.getByRole("heading", { name: "Stage progress" })).toBeVisible({ timeout: 20_000 });
 }
 
-async function recordMeasurement(page: Page, type: string, value: string) {
-  await page.getByLabel("Measurement type").selectOption(type);
-  await page.getByLabel("Measurement value").fill(value);
-  await Promise.all([
-    page.waitForResponse(
-      (response) => response.url().includes("/measurements") && response.request().method() === "POST",
-    ),
-    page.getByRole("button", { name: "Record measurement" }).click(),
-  ]);
-}
-
-async function completePendingChecklists(page: Page) {
-  const buttons = page.getByRole("button", { name: "Mark complete" });
-  const count = await buttons.count();
-  for (let i = 0; i < count; i += 1) {
-    const button = buttons.nth(0);
-    if (await button.isVisible().catch(() => false)) {
-      await button.click();
-      await page.waitForTimeout(300);
-    }
-  }
-}
-
-async function waiveFirstPending(page: Page, reason: string) {
-  const waive = page.getByRole("button", { name: "Waive" }).first();
-  if (!(await waive.isVisible().catch(() => false))) return false;
-  await page.getByPlaceholder("Waiver reason (required)").fill(reason);
-  await waive.click();
-  return true;
-}
-
 async function startCurrentStage(page: Page) {
-  const startMash = page.getByRole("button", { name: "Start Mash" });
+  const startMash = page.getByRole("button", { name: "Start Mash", exact: true });
   if (await startMash.isVisible().catch(() => false)) {
-    await startMash.click();
-    await expect(page.getByTestId("mash-timer")).toBeVisible({ timeout: 15_000 });
+    await clickAndWait(page, startMash, "/mash/start");
+    await expect(page.getByTestId("mash-timer")).toBeVisible({ timeout: 20_000 });
     return "MASH";
   }
   const start = page.getByTestId("start-current-stage");
   if (await start.isVisible().catch(() => false)) {
     const label = await start.innerText();
-    await start.click();
-    await page.waitForTimeout(400);
+    await clickAndWait(page, start, "/start");
     return label.replace(/^Start\s+/, "");
-  }
-  const skip = page.getByRole("button", { name: /Skip / }).first();
-  if (await skip.isVisible().catch(() => false)) {
-    await skip.click();
-    await page.waitForTimeout(400);
-    return "SKIPPED";
   }
   return null;
 }
 
-async function completeCurrentStage(page: Page) {
-  const complete = page.getByRole("button", { name: /Complete / }).first();
-  if (await complete.isVisible().catch(() => false)) {
-    await complete.click();
-    await page.waitForTimeout(500);
-    return true;
-  }
-  const mashComplete = page.getByRole("button", { name: "Complete Mash" });
-  if (await mashComplete.isVisible().catch(() => false)) {
-    await mashComplete.click();
-    await page.waitForTimeout(500);
-    return true;
-  }
-  return false;
+async function skipOptionalIfBetweenStages(page: Page) {
+  const start = page.getByTestId("start-current-stage");
+  if (!(await start.isVisible().catch(() => false))) return false;
+  const label = await start.innerText();
+  if (!/MILLING|LAUTER_SPARGE/.test(label)) return false;
+  const skip = page.getByRole("button", { name: /^Skip / }).first();
+  if (!(await skip.isVisible().catch(() => false))) return false;
+  await clickAndWait(page, skip, "/skip");
+  return true;
 }
 
-const STAGE_MEASUREMENTS: Record<string, Array<[string, string]>> = {
-  MASH_IN: [["MASH_IN_TEMPERATURE", "67"]],
-  MASH: [
-    ["MASH_REST_TEMPERATURE", "67"],
-    ["MASH_PH", "5.30"],
-    ["POST_MASH_GRAVITY", "1.050"],
-  ],
-  PRE_BOIL: [
-    ["PRE_BOIL_GRAVITY", "1.052"],
-    ["PRE_BOIL_VOLUME", "20"],
-  ],
-  CHILL: [["KNOCKOUT_TEMPERATURE", "18"]],
-  TRANSFER: [["KNOCKOUT_VOLUME", "19"]],
-  YEAST_PITCH: [["PITCH_TEMPERATURE", "18"]],
-};
+async function completeCurrentStage(page: Page) {
+  const mashComplete = page.getByRole("button", { name: "Complete Mash", exact: true });
+  if (await mashComplete.isVisible().catch(() => false)) {
+    await clickAndWait(page, mashComplete, "/complete");
+    return "MASH";
+  }
+  const complete = page
+    .getByRole("button", { name: /^Complete / })
+    .filter({ hasNotText: "brew session" })
+    .first();
+  if (await complete.isVisible().catch(() => false)) {
+    const label = await complete.innerText();
+    await clickAndWait(page, complete, "/complete");
+    return label;
+  }
+  return null;
+}
+
+async function confirmVoiceMeasurement(page: Page) {
+  const confirm = page.getByRole("button", { name: "Confirm voice measurement" });
+  if (await confirm.isVisible().catch(() => false)) {
+    await clickAndWait(page, confirm, "/measurements");
+    return true;
+  }
+  await page.getByPlaceholder("five point two pH").fill("five point three zero pH");
+  await page.getByRole("button", { name: "Parse transcript" }).click();
+  await expect(page.getByRole("dialog", { name: "Voice measurement confirmation" })).toBeVisible();
+  await expect(page.getByText("Proposed MASH_PH:")).toBeVisible();
+  await clickAndWait(
+    page,
+    page.getByRole("button", { name: "Confirm voice measurement" }),
+    "/measurements",
+  );
+  return true;
+}
+
+async function exerciseRepeatMash(page: Page) {
+  const reason = page.getByLabel("Repeat/return reason");
+  await expect(reason).toBeVisible({ timeout: 10_000 });
+  await reason.fill("E2E canonical repeat after mash completion");
+  const repeat = page.getByRole("button", { name: "Repeat Mash" });
+  await expect(repeat).toBeVisible();
+  await clickAndWait(page, repeat, "/repeat");
+  await expect(
+    page
+      .getByRole("region", { name: "Stage progress" })
+      .getByRole("listitem")
+      .filter({ hasText: "MASH" })
+      .filter({ hasText: "#2" }),
+  ).toBeVisible({
+    timeout: 15_000,
+  });
+}
+
+async function recordYeastPitch(page: Page) {
+  await page.getByLabel("Yeast pitch note").fill("Pitched one pack US-05 after chill");
+  await clickAndWait(page, page.getByRole("button", { name: "Record yeast pitch" }), "/pitch-handoff");
+}
 
 test("canonical Phase 3 brew-day flow PRE_BREW through BREW_COMPLETE", async ({ page }) => {
-  test.setTimeout(300_000);
+  test.setTimeout(600_000);
   const stamp = Date.now();
   await signIn(page);
   const recipe = await createPhase3Recipe(page, stamp);
@@ -302,115 +282,132 @@ test("canonical Phase 3 brew-day flow PRE_BREW through BREW_COMPLETE", async ({ 
   await expect(page.getByRole("listitem").filter({ hasText: "WHIRLPOOL_FLAMEOUT" }).first()).toBeVisible();
 
   const visited = new Set<string>();
-  for (let step = 0; step < 40; step += 1) {
-    const status = await page.locator(".status").first().innerText();
+  let mashExtrasDone = false;
+  let mashRepeated = false;
+  let waived = false;
+  let recordedLate = false;
+  let recordedCorrection = false;
+  let confirmedVoice = false;
+  let uploadedMedia = false;
+
+  for (let step = 0; step < 60; step += 1) {
+    const statusLocator = page
+      .getByRole("status", { name: "Session status" })
+      .or(page.locator(".brew-topbar .status"))
+      .first();
+    await expect(statusLocator).toBeVisible({ timeout: 20_000 });
+    const status = (await statusLocator.innerText()).trim();
     if (status === "COMPLETED") break;
 
-    // Optional stages may be skipped before starting.
-    const skipOptional = page.getByRole("button", { name: /Skip (MILLING|LAUTER_SPARGE)/ });
-    if (await skipOptional.isVisible().catch(() => false)) {
-      await skipOptional.click();
-      await page.waitForTimeout(300);
-      continue;
-    }
+    if (await skipOptionalIfBetweenStages(page)) continue;
 
     const started = await startCurrentStage(page);
-    if (!started) {
-      // Maybe already mid-stage after refresh recovery path.
-      const heading = await page.locator("h1").first().innerText();
-      visited.add(heading.replaceAll(" ", "_").toUpperCase());
-    } else if (started !== "SKIPPED") {
-      visited.add(started.replaceAll(" ", "_").toUpperCase());
-    }
+    const stageKey = (started ?? (await currentStageKey(page))).replaceAll(" ", "_").toUpperCase();
+    if (stageKey && stageKey !== "SKIPPED") visited.add(stageKey);
 
     await completePendingChecklists(page);
-
-    // Execute scheduled additions when present.
-    const execute = page.getByRole("button", { name: "Record executed" }).first();
-    if (await execute.isVisible().catch(() => false)) {
-      await execute.click();
-      await page.waitForTimeout(300);
+    if (stageKey === "MASH" && !mashExtrasDone) {
+      confirmedVoice = await confirmVoiceMeasurement(page);
     }
-    const late = page.getByRole("button", { name: "Record late" }).first();
-    if (await late.isVisible().catch(() => false) && step === 8) {
-      await late.click();
-      await page.waitForTimeout(300);
-    }
-    const correct = page.getByRole("button", { name: "Correct addition" }).first();
-    if (await correct.isVisible().catch(() => false) && step === 9) {
-      await correct.click();
-      await page.waitForTimeout(300);
+    await recordVisibleStageMeasurements(page, stageKey);
+    if (await waiveAllPending(page, "Observed condition satisfies operational intent")) {
+      waived = true;
     }
 
-    const stageKey = [...visited].at(-1) ?? "";
-    const measurements = STAGE_MEASUREMENTS[stageKey] ?? [];
-    for (const [type, value] of measurements) {
-      await recordMeasurement(page, type, value);
-    }
+    const addition = await executeVisibleAdditions(page, {
+      late: !recordedLate,
+      correct: !recordedCorrection,
+    });
+    if (addition.late) recordedLate = true;
+    if (addition.corrected) recordedCorrection = true;
 
-    // Prefer recording; waive remaining waivable blockers once if needed.
-    if (stageKey === "WATER_PREPARATION" || stageKey === "MILLING") {
-      await waiveFirstPending(page, "Observed condition satisfies operational intent");
-    }
-
-    if (stageKey === "MASH") {
-      await page.getByLabel("Auxiliary timer name").fill("Iodine check");
-      await page.getByLabel("Duration (seconds)").fill("90");
-      await page.getByRole("button", { name: "Start auxiliary timer" }).click();
-      await page.getByLabel("Auxiliary timer name").fill("Hop stand prep");
-      await page.getByRole("button", { name: "Start auxiliary timer" }).click();
-      await expect(page.getByRole("list", { name: "Active timers" }).getByRole("listitem")).toHaveCount(3, {
-        timeout: 15_000,
+    if (stageKey === "MASH" && !mashExtrasDone) {
+      mashExtrasDone = true;
+      await assertBrewDayA11y(page);
+      await startAuxTimer(page, "Iodine check", 90);
+      await startAuxTimer(page, "Hop stand prep", 90);
+      await expect(page.getByRole("list", { name: "Active timers" }).getByRole("listitem")).toHaveCount(
+        3,
+        { timeout: 15_000 },
+      );
+      const due = page
+        .getByRole("region", { name: "Required actions" })
+        .getByRole("button", { name: "Acknowledge" })
+        .first();
+      if (await due.isVisible().catch(() => false)) {
+        await due.click();
+        await waitForBrewIdle(page);
+      }
+      const extrasAdd = await executeVisibleAdditions(page, {
+        late: !recordedLate,
+        correct: !recordedCorrection,
       });
-      const due = page.getByRole("button", { name: "Acknowledge" }).first();
-      if (await due.isVisible().catch(() => false)) await due.click();
-      await page.getByLabel("Brew-day note").fill("Full-stage canonical note");
-      await page.getByRole("button", { name: "Add note" }).click();
-      await page.getByPlaceholder("five point two pH").fill("five point two pH");
-      await page.getByRole("button", { name: "Parse transcript" }).click();
-      await expect(page.getByText("Proposed MASH_PH:")).toBeVisible();
-      await page.getByRole("button", { name: "Reject proposal" }).click();
-      await page.reload();
+      if (extrasAdd.late) recordedLate = true;
+      if (extrasAdd.corrected) recordedCorrection = true;
+      await addBrewNote(page, "Full-stage canonical note");
+      await uploadCanonicalPhoto(page);
+      uploadedMedia = true;
+      await assertRefreshRecovery(page);
       await expect(page.getByText("Full-stage canonical note")).toBeVisible();
+      await expect(page.getByText("E2E canonical attachment")).toBeVisible();
       await expect(page.getByTestId("mash-timer")).toBeVisible();
     }
 
     if (stageKey === "YEAST_PITCH") {
-      await page.getByLabel("Yeast pitch note").fill("Pitched one pack US-05 after chill");
-      await page.getByRole("button", { name: "Record yeast pitch" }).click();
-      await page.waitForTimeout(400);
+      await recordYeastPitch(page);
     }
 
+    await executeVisibleAdditions(page, {
+      late: !recordedLate,
+      correct: !recordedCorrection,
+    }).then((again) => {
+      if (again.late) recordedLate = true;
+      if (again.corrected) recordedCorrection = true;
+    });
+    if (await waiveAllPending(page, "Observed condition satisfies operational intent")) {
+      waived = true;
+    }
+    await completePendingChecklists(page);
+
     const completed = await completeCurrentStage(page);
-    if (!completed && stageKey === "BREW_COMPLETE") {
-      await page.getByRole("button", { name: "Complete brew session" }).click();
-      await expect(page.getByText("COMPLETED", { exact: true })).toBeVisible({ timeout: 20_000 });
+    if (completed === "MASH" && !mashRepeated) {
+      await exerciseRepeatMash(page);
+      mashRepeated = true;
+      continue;
+    }
+
+    if (stageKey === "BREW_COMPLETE") {
+      const completeSession = page.getByRole("button", { name: "Complete brew session" });
+      await clickAndWait(page, completeSession, "/complete");
+      await expect(page.getByRole("status", { name: "Session status" })).toHaveText("COMPLETED", {
+        timeout: 20_000,
+      });
       break;
     }
   }
 
-  // Controlled return/repeat after mash was already completed earlier in the loop —
-  // exercise once if Mash completed and session still active mid-flow is too late.
-  // Prove journal covers the canonical stage vocabulary.
-  await expect(page.getByRole("heading", { name: "Brew journal" })).toBeVisible();
-  for (const stage of [
-    "PRE_BREW",
-    "WATER_PREPARATION",
-    "MASH_IN",
-    "MASH",
-    "PRE_BOIL",
-    "BOIL",
-    "WHIRLPOOL_FLAMEOUT",
-    "CHILL",
-    "TRANSFER",
-    "YEAST_PITCH",
-    "BREW_COMPLETE",
-  ]) {
-    await expect(page.getByRole("list", { name: undefined }).locator("li").filter({ hasText: stage }).first()).toBeVisible({
-      timeout: 5_000,
-    }).catch(async () => {
-      await expect(page.getByText(stage).first()).toBeVisible();
-    });
+  if (!mashExtrasDone) throw new Error("Mash extras (timers/note/media/voice) never ran");
+  if (!mashRepeated) throw new Error("Repeat Mash was never exercised after mash completion");
+  if (!confirmedVoice) throw new Error("Voice confirmation never committed a measurement");
+  if (!uploadedMedia) throw new Error("Canonical media upload never completed");
+  if (!recordedLate) throw new Error("Late addition was never recorded");
+  if (!recordedCorrection) throw new Error("Addition correction was never recorded");
+  if (!waived) throw new Error("Waiver control was never used");
+  for (const stage of REQUIRED_STAGES) {
+    expect(visited.has(stage) || (await page.getByText(stage).first().isVisible())).toBeTruthy();
   }
-  await expect(page.locator(".status").first()).toHaveText(/COMPLETED|ACTIVE/);
+
+  await expect(page.getByRole("heading", { name: "Brew journal" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Mash performance" })).toBeVisible();
+  await expect(page.locator(".performance")).toContainText("Mash pH");
+  await expect(page.locator(".performance")).toContainText("Mash gravity");
+  await expect(page.getByText("Full-stage canonical note")).toBeVisible();
+  await expect(page.getByText("E2E canonical attachment")).toBeVisible();
+  await expect(page.getByText(/Pitched one pack US-05|Yeast pitch recorded/)).toBeVisible();
+  await expect(page.getByText("Mash completed").first()).toBeVisible();
+  await expect(page.getByText(/Addition executed|Late addition/i).first()).toBeVisible();
+  for (const stage of REQUIRED_STAGES) {
+    await expect(page.getByText(stage).first()).toBeVisible();
+  }
+  await expect(page.getByRole("status", { name: "Session status" })).toHaveText("COMPLETED");
 });

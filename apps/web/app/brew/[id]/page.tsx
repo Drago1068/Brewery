@@ -1,32 +1,21 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import {
   BrewDetails,
+  MEASUREMENT_CONTEXT,
   VoiceProposal,
   formatDuration,
   latestMeasurement,
+  measurementCommand,
   newOperationId,
   parseVoiceProposal,
+  sessionCommand,
   variance,
 } from "@/lib/brew";
-
-const MEASUREMENT_DEFAULTS: Record<string, { unit: string; method?: string; vessel?: string }> = {
-  MASH_PH: { unit: "pH", method: "METER" },
-  MASH_GRAVITY: { unit: "SG", method: "HYDROMETER" },
-  POST_MASH_GRAVITY: { unit: "SG", method: "HYDROMETER" },
-  PRE_BOIL_GRAVITY: { unit: "SG", method: "HYDROMETER", vessel: "KETTLE" },
-  PRE_BOIL_VOLUME: { unit: "L", method: "SIGHT_GLASS", vessel: "KETTLE" },
-  ORIGINAL_GRAVITY: { unit: "SG", method: "HYDROMETER" },
-  MASH_IN_TEMPERATURE: { unit: "degC", method: "PROBE" },
-  MASH_REST_TEMPERATURE: { unit: "degC", method: "PROBE" },
-  KNOCKOUT_TEMPERATURE: { unit: "degC", method: "PROBE", vessel: "RECEIVING" },
-  KNOCKOUT_VOLUME: { unit: "L", method: "SIGHT_GLASS", vessel: "RECEIVING" },
-  PITCH_TEMPERATURE: { unit: "degC", method: "PROBE" },
-};
 
 export default function BrewDayPage() {
   const { id } = useParams<{ id: string }>();
@@ -43,10 +32,16 @@ export default function BrewDayPage() {
   const [auxSeconds, setAuxSeconds] = useState(300);
   const [measType, setMeasType] = useState("MASH_PH");
   const [measValue, setMeasValue] = useState("");
+  const [measMethod, setMeasMethod] = useState(MEASUREMENT_CONTEXT.MASH_PH.method);
+  const [sampleTemp, setSampleTemp] = useState("20.00");
+  const [phSampleTemp, setPhSampleTemp] = useState("65.00");
+  const [compensated, setCompensated] = useState(true);
+  const [measVessel, setMeasVessel] = useState(MEASUREMENT_CONTEXT.MASH_PH.vessel ?? "");
   const [waiverReason, setWaiverReason] = useState("");
   const [pitchNote, setPitchNote] = useState("");
   const [repeatReason, setRepeatReason] = useState("Runtime repeat requested by brewer");
   const [abortReason, setAbortReason] = useState("");
+  const errorRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -70,6 +65,10 @@ export default function BrewDayPage() {
     };
   }, [refresh]);
 
+  useEffect(() => {
+    if (error) errorRef.current?.focus();
+  }, [error]);
+
   const timerSeconds = useMemo(() => {
     const timer = brew?.mash?.timer;
     if (!timer) return 0;
@@ -78,17 +77,16 @@ export default function BrewDayPage() {
     return timer.elapsed_seconds + Math.max(0, Math.floor((tick - receivedAt) / 1000));
   }, [brew, receivedAt, tick]);
 
-  async function action(path: string, body?: object) {
+  async function action(path: string, body?: Record<string, unknown>) {
     setBusy(true);
     setError("");
     try {
+      const latest = await apiFetch<BrewDetails>(`/brew-sessions/${id}`);
+      setBrew(latest);
+      setReceivedAt(Date.now());
       await apiFetch(path, {
         method: "POST",
-        body: JSON.stringify({
-          operation_id: newOperationId(),
-          expected_revision: brew?.revision,
-          ...body,
-        }),
+        body: JSON.stringify(sessionCommand(latest.revision, body)),
       });
       await refresh();
     } catch (reason) {
@@ -122,25 +120,38 @@ export default function BrewDayPage() {
       setError("Measurement value is required.");
       return;
     }
-    const defaults = MEASUREMENT_DEFAULTS[type] ?? { unit: "pH", method: "OTHER" };
+    const context = MEASUREMENT_CONTEXT[type] ?? MEASUREMENT_CONTEXT.MASH_PH;
+    const formMethod =
+      (form?.get("method") as string | null) ||
+      (type === measType ? measMethod : "") ||
+      context.method;
+    const formTemp =
+      (form?.get("sample_temperature_c") as string | null) ||
+      (type === "MASH_PH" ? phSampleTemp : sampleTemp);
+    const formVessel =
+      (form?.get("vessel") as string | null) ||
+      (type === measType ? measVessel : "") ||
+      context.vessel;
+    const compensatedField = formEl.querySelector('input[name="temperature_compensated"]');
+    const formCompensated = compensatedField
+      ? form?.get("temperature_compensated") != null
+      : compensated;
     setBusy(true);
     setError("");
     try {
       await apiFetch(`/brew-sessions/stages/${stageId}/measurements`, {
         method: "POST",
-        body: JSON.stringify({
-          measurement_type: type,
-          value,
-          unit: defaults.unit,
-          note: form?.get("note") || null,
-          instrument: form?.get("instrument") || null,
-          entry_method: entryMethod,
-          operation_id: newOperationId(),
-          method: defaults.method,
-          sample_temperature_c: type.includes("PH") || type.includes("GRAVITY") ? "20.00" : undefined,
-          temperature_compensated: type === "MASH_PH" ? true : undefined,
-          vessel: defaults.vessel,
-        }),
+        body: JSON.stringify(
+          measurementCommand(type, value, {
+            method: formMethod,
+            sample_temperature_c: context.needsSampleTemperature ? formTemp : undefined,
+            temperature_compensated: context.needsCompensated ? formCompensated : undefined,
+            vessel: context.needsVessel ? formVessel : undefined,
+            note: (form?.get("note") as string | null) || null,
+            instrument: (form?.get("instrument") as string | null) || null,
+            entry_method: entryMethod,
+          }),
+        ),
       });
       setVoiceDraft(null);
       setVoiceText("");
@@ -219,9 +230,25 @@ export default function BrewDayPage() {
             {brew.plan_kind ? ` · plan ${brew.plan_kind}` : ""}
           </p>
         </div>
-        <span className={`status ${brew.status.toLowerCase()}`}>{brew.status}</span>
+        <span
+          className={`status ${brew.status.toLowerCase()}`}
+          role="status"
+          aria-label="Session status"
+        >
+          {brew.status}
+        </span>
       </section>
-      {error && <div className="alert error" role="alert">{error}</div>}
+      {error && (
+        <div
+          className="alert error"
+          role="alert"
+          id="brew-session-error"
+          ref={errorRef}
+          tabIndex={-1}
+        >
+          {error}
+        </div>
+      )}
 
       <section className="card" aria-label="Stage progress">
         <h2>Stage progress</h2>
@@ -312,7 +339,7 @@ export default function BrewDayPage() {
           </div>
 
           {brew.mash?.timer && (
-            <section className="timer-panel" aria-live="polite" aria-label="Mash timer status">
+            <section className="timer-panel" aria-label="Mash timer status">
               <span>Mash timer</span>
               <strong data-testid="mash-timer" role="timer" aria-label={`Elapsed ${formatDuration(timerSeconds)}`}>
                 {formatDuration(timerSeconds)}
@@ -324,7 +351,11 @@ export default function BrewDayPage() {
                   }}
                 />
               </div>
-              <small>Target {brew.planned.mash_duration_minutes} minutes · Restores after refresh</small>
+              <small>
+                <span aria-live="polite">{brew.mash.timer.status}</span>
+                {" · "}
+                Target {brew.planned.mash_duration_minutes} minutes · Restores after refresh
+              </small>
             </section>
           )}
 
@@ -386,7 +417,7 @@ export default function BrewDayPage() {
           </section>
 
           {due.length > 0 && (
-            <section className="prompts" aria-label="Required actions">
+            <section className="prompts" aria-label="Required actions" aria-live="polite">
               {due.map((item) => (
                 <div className="prompt" key={item.id}>
                   <span className="prompt-icon">!</span>
@@ -411,10 +442,32 @@ export default function BrewDayPage() {
           {brew.mash?.status === "ACTIVE" && (
             <div className="measurement-grid">
               <MeasurementCard title="Mash pH" target={`${brew.planned.mash_ph} ± ${brew.planned.mash_ph_tolerance}`} done={pH}>
-                <form onSubmit={(event) => record(event, "MASH_PH")} className="measurement-form">
+                <form
+                  onSubmit={(event) => record(event, "MASH_PH")}
+                  className="measurement-form"
+                  aria-describedby={error ? "brew-session-error" : undefined}
+                >
                   <label>
                     pH reading
                     <input name="value" type="number" min="0" max="14" step="0.01" required inputMode="decimal" />
+                  </label>
+                  <label>
+                    Method
+                    <select name="method" defaultValue="METER" aria-label="pH method">
+                      {MEASUREMENT_CONTEXT.MASH_PH.methods.map((method) => (
+                        <option key={method} value={method}>
+                          {method}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Sample temperature (°C)
+                    <input name="sample_temperature_c" type="number" step="0.01" defaultValue="65.00" required />
+                  </label>
+                  <label>
+                    Temperature compensated
+                    <input name="temperature_compensated" type="checkbox" defaultChecked />
                   </label>
                   <label>
                     Instrument
@@ -439,10 +492,25 @@ export default function BrewDayPage() {
                     record(event, brew.plan_kind?.toLowerCase().includes("legacy") ? "MASH_GRAVITY" : "POST_MASH_GRAVITY")
                   }
                   className="measurement-form"
+                  aria-describedby={error ? "brew-session-error" : undefined}
                 >
                   <label>
                     Gravity reading
                     <input name="value" type="number" min="0.9" max="1.3" step="0.001" required inputMode="decimal" />
+                  </label>
+                  <label>
+                    Method
+                    <select name="method" defaultValue="HYDROMETER" aria-label="Gravity method">
+                      {MEASUREMENT_CONTEXT.POST_MASH_GRAVITY.methods.map((method) => (
+                        <option key={method} value={method}>
+                          {method}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Sample temperature (°C)
+                    <input name="sample_temperature_c" type="number" step="0.01" defaultValue="20.00" required />
                   </label>
                   <label>
                     Instrument
@@ -465,6 +533,7 @@ export default function BrewDayPage() {
               <h2>Measurements</h2>
               <form
                 className="measurement-form"
+                aria-describedby={error ? "brew-session-error" : undefined}
                 onSubmit={(event) => {
                   event.preventDefault();
                   record(event, measType);
@@ -475,9 +544,15 @@ export default function BrewDayPage() {
                   <select
                     aria-label="Measurement type"
                     value={measType}
-                    onChange={(event) => setMeasType(event.target.value)}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      setMeasType(next);
+                      const context = MEASUREMENT_CONTEXT[next];
+                      setMeasMethod(context.method);
+                      setMeasVessel(context.vessel ?? "");
+                    }}
                   >
-                    {Object.keys(MEASUREMENT_DEFAULTS).map((type) => (
+                    {Object.keys(MEASUREMENT_CONTEXT).map((type) => (
                       <option key={type} value={type}>
                         {type}
                       </option>
@@ -487,12 +562,67 @@ export default function BrewDayPage() {
                 <label>
                   Value
                   <input
+                    name="value"
                     aria-label="Measurement value"
                     value={measValue}
                     onChange={(event) => setMeasValue(event.target.value)}
                     required
                   />
                 </label>
+                <label>
+                  Method
+                  <select
+                    name="method"
+                    aria-label="Measurement method"
+                    value={measMethod}
+                    onChange={(event) => setMeasMethod(event.target.value)}
+                  >
+                    {(MEASUREMENT_CONTEXT[measType]?.methods ?? []).map((method) => (
+                      <option key={method} value={method}>
+                        {method}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {MEASUREMENT_CONTEXT[measType]?.needsSampleTemperature && (
+                  <label>
+                    Sample temperature (°C)
+                    <input
+                      name="sample_temperature_c"
+                      type="number"
+                      step="0.01"
+                      value={measType === "MASH_PH" ? phSampleTemp : sampleTemp}
+                      onChange={(event) =>
+                        measType === "MASH_PH"
+                          ? setPhSampleTemp(event.target.value)
+                          : setSampleTemp(event.target.value)
+                      }
+                      required
+                    />
+                  </label>
+                )}
+                {MEASUREMENT_CONTEXT[measType]?.needsCompensated && (
+                  <label>
+                    Temperature compensated
+                    <input
+                      name="temperature_compensated"
+                      type="checkbox"
+                      checked={compensated}
+                      onChange={(event) => setCompensated(event.target.checked)}
+                    />
+                  </label>
+                )}
+                {MEASUREMENT_CONTEXT[measType]?.needsVessel && (
+                  <label>
+                    Vessel
+                    <input
+                      name="vessel"
+                      value={measVessel}
+                      onChange={(event) => setMeasVessel(event.target.value)}
+                      required
+                    />
+                  </label>
+                )}
                 <button className="primary" disabled={busy}>
                   Record measurement
                 </button>
@@ -519,6 +649,9 @@ export default function BrewDayPage() {
               {voiceDraft && (
                 <form
                   className="voice-confirm"
+                  role="dialog"
+                  aria-modal="false"
+                  aria-label="Voice measurement confirmation"
                   onSubmit={(event) =>
                     record(
                       event,
@@ -586,7 +719,7 @@ export default function BrewDayPage() {
                             action(`/brew-sessions/${id}/requirements/${item.id}/additions`, {
                               quantity: item.planned_amount,
                               unit: item.planned_unit,
-                              execution_status: "LATE",
+                              late_reason: "Late addition recorded after the governing stage closed",
                             })
                           }
                         >
@@ -645,12 +778,23 @@ export default function BrewDayPage() {
                   </li>
                 ))}
               {(brew.requirements ?? [])
-                .filter((item) => item.required && item.waivable && item.status === "PENDING")
+                .filter((item) => {
+                  const activeId = brew.current_stage?.id ?? brew.mash?.id;
+                  const onActiveStage =
+                    !item.stage_instance_id || !activeId || item.stage_instance_id === activeId;
+                  return (
+                    Boolean(item.required) &&
+                    Boolean(item.waivable) &&
+                    (item.status === "PENDING" || item.status === "DUE") &&
+                    onActiveStage
+                  );
+                })
                 .map((item) => (
                   <li key={item.id}>
                     <strong>{item.definition_key ?? item.class}</strong>
                     <input
                       placeholder="Waiver reason (required)"
+                      aria-label="Waiver reason (required)"
                       value={waiverReason}
                       onChange={(event) => setWaiverReason(event.target.value)}
                     />

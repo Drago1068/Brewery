@@ -23,7 +23,7 @@ preview_router = APIRouter(tags=["brew-day"])
 
 class SessionCommand(BaseModel):
     operation_id: str = Field(min_length=1, max_length=64)
-    expected_revision: int | None = None
+    expected_revision: int = Field(ge=0)
     reason: str | None = None
     name: str | None = None
     extra_seconds: int | None = None
@@ -37,6 +37,7 @@ class SessionCommand(BaseModel):
     planned_duration_seconds: int | None = None
     transcript: str | None = None
     caption: str | None = None
+    late_reason: str | None = None
 
 
 def _decimal(value: object | None) -> str | None:
@@ -252,29 +253,41 @@ def create_session(command: BrewSessionCreate, db: Db, user: CurrentUser) -> IdS
 
 @router.post("/{session_id}/start", response_model=IdStatusResponse)
 def start_session(
-    session_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand | None = None
+    session_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand
 ) -> IdStatusResponse:
-    session = service.activate_session(db, user, session_id)
+    session = service.activate_session(
+        db, user, session_id, command.expected_revision, command.operation_id
+    )
     return IdStatusResponse(id=session.id, status=session.status)
 
 
 @router.post("/{session_id}/ready", response_model=IdStatusResponse)
-def ready_session(session_id: uuid.UUID, db: Db, user: CurrentUser) -> IdStatusResponse:
-    session = service.mark_ready(db, user, session_id)
+def ready_session(
+    session_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand
+) -> IdStatusResponse:
+    session = service.mark_ready(
+        db, user, session_id, command.expected_revision, command.operation_id
+    )
     return IdStatusResponse(id=session.id, status=session.status)
 
 
 @router.post("/{session_id}/complete", response_model=IdStatusResponse)
-def complete_session(session_id: uuid.UUID, db: Db, user: CurrentUser) -> IdStatusResponse:
-    session = service.complete_session(db, user, session_id)
+def complete_session(
+    session_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand
+) -> IdStatusResponse:
+    session = service.complete_session(
+        db, user, session_id, command.expected_revision, command.operation_id
+    )
     return IdStatusResponse(id=session.id, status=session.status)
 
 
 @router.post("/{session_id}/mash/start", response_model=IdStatusResponse)
 def start_mash(
-    session_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand | None = None
+    session_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand
 ) -> IdStatusResponse:
-    stage = service.start_mash(db, user, session_id)
+    stage = service.start_mash(
+        db, user, session_id, command.expected_revision, command.operation_id
+    )
     return IdStatusResponse(id=stage.id, status=stage.status)
 
 
@@ -315,9 +328,11 @@ def correction(
 
 @router.post("/stages/{stage_id}/complete", response_model=IdStatusResponse)
 def complete(
-    stage_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand | None = None
+    stage_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand
 ) -> IdStatusResponse:
-    stage = phase3.complete_stage(db, user, stage_id)
+    stage = phase3.complete_stage(
+        db, user, stage_id, command.expected_revision, command.operation_id
+    )
     return IdStatusResponse(id=stage.id, status=stage.status)
 
 
@@ -349,24 +364,24 @@ def plan_preview(version_id: uuid.UUID, db: Db, user: CurrentUser) -> dict:
 
 @router.post("/{session_id}/pause", response_model=IdStatusResponse)
 def pause(
-    session_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand | None = None
+    session_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand
 ) -> IdStatusResponse:
     session = phase3.pause_session(
         db,
         user,
         session_id,
-        command.expected_revision if command else None,
-        command.operation_id if command else None,
+        command.expected_revision,
+        command.operation_id,
     )
     return IdStatusResponse(id=session.id, status=session.status)
 
 
 @router.post("/{session_id}/resume", response_model=IdStatusResponse)
 def resume(
-    session_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand | None = None
+    session_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand
 ) -> IdStatusResponse:
     session = phase3.resume_session(
-        db, user, session_id, (command.expected_revision if command else None)
+        db, user, session_id, command.expected_revision, command.operation_id
     )
     return IdStatusResponse(id=session.id, status=session.status)
 
@@ -376,23 +391,35 @@ def abort(
     session_id: uuid.UUID, command: SessionCommand, db: Db, user: CurrentUser
 ) -> IdStatusResponse:
     session = phase3.abort_session(
-        db, user, session_id, command.reason or "", command.expected_revision
+        db,
+        user,
+        session_id,
+        command.reason or "",
+        command.expected_revision,
+        command.operation_id,
     )
     return IdStatusResponse(id=session.id, status=session.status)
 
 
 @router.post("/{session_id}/notes", status_code=status.HTTP_201_CREATED)
 def add_note(session_id: uuid.UUID, command: SessionCommand, db: Db, user: CurrentUser) -> dict:
-    note = phase3.create_note(db, user, session_id, command.body or "")
+    note = phase3.create_note(
+        db,
+        user,
+        session_id,
+        command.body or "",
+        expected_revision=command.expected_revision,
+        operation_id=command.operation_id,
+    )
     return {"id": str(note.id)}
 
 
 @router.post("/stages/{stage_instance_id}/start", response_model=IdStatusResponse)
 def start_stage(
-    stage_instance_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand | None = None
+    stage_instance_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand
 ) -> IdStatusResponse:
     stage = phase3.start_stage(
-        db, user, stage_instance_id, command.expected_revision if command else None
+        db, user, stage_instance_id, command.expected_revision, command.operation_id
     )
     return IdStatusResponse(id=stage.id, status=stage.status)
 
@@ -402,7 +429,12 @@ def skip_stage(
     stage_instance_id: uuid.UUID, command: SessionCommand, db: Db, user: CurrentUser
 ) -> IdStatusResponse:
     stage = phase3.skip_stage(
-        db, user, stage_instance_id, command.reason or "", command.expected_revision
+        db,
+        user,
+        stage_instance_id,
+        command.reason or "",
+        command.expected_revision,
+        command.operation_id,
     )
     return IdStatusResponse(id=stage.id, status=stage.status)
 
@@ -418,6 +450,7 @@ def extend_stage(
         command.extra_seconds or 0,
         command.reason or "timer extension",
         command.operation_id,
+        command.expected_revision,
     )
     return IdStatusResponse(id=stage.id, status=stage.status)
 
@@ -472,9 +505,11 @@ def return_stage(
 
 @router.post("/reminders/{reminder_id}/acknowledge", response_model=IdStatusResponse)
 def ack_reminder(
-    reminder_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand | None = None
+    reminder_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand
 ) -> IdStatusResponse:
-    reminder = phase3.acknowledge_reminder(db, user, reminder_id)
+    reminder = phase3.acknowledge_reminder(
+        db, user, reminder_id, command.expected_revision, command.operation_id
+    )
     return IdStatusResponse(id=reminder.id, status=reminder.status)
 
 
@@ -491,21 +526,24 @@ def audit_view(session_id: uuid.UUID, db: Db, user: CurrentUser) -> dict:
 
 @router.get("/{session_id}/export")
 def export_session(session_id: uuid.UUID, db: Db, user: CurrentUser, format: str = "json") -> dict:
-    details = serialize_details(service.session_details(db, user, session_id))
     if format == "html":
-        rows = "".join(
-            f"<li>{item['created_at']}: {item['message']}</li>" for item in details["journal"]
-        )
-        return {
-            "format": "html",
-            "html": f"<html><body><h1>Brew journal</h1><ol>{rows}</ol></body></html>",
-        }
+        events = service.session_journal_events(db, user, session_id)
+        return {"format": "html", "html": service.render_journal_html(events)}
+    details = serialize_details(service.session_details(db, user, session_id))
     return {"format": "json", "document": details}
 
 
 @router.post("/{session_id}/pitch-handoff", status_code=status.HTTP_201_CREATED)
 def pitch(session_id: uuid.UUID, command: SessionCommand, db: Db, user: CurrentUser) -> dict:
-    handoff = phase3.record_pitch_handoff(db, user, session_id, command.yeast_addition_note or "")
+    handoff = phase3.record_pitch_handoff(
+        db,
+        user,
+        session_id,
+        command.yeast_addition_note or "",
+        command.pitch_temperature_c,
+        command.expected_revision,
+        command.operation_id,
+    )
     return {"id": str(handoff.id), "pitched_at": handoff.pitched_at}
 
 
@@ -528,6 +566,8 @@ def execute_addition(
         command.unit or "g",
         command.operation_id,
         command.body,
+        late_reason=command.late_reason,
+        expected_revision=command.expected_revision,
     )
     return {"id": str(event.id), "status": event.execution_status}
 
@@ -541,7 +581,13 @@ def skip_addition(
     user: CurrentUser,
 ) -> dict:
     event = addition_service.skip_addition(
-        db, user, session_id, requirement_id, command.reason or "", command.operation_id
+        db,
+        user,
+        session_id,
+        requirement_id,
+        command.reason or "",
+        command.operation_id,
+        command.expected_revision,
     )
     return {"id": str(event.id), "status": event.execution_status}
 
@@ -621,42 +667,42 @@ def complete_requirement(
 
 @router.post("/timers/{timer_id}/pause", response_model=IdStatusResponse)
 def pause_timer(
-    timer_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand | None = None
+    timer_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand
 ) -> IdStatusResponse:
     timer = timer_service.pause_timer(
         db,
         user,
         timer_id,
-        command.expected_revision if command else None,
-        command.operation_id if command else None,
+        command.expected_revision,
+        command.operation_id,
     )
     return IdStatusResponse(id=timer.id, status=timer.status)
 
 
 @router.post("/timers/{timer_id}/resume", response_model=IdStatusResponse)
 def resume_timer(
-    timer_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand | None = None
+    timer_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand
 ) -> IdStatusResponse:
     timer = timer_service.resume_timer(
         db,
         user,
         timer_id,
-        command.expected_revision if command else None,
-        command.operation_id if command else None,
+        command.expected_revision,
+        command.operation_id,
     )
     return IdStatusResponse(id=timer.id, status=timer.status)
 
 
 @router.post("/timers/{timer_id}/complete", response_model=IdStatusResponse)
 def complete_timer(
-    timer_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand | None = None
+    timer_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand
 ) -> IdStatusResponse:
     timer = timer_service.complete_timer(
         db,
         user,
         timer_id,
-        command.expected_revision if command else None,
-        command.operation_id if command else None,
+        command.expected_revision,
+        command.operation_id,
     )
     return IdStatusResponse(id=timer.id, status=timer.status)
 
@@ -678,10 +724,10 @@ def cancel_timer(
 
 @router.post("/timers/{timer_id}/acknowledge", response_model=IdStatusResponse)
 def ack_timer(
-    timer_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand | None = None
+    timer_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand
 ) -> IdStatusResponse:
     timer = timer_service.acknowledge_timer(
-        db, user, timer_id, command.operation_id if command else None
+        db, user, timer_id, command.operation_id
     )
     return IdStatusResponse(id=timer.id, status=timer.status)
 
@@ -697,6 +743,7 @@ def replace_timer(
         command.reason or "",
         command.planned_duration_seconds or 60,
         command.operation_id,
+        command.expected_revision,
     )
     return IdStatusResponse(id=timer.id, status=timer.status)
 
@@ -712,6 +759,7 @@ def extend_timer(
         command.extra_seconds or 0,
         command.reason or "timer extension",
         command.operation_id,
+        command.expected_revision,
     )
     return IdStatusResponse(id=timer.id, status=timer.status)
 

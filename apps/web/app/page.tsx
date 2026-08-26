@@ -62,15 +62,19 @@ export default function Dashboard() {
     setBusy(true);
     setError("");
     try {
-      const session = await apiFetch<{ id: string }>("/brew-sessions", {
+      const created = await apiFetch<{ id: string }>("/brew-sessions", {
         method: "POST",
         body: JSON.stringify({ recipe_version_id: recipe.version_id, operation_id: newOperationId() }),
       });
-      await apiFetch(`/brew-sessions/${session.id}/start`, {
+      const details = await apiFetch<{ revision: number }>(`/brew-sessions/${created.id}`);
+      await apiFetch(`/brew-sessions/${created.id}/start`, {
         method: "POST",
-        body: JSON.stringify({ operation_id: newOperationId() }),
+        body: JSON.stringify({
+          operation_id: newOperationId(),
+          expected_revision: details.revision,
+        }),
       });
-      router.push(`/brew/${session.id}`);
+      router.push(`/brew/${created.id}`);
     } catch (reason) {
       setError(reason instanceof ApiError ? reason.message : "Brew session could not start.");
       setBusy(false);

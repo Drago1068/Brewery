@@ -146,6 +146,13 @@ def _seed_two_sessions(connection, now):
     return session_a, session_b, stage_a, stage_b
 
 
+def _expect_integrity_failure(connection, statement: str, params: dict) -> None:
+    savepoint = connection.begin_nested()
+    with pytest.raises((DBAPIError, IntegrityError)):
+        connection.execute(text(statement), params)
+    savepoint.rollback()
+
+
 def test_append_only_triggers_exist(invariant_db):
     with invariant_db.connect() as connection:
         triggers = set(
@@ -158,6 +165,7 @@ def test_append_only_triggers_exist(invariant_db):
         )
     assert "brew_addition_events_append_only" in triggers
     assert "brew_addition_corrections_append_only" in triggers
+    assert "measurements_append_only" in triggers
 
 
 def test_cross_session_timer_reference_is_rejected(invariant_db):
@@ -189,6 +197,144 @@ def test_cross_session_timer_reference_is_rejected(invariant_db):
                 "'AUXILIARY', false)"
             ),
             {"id": timer_id, "now": now, "stage": stage_a, "session": session_a},
+        )
+        connection.rollback()
+
+
+def test_cross_session_attachment_is_rejected(invariant_db):
+    now = datetime.now(UTC)
+    with invariant_db.connect() as connection, connection.begin():
+        _session_a, session_b, stage_a, _stage_b = _seed_two_sessions(connection, now)
+        _expect_integrity_failure(
+            connection,
+            "INSERT INTO brew_attachments "
+            "(id, created_at, brew_session_id, stage_instance_id, storage_key, "
+            "content_type, byte_length, sha256, status, actor_user_id) VALUES "
+            "(:id, :now, :session, :stage, :key, 'image/png', 8, :sha, 'FINAL', :actor)",
+            {
+                "id": uuid.uuid4(),
+                "now": now,
+                "session": session_b,
+                "stage": stage_a,
+                "key": f"cross-{uuid.uuid4().hex[:12]}",
+                "sha": "a" * 64,
+                "actor": uuid.uuid4(),
+            },
+        )
+        connection.rollback()
+
+
+def test_cross_session_stage_requirement_is_rejected(invariant_db):
+    now = datetime.now(UTC)
+    with invariant_db.connect() as connection, connection.begin():
+        _session_a, session_b, stage_a, _stage_b = _seed_two_sessions(connection, now)
+        _expect_integrity_failure(
+            connection,
+            "INSERT INTO brew_stage_requirements "
+            "(id, created_at, brew_session_id, stage_instance_id, requirement_template_id, "
+            "requirement_class, requirement_id, status, required, waivable, provenance, "
+            "payload) VALUES "
+            "(:id, :now, :session, :stage, :template, 'MEASUREMENT', :req, 'PENDING', "
+            "true, true, 'PLANNED', CAST(:payload AS json))",
+            {
+                "id": uuid.uuid4(),
+                "now": now,
+                "session": session_b,
+                "stage": stage_a,
+                "template": uuid.uuid4(),
+                "req": uuid.uuid4(),
+                "payload": "{}",
+            },
+        )
+        connection.rollback()
+
+
+def test_cross_session_measurement_correction_is_rejected(invariant_db):
+    now = datetime.now(UTC)
+    with invariant_db.connect() as connection, connection.begin():
+        session_a, session_b, stage_a, stage_b = _seed_two_sessions(connection, now)
+        measurement_a = uuid.uuid4()
+        measurement_b = uuid.uuid4()
+        for measurement_id, stage_id, session_id in (
+            (measurement_a, stage_a, session_a),
+            (measurement_b, stage_b, session_b),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO measurements "
+                    "(id, created_at, brew_stage_id, brew_session_id, measurement_type, "
+                    "value, unit, measured_at, provenance, late_entry) VALUES "
+                    "(:id, :now, :stage, :session, 'MASH_PH', 5.3, 'pH', :now, 'BREWER', false)"
+                ),
+                {
+                    "id": measurement_id,
+                    "now": now,
+                    "stage": stage_id,
+                    "session": session_id,
+                },
+            )
+        _expect_integrity_failure(
+            connection,
+            "INSERT INTO measurements "
+            "(id, created_at, brew_stage_id, brew_session_id, measurement_type, "
+            "value, unit, measured_at, provenance, late_entry, correction_of_id) VALUES "
+            "(:id, :now, :stage, :session, 'MASH_PH', 5.4, 'pH', :now, 'BREWER', false, "
+            ":original)",
+            {
+                "id": uuid.uuid4(),
+                "now": now,
+                "stage": stage_a,
+                "session": session_a,
+                "original": measurement_b,
+            },
+        )
+        connection.rollback()
+
+
+def test_cross_session_addition_correction_original_is_rejected(invariant_db):
+    now = datetime.now(UTC)
+    with invariant_db.connect() as connection, connection.begin():
+        session_a, session_b, stage_a, stage_b = _seed_two_sessions(connection, now)
+        event_a = uuid.uuid4()
+        event_b = uuid.uuid4()
+        for event_id, stage_id, session_id in (
+            (event_a, stage_a, session_a),
+            (event_b, stage_b, session_b),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO brew_addition_events "
+                    "(id, created_at, brew_session_id, stage_instance_id, requirement_id, "
+                    "execution_status, late_entry) VALUES "
+                    "(:id, :now, :session, :stage, :req, 'EXECUTED', false)"
+                ),
+                {
+                    "id": event_id,
+                    "now": now,
+                    "session": session_id,
+                    "stage": stage_id,
+                    "req": uuid.uuid4(),
+                },
+            )
+        _expect_integrity_failure(
+            connection,
+            "INSERT INTO brew_addition_corrections "
+            "(id, created_at, brew_session_id, stage_instance_id, "
+            "original_addition_event_id, correction_of_id, execution_status, "
+            "changed_fields, reason, actor_user_id, recorded_at, late_entry) VALUES "
+            "(:id, :now, :session, :stage, :original, :correction_of, 'EXECUTED', "
+            "CAST(:changed AS json), 'cross-session original lineage must be rejected', "
+            ":actor, :now, false)",
+            {
+                "id": uuid.uuid4(),
+                "now": now,
+                "session": session_b,
+                "stage": stage_b,
+                "original": event_a,
+                "correction_of": event_b,
+                "changed": "{}",
+                "actor": uuid.uuid4(),
+            },
         )
         connection.rollback()
 

@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from brewing_api.application.brew_day import _bump, get_session
+from brewing_api.application.brew_day import _bump, apply_linked_reminder_requirements, get_session
 from brewing_api.application.errors import ConflictError, DomainError, NotFoundError
 from brewing_api.application.events import audit, journal
 from brewing_api.application.phase3.operations import replay_or_conflict, store_success
@@ -99,6 +99,14 @@ def create_waiver(
     requirement.status = "WAIVED"
     requirement.satisfaction_source_type = "Waiver"
     requirement.satisfaction_source_id = waiver.id
+    apply_linked_reminder_requirements(
+        db,
+        stage,
+        requirement,
+        status="WAIVED",
+        source_type="Waiver",
+        source_id=waiver.id,
+    )
     reminder = db.scalar(
         select(Notification).where(Notification.requirement_id == requirement.requirement_id)
     )

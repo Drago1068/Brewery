@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import select
 
 from brewing_api.domain.brew_day.models import BrewPlanStep, BrewRequirementTemplate
@@ -16,12 +18,16 @@ def test_phase1a_recipe_materializes_legacy_plan(authenticated_client, recipe_pa
     assert [step["canonical_stage_type"] for step in body["steps"]] == ["MASH", "BREW_COMPLETE"]
 
     created = authenticated_client.post(
-        "/api/v1/brew-sessions", json={"recipe_version_id": recipe["version_id"]}
+        "/api/v1/brew-sessions",
+        json={
+            "recipe_version_id": recipe["version_id"],
+            "operation_id": str(uuid.uuid4()),
+        },
     )
     assert created.status_code == 201
     session_id = created.json()["id"]
     with SessionLocal() as db:
-        session = db.get(BrewSession, __import__("uuid").UUID(session_id))
+        session = db.get(BrewSession, uuid.UUID(session_id))
         assert session.plan_kind == "LEGACY_MASH_ONLY"
         steps = list(
             db.scalars(select(BrewPlanStep).where(BrewPlanStep.brew_session_id == session.id))
@@ -40,19 +46,20 @@ def test_phase1a_recipe_materializes_legacy_plan(authenticated_client, recipe_pa
 def test_pause_resume_abort_and_note(active_mash):
     client = active_mash["client"]
     session_id = active_mash["session_id"]
-    paused = client.post(f"/api/v1/brew-sessions/{session_id}/pause")
+    command = active_mash["command"]
+    paused = client.post(f"/api/v1/brew-sessions/{session_id}/pause", json=command())
     assert paused.status_code == 200
     assert paused.json()["status"] == "PAUSED"
-    resumed = client.post(f"/api/v1/brew-sessions/{session_id}/resume")
+    resumed = client.post(f"/api/v1/brew-sessions/{session_id}/resume", json=command())
     assert resumed.json()["status"] == "ACTIVE"
     note = client.post(
         f"/api/v1/brew-sessions/{session_id}/notes",
-        json={"body": "Iodine rest looked complete after stirring."},
+        json=command(body="Iodine rest looked complete after stirring."),
     )
     assert note.status_code == 201
     aborted = client.post(
         f"/api/v1/brew-sessions/{session_id}/abort",
-        json={"reason": "Boil kettle failure forced a stop"},
+        json=command(reason="Boil kettle failure forced a stop"),
     )
     assert aborted.status_code == 200
     assert aborted.json()["status"] == "ABORTED"
@@ -63,14 +70,21 @@ def test_pause_resume_abort_and_note(active_mash):
 
 def test_reminder_acknowledgement_does_not_complete_requirement(active_mash):
     client = active_mash["client"]
+    command = active_mash["command"]
     details = client.get(f"/api/v1/brew-sessions/{active_mash['session_id']}").json()
     reminder_id = details["mash"]["notifications"][0]["id"]
-    ack = client.post(f"/api/v1/brew-sessions/reminders/{reminder_id}/acknowledge")
+    ack = client.post(
+        f"/api/v1/brew-sessions/reminders/{reminder_id}/acknowledge",
+        json=command(),
+    )
     assert ack.status_code == 200
     assert ack.json()["status"] == "ACKNOWLEDGED"
     after = client.get(f"/api/v1/brew-sessions/{active_mash['session_id']}").json()
     assert after["mash"]["notifications"][0]["status"] == "ACKNOWLEDGED"
-    complete = client.post(f"/api/v1/brew-sessions/stages/{active_mash['stage_id']}/complete")
+    complete = client.post(
+        f"/api/v1/brew-sessions/stages/{active_mash['stage_id']}/complete",
+        json=command(),
+    )
     assert complete.status_code == 400
 
 

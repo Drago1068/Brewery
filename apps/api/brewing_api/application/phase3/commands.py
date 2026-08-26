@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from brewing_api.application.brew_day import (
     _aware,
     _bump,
+    _lock_revision,
     _stage_for_user,
     get_session,
 )
@@ -32,17 +33,6 @@ from brewing_api.platform.time import utc_now
 def _require_active(session: BrewSession) -> None:
     if session.status != "ACTIVE":
         raise ConflictError("Brew session must be ACTIVE")
-
-
-def _lock_revision(session: BrewSession, expected: int | None) -> None:
-    if expected is None:
-        raise DomainError("expected_revision is required", 422, code="REVISION_REQUIRED")
-    if session.revision != expected:
-        raise ConflictError(
-            "Stale session revision",
-            code="STALE_REVISION",
-            extra={"revision": session.revision},
-        )
 
 
 def pause_session(
@@ -105,9 +95,21 @@ def pause_session(
 
 
 def resume_session(
-    db: Session, user: User, session_id: uuid.UUID, expected_revision: int | None = None
+    db: Session,
+    user: User,
+    session_id: uuid.UUID,
+    expected_revision: int | None = None,
+    operation_id: str | None = None,
 ) -> BrewSession:
     session = get_session(db, user, session_id)
+    document = {"session_id": str(session_id), "expected_revision": expected_revision}
+    replay = replay_or_conflict(
+        db, user.id, "resume_session", "BrewSession", session.id, operation_id, document
+    )
+    if replay and replay.result_resource_id:
+        found = db.get(BrewSession, replay.result_resource_id)
+        if found:
+            return found
     if session.status != "PAUSED":
         raise ConflictError("Only a paused session can be resumed")
     _lock_revision(session, expected_revision)
@@ -142,6 +144,18 @@ def resume_session(
     journal(db, session.id, "BREW_SESSION_RESUMED", "Brew session resumed", actor_id=user.id)
     audit(db, user.id, "BREW_SESSION_RESUMED", "BrewSession", session.id)
     _bump(session)
+    store_success(
+        db,
+        user.id,
+        "resume_session",
+        "BrewSession",
+        session.id,
+        operation_id,
+        document,
+        {"id": str(session.id), "status": session.status},
+        "BrewSession",
+        session.id,
+    )
     db.commit()
     db.refresh(session)
     return session
@@ -153,8 +167,21 @@ def abort_session(
     session_id: uuid.UUID,
     reason: str,
     expected_revision: int | None = None,
+    operation_id: str | None = None,
 ) -> BrewSession:
     session = get_session(db, user, session_id)
+    document = {
+        "session_id": str(session_id),
+        "reason": reason,
+        "expected_revision": expected_revision,
+    }
+    replay = replay_or_conflict(
+        db, user.id, "abort_session", "BrewSession", session.id, operation_id, document
+    )
+    if replay and replay.result_resource_id:
+        found = db.get(BrewSession, replay.result_resource_id)
+        if found:
+            return found
     if session.status in {"COMPLETED", "ABORTED"}:
         raise ConflictError("Terminal session cannot be aborted")
     if not reason or len(reason) < 10:
@@ -198,15 +225,45 @@ def abort_session(
     )
     audit(db, user.id, "BREW_SESSION_ABORTED", "BrewSession", session.id, {"reason": reason})
     _bump(session)
+    store_success(
+        db,
+        user.id,
+        "abort_session",
+        "BrewSession",
+        session.id,
+        operation_id,
+        document,
+        {"id": str(session.id), "status": session.status},
+        "BrewSession",
+        session.id,
+        terminal=True,
+    )
     db.commit()
     db.refresh(session)
     return session
 
 
 def skip_stage(
-    db: Session, user: User, stage_id: uuid.UUID, reason: str, expected_revision: int | None = None
+    db: Session,
+    user: User,
+    stage_id: uuid.UUID,
+    reason: str,
+    expected_revision: int | None = None,
+    operation_id: str | None = None,
 ) -> BrewStage:
     stage, session = _stage_for_user(db, user, stage_id)
+    document = {
+        "stage_id": str(stage_id),
+        "reason": reason,
+        "expected_revision": expected_revision,
+    }
+    replay = replay_or_conflict(
+        db, user.id, "skip_stage", "BrewStage", stage.id, operation_id, document
+    )
+    if replay and replay.result_resource_id:
+        found = db.get(BrewStage, replay.result_resource_id)
+        if found:
+            return found
     _require_active(session)
     _lock_revision(session, expected_revision)
     if stage.required:
@@ -224,15 +281,39 @@ def skip_stage(
     )
     audit(db, user.id, "BREW_STAGE_SKIPPED", "BrewStage", stage.id, {"reason": reason})
     _bump(session)
+    store_success(
+        db,
+        user.id,
+        "skip_stage",
+        "BrewStage",
+        stage.id,
+        operation_id,
+        document,
+        {"id": str(stage.id), "status": stage.status},
+        "BrewStage",
+        stage.id,
+    )
     db.commit()
     db.refresh(stage)
     return stage
 
 
 def start_stage(
-    db: Session, user: User, stage_id: uuid.UUID, expected_revision: int | None = None
+    db: Session,
+    user: User,
+    stage_id: uuid.UUID,
+    expected_revision: int | None = None,
+    operation_id: str | None = None,
 ) -> BrewStage:
     stage, session = _stage_for_user(db, user, stage_id)
+    document = {"stage_id": str(stage_id), "expected_revision": expected_revision}
+    replay = replay_or_conflict(
+        db, user.id, "start_stage", "BrewStage", stage.id, operation_id, document
+    )
+    if replay and replay.result_resource_id:
+        found = db.get(BrewStage, replay.result_resource_id)
+        if found:
+            return found
     _require_active(session)
     _lock_revision(session, expected_revision)
     active = db.scalar(
@@ -265,19 +346,43 @@ def start_stage(
     )
     audit(db, user.id, "BREW_STAGE_STARTED", "BrewStage", stage.id)
     _bump(session)
+    store_success(
+        db,
+        user.id,
+        "start_stage",
+        "BrewStage",
+        stage.id,
+        operation_id,
+        document,
+        {"id": str(stage.id), "status": stage.status},
+        "BrewStage",
+        stage.id,
+    )
     db.commit()
     db.refresh(stage)
     return stage
 
 
 def complete_stage(
-    db: Session, user: User, stage_id: uuid.UUID, expected_revision: int | None = None
+    db: Session,
+    user: User,
+    stage_id: uuid.UUID,
+    expected_revision: int | None = None,
+    operation_id: str | None = None,
 ) -> BrewStage:
     from brewing_api.application.brew_day import complete_mash
 
     stage, session = _stage_for_user(db, user, stage_id)
     if (stage.canonical_stage_type or stage.name) == "MASH":
-        return complete_mash(db, user, stage_id)
+        return complete_mash(db, user, stage_id, expected_revision, operation_id)
+    document = {"stage_id": str(stage_id), "expected_revision": expected_revision}
+    replay = replay_or_conflict(
+        db, user.id, "complete_stage", "BrewStage", stage.id, operation_id, document
+    )
+    if replay and replay.result_resource_id:
+        found = db.get(BrewStage, replay.result_resource_id)
+        if found:
+            return found
     _require_active(session)
     _lock_revision(session, expected_revision)
     if stage.status != "ACTIVE":
@@ -315,6 +420,18 @@ def complete_stage(
     )
     audit(db, user.id, "BREW_STAGE_COMPLETED", "BrewStage", stage.id)
     _bump(session)
+    store_success(
+        db,
+        user.id,
+        "complete_stage",
+        "BrewStage",
+        stage.id,
+        operation_id,
+        document,
+        {"id": str(stage.id), "status": stage.status},
+        "BrewStage",
+        stage.id,
+    )
     db.commit()
     db.refresh(stage)
     return stage
@@ -327,9 +444,24 @@ def extend_stage(
     extra_seconds: int,
     reason: str,
     operation_id: str | None = None,
+    expected_revision: int | None = None,
 ) -> BrewStage:
     stage, session = _stage_for_user(db, user, stage_id)
+    document = {
+        "stage_id": str(stage_id),
+        "extra_seconds": extra_seconds,
+        "reason": reason,
+        "expected_revision": expected_revision,
+    }
+    replay = replay_or_conflict(
+        db, user.id, "extend_stage", "BrewStage", stage.id, operation_id, document
+    )
+    if replay and replay.result_resource_id:
+        found = db.get(BrewStage, replay.result_resource_id)
+        if found:
+            return found
     _require_active(session)
+    _lock_revision(session, expected_revision)
     if stage.status not in {"ACTIVE", "PAUSED"}:
         raise ConflictError("Only an active or paused stage can be extended")
     if extra_seconds <= 0:
@@ -371,6 +503,18 @@ def extend_stage(
     )
     audit(db, user.id, "BREW_STAGE_EXTENDED", "BrewStage", stage.id)
     _bump(session)
+    store_success(
+        db,
+        user.id,
+        "extend_stage",
+        "BrewStage",
+        stage.id,
+        operation_id,
+        document,
+        {"id": str(stage.id), "status": stage.status},
+        "BrewStage",
+        stage.id,
+    )
     db.commit()
     db.refresh(stage)
     return stage
@@ -506,7 +650,13 @@ def repeat_or_return_stage(
     return new_stage
 
 
-def acknowledge_reminder(db: Session, user: User, reminder_id: uuid.UUID) -> Notification:
+def acknowledge_reminder(
+    db: Session,
+    user: User,
+    reminder_id: uuid.UUID,
+    expected_revision: int | None = None,
+    operation_id: str | None = None,
+) -> Notification:
     row = db.execute(
         select(Notification, BrewStage, BrewSession)
         .join(BrewStage, BrewStage.id == Notification.brew_stage_id)
@@ -516,10 +666,22 @@ def acknowledge_reminder(db: Session, user: User, reminder_id: uuid.UUID) -> Not
     if row is None:
         raise DomainError("Reminder not found", 404)
     reminder, stage, session = row
+    document = {
+        "reminder_id": str(reminder_id),
+        "expected_revision": expected_revision,
+    }
+    replay = replay_or_conflict(
+        db, user.id, "acknowledge_reminder", "Notification", reminder.id, operation_id, document
+    )
+    if replay and replay.result_resource_id:
+        found = db.get(Notification, replay.result_resource_id)
+        if found:
+            return found
     if reminder.status == "ACKNOWLEDGED":
         return reminder
     if reminder.status not in {"DUE", "EXPIRED"}:
         raise ConflictError("Reminder cannot be acknowledged")
+    _lock_revision(session, expected_revision)
     prior = reminder.status
     reminder.status = "ACKNOWLEDGED"
     reminder.acknowledged_at = utc_now()
@@ -533,18 +695,55 @@ def acknowledge_reminder(db: Session, user: User, reminder_id: uuid.UUID) -> Not
         )
     )
     journal(
-        db, session.id, "BREW_REMINDER_ACKNOWLEDGED", reminder.message, stage.id, actor_id=user.id
+        db,
+        session.id,
+        "BREW_REMINDER_ACKNOWLEDGED",
+        reminder.message,
+        stage.id,
+        actor_id=user.id,
+        operation_id=operation_id,
     )
     _bump(session)
+    store_success(
+        db,
+        user.id,
+        "acknowledge_reminder",
+        "Notification",
+        reminder.id,
+        operation_id,
+        document,
+        {"id": str(reminder.id), "status": reminder.status},
+        "Notification",
+        reminder.id,
+    )
     db.commit()
     db.refresh(reminder)
     return reminder
 
 
 def create_note(
-    db: Session, user: User, session_id: uuid.UUID, body: str, stage_id: uuid.UUID | None = None
+    db: Session,
+    user: User,
+    session_id: uuid.UUID,
+    body: str,
+    stage_id: uuid.UUID | None = None,
+    expected_revision: int | None = None,
+    operation_id: str | None = None,
 ) -> BrewNote:
     session = get_session(db, user, session_id)
+    document = {
+        "session_id": str(session_id),
+        "body": body,
+        "expected_revision": expected_revision,
+    }
+    replay = replay_or_conflict(
+        db, user.id, "create_note", "BrewSession", session.id, operation_id, document
+    )
+    if replay and replay.result_resource_id:
+        found = db.get(BrewNote, replay.result_resource_id)
+        if found:
+            return found
+    _lock_revision(session, expected_revision)
     if not body or len(body) > 4000:
         raise DomainError("Note must be 1 to 4000 characters", 422)
     if session.status in {"COMPLETED", "ABORTED"}:
@@ -560,18 +759,59 @@ def create_note(
     )
     db.add(note)
     db.flush()
-    journal(db, session.id, "BREW_NOTE_ADDED", "Note added", stage_id, actor_id=user.id)
+    journal(
+        db,
+        session.id,
+        "BREW_NOTE_ADDED",
+        "Note added",
+        stage_id,
+        actor_id=user.id,
+        operation_id=operation_id,
+    )
     audit(db, user.id, "BREW_NOTE_ADDED", "BrewNote", note.id)
+    _bump(session)
+    store_success(
+        db,
+        user.id,
+        "create_note",
+        "BrewSession",
+        session.id,
+        operation_id,
+        document,
+        {"id": str(note.id)},
+        "BrewNote",
+        note.id,
+        http_status=201,
+    )
     db.commit()
     db.refresh(note)
     return note
 
 
 def record_pitch_handoff(
-    db: Session, user: User, session_id: uuid.UUID, note: str, temperature_c=None
+    db: Session,
+    user: User,
+    session_id: uuid.UUID,
+    note: str,
+    temperature_c=None,
+    expected_revision: int | None = None,
+    operation_id: str | None = None,
 ) -> BrewPitchHandoff:
     session = get_session(db, user, session_id)
+    document = {
+        "session_id": str(session_id),
+        "note": note,
+        "expected_revision": expected_revision,
+    }
+    replay = replay_or_conflict(
+        db, user.id, "record_pitch_handoff", "BrewSession", session.id, operation_id, document
+    )
+    if replay and replay.result_resource_id:
+        found = db.get(BrewPitchHandoff, replay.result_resource_id)
+        if found:
+            return found
     _require_active(session)
+    _lock_revision(session, expected_revision)
     if not note:
         raise DomainError("Yeast-pitch fact is required", 422)
     handoff = BrewPitchHandoff(
@@ -593,9 +833,29 @@ def record_pitch_handoff(
             item.status = "COMPLETED"
             item.satisfaction_source_type = "PITCH_HANDOFF"
             item.satisfaction_source_id = handoff.id
-    journal(db, session.id, "YEAST_PITCH_RECORDED", "Yeast pitch recorded", actor_id=user.id)
+    journal(
+        db,
+        session.id,
+        "YEAST_PITCH_RECORDED",
+        "Yeast pitch recorded",
+        actor_id=user.id,
+        operation_id=operation_id,
+    )
     audit(db, user.id, "YEAST_PITCH_RECORDED", "BrewPitchHandoff", session.id)
     _bump(session)
+    store_success(
+        db,
+        user.id,
+        "record_pitch_handoff",
+        "BrewSession",
+        session.id,
+        operation_id,
+        document,
+        {"id": str(handoff.id), "pitched_at": str(handoff.pitched_at)},
+        "BrewPitchHandoff",
+        handoff.id,
+        http_status=201,
+    )
     db.commit()
     db.refresh(handoff)
     return handoff

@@ -1,11 +1,12 @@
 def test_metrics_sample_count_increases_after_mutations(active_mash):
     client = active_mash["client"]
     session_id = active_mash["session_id"]
-    client.post(f"/api/v1/brew-sessions/{session_id}/pause")
-    client.post(f"/api/v1/brew-sessions/{session_id}/resume")
+    command = active_mash["command"]
+    client.post(f"/api/v1/brew-sessions/{session_id}/pause", json=command())
+    client.post(f"/api/v1/brew-sessions/{session_id}/resume", json=command())
     client.post(
         f"/api/v1/brew-sessions/{session_id}/notes",
-        json={"body": "Iodine rest looked complete after stirring."},
+        json=command(body="Iodine rest looked complete after stirring."),
     )
     metrics = client.get("/api/v1/metrics/phase3")
     assert metrics.status_code == 200
@@ -18,10 +19,11 @@ def test_metrics_sample_count_increases_after_mutations(active_mash):
 def test_reconstruct_returns_events_for_correlation_id(active_mash):
     client = active_mash["client"]
     session_id = active_mash["session_id"]
+    command = active_mash["command"]
     correlation_id = "phase3-obs-reconstruct-1"
     mutated = client.post(
         f"/api/v1/brew-sessions/{session_id}/notes",
-        json={"body": "Noted mash rest for correlation reconstruction."},
+        json=command(body="Noted mash rest for correlation reconstruction."),
         headers={"X-Correlation-ID": correlation_id},
     )
     assert mutated.status_code == 201

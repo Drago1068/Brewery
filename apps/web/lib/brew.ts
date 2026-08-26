@@ -86,6 +86,7 @@ export type BrewDetails = {
     status: string;
     required: boolean;
     waivable?: boolean;
+    stage_instance_id?: string;
     definition_key?: string;
     planned_amount?: string;
     planned_unit?: string;
@@ -210,6 +211,156 @@ export function newOperationId(): string {
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
   }
   return `op-${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
+export type MeasurementContext = {
+  unit: string;
+  method: string;
+  methods: string[];
+  vessel?: string;
+  needsSampleTemperature: boolean;
+  needsCompensated: boolean;
+  needsVessel: boolean;
+};
+
+export const MEASUREMENT_CONTEXT: Record<string, MeasurementContext> = {
+  MASH_PH: {
+    unit: "pH",
+    method: "METER",
+    methods: ["METER", "STRIP", "OTHER"],
+    needsSampleTemperature: true,
+    needsCompensated: true,
+    needsVessel: false,
+  },
+  MASH_GRAVITY: {
+    unit: "SG",
+    method: "HYDROMETER",
+    methods: ["HYDROMETER", "REFRACTOMETER", "OTHER"],
+    needsSampleTemperature: true,
+    needsCompensated: false,
+    needsVessel: false,
+  },
+  POST_MASH_GRAVITY: {
+    unit: "SG",
+    method: "HYDROMETER",
+    methods: ["HYDROMETER", "REFRACTOMETER", "OTHER"],
+    needsSampleTemperature: true,
+    needsCompensated: false,
+    needsVessel: false,
+  },
+  PRE_BOIL_GRAVITY: {
+    unit: "SG",
+    method: "HYDROMETER",
+    methods: ["HYDROMETER", "REFRACTOMETER", "OTHER"],
+    vessel: "KETTLE",
+    needsSampleTemperature: true,
+    needsCompensated: false,
+    needsVessel: true,
+  },
+  PRE_BOIL_VOLUME: {
+    unit: "L",
+    method: "SIGHT_GLASS",
+    methods: ["SIGHT_GLASS", "GRADUATED", "SCALE", "OTHER"],
+    vessel: "KETTLE",
+    needsSampleTemperature: true,
+    needsCompensated: false,
+    needsVessel: true,
+  },
+  ORIGINAL_GRAVITY: {
+    unit: "SG",
+    method: "HYDROMETER",
+    methods: ["HYDROMETER", "REFRACTOMETER", "OTHER"],
+    needsSampleTemperature: true,
+    needsCompensated: false,
+    needsVessel: false,
+  },
+  MASH_IN_TEMPERATURE: {
+    unit: "degC",
+    method: "PROBE",
+    methods: ["THERMOMETER", "PROBE", "OTHER"],
+    needsSampleTemperature: false,
+    needsCompensated: false,
+    needsVessel: false,
+  },
+  MASH_REST_TEMPERATURE: {
+    unit: "degC",
+    method: "PROBE",
+    methods: ["THERMOMETER", "PROBE", "OTHER"],
+    needsSampleTemperature: false,
+    needsCompensated: false,
+    needsVessel: false,
+  },
+  KNOCKOUT_TEMPERATURE: {
+    unit: "degC",
+    method: "PROBE",
+    methods: ["THERMOMETER", "PROBE", "OTHER"],
+    vessel: "RECEIVING",
+    needsSampleTemperature: false,
+    needsCompensated: false,
+    needsVessel: true,
+  },
+  KNOCKOUT_VOLUME: {
+    unit: "L",
+    method: "SIGHT_GLASS",
+    methods: ["SIGHT_GLASS", "GRADUATED", "SCALE", "OTHER"],
+    vessel: "RECEIVING",
+    needsSampleTemperature: true,
+    needsCompensated: false,
+    needsVessel: true,
+  },
+  PITCH_TEMPERATURE: {
+    unit: "degC",
+    method: "PROBE",
+    methods: ["THERMOMETER", "PROBE", "OTHER"],
+    needsSampleTemperature: false,
+    needsCompensated: false,
+    needsVessel: false,
+  },
+};
+
+export function sessionCommand(
+  expectedRevision: number | undefined,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    operation_id: newOperationId(),
+    expected_revision: expectedRevision ?? 0,
+    ...extra,
+  };
+}
+
+export function measurementCommand(
+  type: string,
+  value: string,
+  observed: {
+    method: string;
+    sample_temperature_c?: string;
+    temperature_compensated?: boolean;
+    vessel?: string;
+    note?: string | null;
+    instrument?: string | null;
+    entry_method?: string;
+  },
+): Record<string, unknown> {
+  const defaults = MEASUREMENT_CONTEXT[type];
+  const payload: Record<string, unknown> = {
+    measurement_type: type,
+    value,
+    unit: defaults?.unit ?? "pH",
+    operation_id: newOperationId(),
+    method: observed.method,
+    entry_method: observed.entry_method ?? "MANUAL",
+    note: observed.note ?? null,
+    instrument: observed.instrument ?? null,
+  };
+  if (observed.sample_temperature_c !== undefined && observed.sample_temperature_c !== "") {
+    payload.sample_temperature_c = observed.sample_temperature_c;
+  }
+  if (observed.temperature_compensated !== undefined) {
+    payload.temperature_compensated = observed.temperature_compensated;
+  }
+  if (observed.vessel) payload.vessel = observed.vessel;
+  return payload;
 }
 
 export function parseVoiceProposal(transcript: string): VoiceProposal | null {
