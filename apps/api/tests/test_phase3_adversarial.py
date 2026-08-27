@@ -199,8 +199,9 @@ def test_adv_007_010_timer_recovery_survives_new_test_client(active_mash, monkey
         timer.deadline_at = utc_now() - timedelta(seconds=12)
         db.commit()
 
-    from brewing_api.main import app
     from fastapi.testclient import TestClient
+
+    from brewing_api.main import app
 
     with TestClient(app) as fresh:
         fresh.headers["Origin"] = "http://testserver"

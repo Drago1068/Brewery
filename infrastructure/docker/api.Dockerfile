@@ -13,6 +13,9 @@ RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -e ".
 COPY apps/api /workspace/apps/api
 COPY database/migrations /workspace/database/migrations
 COPY packages /workspace/packages
+COPY docker-compose.yml /workspace/docker-compose.yml
+COPY apps/web/package.json /workspace/apps/web/package.json
+COPY tests/e2e /workspace/tests/e2e
 # Operational backup/restore scripts (PowerShell host wrappers); presence is
 # asserted by PostgreSQL backup acceptance tests. Dump/restore itself uses
 # postgresql-client inside this image.
