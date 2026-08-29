@@ -63,8 +63,16 @@ def test_tinseth_and_morey_recognized_model_golden_cases():
 
 def test_water_strike_pitch_carbonation_and_mineral_foundations():
     water = brewing_water_volumes(
-        Decimal("5"), Decimal("20"), Decimal("3"), Decimal("60"), Decimal("3.5"),
-        Decimal("0.8"), Decimal("0.5"), Decimal("1"), Decimal("1"), Decimal("0.5")
+        Decimal("5"),
+        Decimal("20"),
+        Decimal("3"),
+        Decimal("60"),
+        Decimal("3.5"),
+        Decimal("0.8"),
+        Decimal("0.5"),
+        Decimal("1"),
+        Decimal("1"),
+        Decimal("0.5"),
     )
     assert water.strike_liters == Decimal("15.5")
     assert water.post_boil_liters == Decimal("21.5")

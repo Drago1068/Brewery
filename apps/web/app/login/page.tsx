@@ -32,7 +32,7 @@ export default function LoginPage() {
     <section className="centered-panel">
       <div className="eyebrow">Private workspace</div>
       <h1>Welcome back, brewer.</h1>
-      <p className="lede">Sign in to plan a recipe and run the architecture-proving Mash workflow.</p>
+      <p className="lede">Sign in to plan recipes and run the Brew-Day OS through yeast-pitch handoff.</p>
       <form className="card form-stack" onSubmit={submit}>
         <label>
           Username

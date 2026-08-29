@@ -99,9 +99,7 @@ def list_suppliers(db: Session, user: User) -> list[Supplier]:
     return list(db.scalars(select(Supplier).where(Supplier.owner_id == user.id)))
 
 
-def create_supplier_item(
-    db: Session, user: User, supplier_id: uuid.UUID, command
-) -> SupplierItem:
+def create_supplier_item(db: Session, user: User, supplier_id: uuid.UUID, command) -> SupplierItem:
     _owned(db, Supplier, user.id, supplier_id, "Supplier")
     ingredient = _owned(db, Ingredient, user.id, command.ingredient_id, "Ingredient")
     if command.unit and command.unit != ingredient.canonical_unit:
@@ -124,9 +122,7 @@ def create_location(db: Session, user: User, command) -> InventoryLocation:
 
 
 def list_locations(db: Session, user: User) -> list[InventoryLocation]:
-    return list(
-        db.scalars(select(InventoryLocation).where(InventoryLocation.owner_id == user.id))
-    )
+    return list(db.scalars(select(InventoryLocation).where(InventoryLocation.owner_id == user.id)))
 
 
 def _ingredient_and_unit(
@@ -296,12 +292,8 @@ def create_reservation(db: Session, user: User, command) -> InventoryReservation
     return reservation
 
 
-def release_reservation(
-    db: Session, user: User, reservation_id: uuid.UUID
-) -> InventoryReservation:
-    reservation = _owned(
-        db, InventoryReservation, user.id, reservation_id, "Inventory reservation"
-    )
+def release_reservation(db: Session, user: User, reservation_id: uuid.UUID) -> InventoryReservation:
+    reservation = _owned(db, InventoryReservation, user.id, reservation_id, "Inventory reservation")
     if reservation.status != "ACTIVE":
         raise ConflictError("Only active reservations can be released")
     reservation.status = "RELEASED"
@@ -389,10 +381,18 @@ def _json_decimal(value) -> str:
 
 def _equipment_snapshot(equipment: EquipmentProfile) -> dict:
     fields = (
-        "id", "name", "default_batch_liters", "brewhouse_efficiency", "mash_efficiency",
-        "boil_off_liters_per_hour", "kettle_loss_liters", "mash_tun_deadspace_liters",
-        "fermenter_loss_liters", "packaging_loss_liters",
-        "grain_absorption_liters_per_kg", "hop_absorption_liters_per_kg",
+        "id",
+        "name",
+        "default_batch_liters",
+        "brewhouse_efficiency",
+        "mash_efficiency",
+        "boil_off_liters_per_hour",
+        "kettle_loss_liters",
+        "mash_tun_deadspace_liters",
+        "fermenter_loss_liters",
+        "packaging_loss_liters",
+        "grain_absorption_liters_per_kg",
+        "hop_absorption_liters_per_kg",
     )
     return {field: str(getattr(equipment, field)) for field in fields}
 
@@ -443,10 +443,16 @@ def _calculate(
                 (line.amount, Decimal(str(ingredient.attributes.get("color_lovibond", 0))))
             )
     water = brewing_water_volumes(
-        grain_kg, batch_liters, mash_ratio, Decimal(boil_minutes),
-        equipment.boil_off_liters_per_hour, equipment.grain_absorption_liters_per_kg,
-        equipment.mash_tun_deadspace_liters, equipment.kettle_loss_liters,
-        equipment.fermenter_loss_liters, equipment.packaging_loss_liters,
+        grain_kg,
+        batch_liters,
+        mash_ratio,
+        Decimal(boil_minutes),
+        equipment.boil_off_liters_per_hour,
+        equipment.grain_absorption_liters_per_kg,
+        equipment.mash_tun_deadspace_liters,
+        equipment.kettle_loss_liters,
+        equipment.fermenter_loss_liters,
+        equipment.packaging_loss_liters,
     )
     pitch = yeast_pitch_cells(batch_liters, og, Decimal("0.75"))
     outputs = {
@@ -497,9 +503,15 @@ def _availability(db: Session, user: User, lines: list[RecipeIngredient]) -> lis
         status = "AVAILABLE" if shortage == 0 else ("PARTIAL" if available > 0 else "SHORTAGE")
         response.append(
             {
-                "ingredient_id": ingredient_id, "ingredient_name": ingredient.name,
-                "unit": unit, "required": amount, "on_hand": on_hand, "reserved": reserved,
-                "available": available, "shortage": shortage, "status": status,
+                "ingredient_id": ingredient_id,
+                "ingredient_name": ingredient.name,
+                "unit": unit,
+                "required": amount,
+                "on_hand": on_hand,
+                "reserved": reserved,
+                "available": available,
+                "shortage": shortage,
+                "status": status,
             }
         )
     return response
@@ -533,31 +545,43 @@ def create_recipe_design(db: Session, user: User, command) -> dict:
         lot = db.get(IngredientLot, line.ingredient_lot_id) if line.ingredient_lot_id else None
         resolved.append((line, ingredient, lot))
     inputs, outputs = _calculate(
-        resolved, equipment, command.batch_size_liters, command.boil_duration_minutes,
-        command.apparent_attenuation, command.mash_ratio_liters_per_kg,
-        command.grain_temperature_c, command.target_mash_temperature_c,
+        resolved,
+        equipment,
+        command.batch_size_liters,
+        command.boil_duration_minutes,
+        command.apparent_attenuation,
+        command.mash_ratio_liters_per_kg,
+        command.grain_temperature_c,
+        command.target_mash_temperature_c,
         command.target_carbonation_volumes,
     )
     recipe = Recipe(owner_id=user.id, name=command.name.strip())
     db.add(recipe)
     db.flush()
     version = RecipeVersion(
-        recipe_id=recipe.id, version_number=1,
+        recipe_id=recipe.id,
+        version_number=1,
         target_mash_temperature=command.target_mash_temperature_c,
-        mash_temperature_unit="degC", target_mash_ph=command.target_mash_ph,
+        mash_temperature_unit="degC",
+        target_mash_ph=command.target_mash_ph,
         mash_ph_tolerance=command.mash_ph_tolerance,
-        target_mash_gravity=Decimal(outputs["og"]), mash_gravity_tolerance=Decimal("0.003"),
+        target_mash_gravity=Decimal(outputs["og"]),
+        mash_gravity_tolerance=Decimal("0.003"),
         planned_mash_duration_minutes=command.planned_mash_duration_minutes,
-        equipment_profile_id=equipment.id, style_name=command.style_name,
-        bjcp_category=command.bjcp_category, batch_size_liters=command.batch_size_liters,
-        target_og=Decimal(outputs["og"]), target_fg=Decimal(outputs["fg_estimate"]),
+        equipment_profile_id=equipment.id,
+        style_name=command.style_name,
+        bjcp_category=command.bjcp_category,
+        batch_size_liters=command.batch_size_liters,
+        target_og=Decimal(outputs["og"]),
+        target_fg=Decimal(outputs["fg_estimate"]),
         target_abv_percent=Decimal(outputs["abv_percent_estimate"]),
         target_ibu=Decimal(outputs["ibu_estimate"]),
         target_color_srm=Decimal(outputs["color_srm_estimate"]),
         target_carbonation_volumes=command.target_carbonation_volumes,
         boil_duration_minutes=command.boil_duration_minutes,
         apparent_attenuation=command.apparent_attenuation,
-        equipment_snapshot=_equipment_snapshot(equipment), calculation_inputs=inputs,
+        equipment_snapshot=_equipment_snapshot(equipment),
+        calculation_inputs=inputs,
         calculation_outputs=outputs,
         model_versions={
             "bitterness": "tinseth-v1",
@@ -575,9 +599,7 @@ def create_recipe_design(db: Session, user: User, command) -> dict:
         db.add(RecipeProcessStep(recipe_version_id=version.id, **step.model_dump()))
     if command.water_profile:
         db.add(
-            WaterProfileTarget(
-                recipe_version_id=version.id, **command.water_profile.model_dump()
-            )
+            WaterProfileTarget(recipe_version_id=version.id, **command.water_profile.model_dump())
         )
     audit(db, user.id, "RECIPE_VERSION_CREATED", "RecipeVersion", version.id, {"version_number": 1})
     db.commit()
@@ -610,16 +632,23 @@ def clone_recipe_version(db: Session, user: User, version_id: uuid.UUID, command
     ) / Decimal("1000")
     target_water = brewing_water_volumes(
         grain_kg * command.target_batch_liters / source.batch_size_liters,
-        command.target_batch_liters, Decimal(source_inputs["mash_ratio_liters_per_kg"]),
-        Decimal(source.boil_duration_minutes), equipment.boil_off_liters_per_hour,
-        equipment.grain_absorption_liters_per_kg, equipment.mash_tun_deadspace_liters,
-        equipment.kettle_loss_liters, equipment.fermenter_loss_liters,
+        command.target_batch_liters,
+        Decimal(source_inputs["mash_ratio_liters_per_kg"]),
+        Decimal(source.boil_duration_minutes),
+        equipment.boil_off_liters_per_hour,
+        equipment.grain_absorption_liters_per_kg,
+        equipment.mash_tun_deadspace_liters,
+        equipment.kettle_loss_liters,
+        equipment.fermenter_loss_liters,
         equipment.packaging_loss_liters,
     )
     factors = recipe_scaling_factors(
-        source.batch_size_liters, command.target_batch_liters,
+        source.batch_size_liters,
+        command.target_batch_liters,
         Decimal(source.equipment_snapshot["brewhouse_efficiency"]),
-        equipment.brewhouse_efficiency, source_liquor, target_water.total_liquor_liters,
+        equipment.brewhouse_efficiency,
+        source_liquor,
+        target_water.total_liquor_liters,
     )
     scaled = []
     for line in source_lines:
@@ -648,43 +677,66 @@ def clone_recipe_version(db: Session, user: User, version_id: uuid.UUID, command
         lot = db.get(IngredientLot, line.ingredient_lot_id) if line.ingredient_lot_id else None
         scaled.append((clone_line, ingredient, lot))
     inputs, outputs = _calculate(
-        scaled, equipment, command.target_batch_liters, source.boil_duration_minutes,
-        source.apparent_attenuation, Decimal(source_inputs["mash_ratio_liters_per_kg"]),
-        Decimal(source_inputs["grain_temperature_c"]), Decimal(source_inputs["mash_temperature_c"]),
+        scaled,
+        equipment,
+        command.target_batch_liters,
+        source.boil_duration_minutes,
+        source.apparent_attenuation,
+        Decimal(source_inputs["mash_ratio_liters_per_kg"]),
+        Decimal(source_inputs["grain_temperature_c"]),
+        Decimal(source_inputs["mash_temperature_c"]),
         source.target_carbonation_volumes,
     )
-    version_number = db.scalar(
-        select(func.max(RecipeVersion.version_number)).where(RecipeVersion.recipe_id == recipe.id)
-    ) + 1
+    version_number = (
+        db.scalar(
+            select(func.max(RecipeVersion.version_number)).where(
+                RecipeVersion.recipe_id == recipe.id
+            )
+        )
+        + 1
+    )
     version = RecipeVersion(
-        recipe_id=recipe.id, version_number=version_number,
+        recipe_id=recipe.id,
+        version_number=version_number,
         target_mash_temperature=source.target_mash_temperature,
-        mash_temperature_unit=source.mash_temperature_unit, target_mash_ph=source.target_mash_ph,
+        mash_temperature_unit=source.mash_temperature_unit,
+        target_mash_ph=source.target_mash_ph,
         mash_ph_tolerance=source.mash_ph_tolerance,
         target_mash_gravity=Decimal(outputs["og"]),
         mash_gravity_tolerance=source.mash_gravity_tolerance,
         planned_mash_duration_minutes=source.planned_mash_duration_minutes,
-        equipment_profile_id=equipment.id, style_name=source.style_name,
-        bjcp_category=source.bjcp_category, batch_size_liters=command.target_batch_liters,
-        target_og=Decimal(outputs["og"]), target_fg=Decimal(outputs["fg_estimate"]),
+        equipment_profile_id=equipment.id,
+        style_name=source.style_name,
+        bjcp_category=source.bjcp_category,
+        batch_size_liters=command.target_batch_liters,
+        target_og=Decimal(outputs["og"]),
+        target_fg=Decimal(outputs["fg_estimate"]),
         target_abv_percent=Decimal(outputs["abv_percent_estimate"]),
         target_ibu=Decimal(outputs["ibu_estimate"]),
         target_color_srm=Decimal(outputs["color_srm_estimate"]),
         target_carbonation_volumes=source.target_carbonation_volumes,
         boil_duration_minutes=source.boil_duration_minutes,
         apparent_attenuation=source.apparent_attenuation,
-        equipment_snapshot=_equipment_snapshot(equipment), calculation_inputs=inputs,
-        calculation_outputs=outputs, model_versions=source.model_versions, notes=source.notes,
+        equipment_snapshot=_equipment_snapshot(equipment),
+        calculation_inputs=inputs,
+        calculation_outputs=outputs,
+        model_versions=source.model_versions,
+        notes=source.notes,
     )
     db.add(version)
     db.flush()
     for line, _ingredient, _lot in scaled:
         db.add(
             RecipeIngredient(
-                recipe_version_id=version.id, ingredient_id=line.ingredient_id,
-                ingredient_lot_id=line.ingredient_lot_id, amount=line.amount, unit=line.unit,
-                use_stage=line.use_stage, timing_minutes=line.timing_minutes,
-                percentage=line.percentage, notes=line.notes,
+                recipe_version_id=version.id,
+                ingredient_id=line.ingredient_id,
+                ingredient_lot_id=line.ingredient_lot_id,
+                amount=line.amount,
+                unit=line.unit,
+                use_stage=line.use_stage,
+                timing_minutes=line.timing_minutes,
+                percentage=line.percentage,
+                notes=line.notes,
             )
         )
     source_steps = list(

@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { ApiError, apiFetch } from "@/lib/api";
+import { newOperationId } from "@/lib/brew";
 
 type Recipe = {
   id: string;
@@ -61,12 +62,19 @@ export default function Dashboard() {
     setBusy(true);
     setError("");
     try {
-      const session = await apiFetch<{ id: string }>("/brew-sessions", {
+      const created = await apiFetch<{ id: string }>("/brew-sessions", {
         method: "POST",
-        body: JSON.stringify({ recipe_version_id: recipe.version_id }),
+        body: JSON.stringify({ recipe_version_id: recipe.version_id, operation_id: newOperationId() }),
       });
-      await apiFetch(`/brew-sessions/${session.id}/start`, { method: "POST" });
-      router.push(`/brew/${session.id}`);
+      const details = await apiFetch<{ revision: number }>(`/brew-sessions/${created.id}`);
+      await apiFetch(`/brew-sessions/${created.id}/start`, {
+        method: "POST",
+        body: JSON.stringify({
+          operation_id: newOperationId(),
+          expected_revision: details.revision,
+        }),
+      });
+      router.push(`/brew/${created.id}`);
     } catch (reason) {
       setError(reason instanceof ApiError ? reason.message : "Brew session could not start.");
       setBusy(false);
@@ -81,7 +89,7 @@ export default function Dashboard() {
         <div>
           <div className="eyebrow">Measured process · Better beer</div>
           <h1>Plan once. Brew with confidence.</h1>
-          <p className="lede">Version the plan, capture the Mash, and keep every observation auditable.</p>
+          <p className="lede">Run the full Brew-Day OS from pre-brew through yeast-pitch with auditable observations.</p>
         </div>
         <div className="hero-stat"><strong>{recipes.length}</strong><span>recipe{recipes.length === 1 ? "" : "s"}</span></div>
       </section>

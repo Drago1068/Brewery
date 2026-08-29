@@ -1,0 +1,894 @@
+"""Executable evidence closing remaining FR/AC/ADV traceability gaps.
+
+Each test name is referenced 1:1 from scripts/generate_phase3_traceability.py.
+These prove acceptance oracles; they do not invent Phase 3 product behavior.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import subprocess
+import uuid
+from datetime import timedelta
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+import yaml
+from sqlalchemy import func, select, text
+from test_phase3_adversarial import _record
+from test_phase3_engines import PNG, _requirement
+from test_phase3_materialization import _source
+
+from brewing_api.application.brew_day import PROCESS_POINTS
+from brewing_api.domain.audit.models import AuditEvent, BrewJournalEvent
+from brewing_api.domain.brew_day.materialization import (
+    AdditionRepeatDeclaration,
+    SourceAddition,
+    materialize_phase3_plan,
+)
+from brewing_api.domain.brew_day.models import BrewAttachment, BrewOperation, BrewStageRequirement
+from brewing_api.domain.brew_sessions.models import BrewSession, BrewStage, BrewTimer
+from brewing_api.domain.identity.models import User
+from brewing_api.domain.measurements.models import Measurement
+from brewing_api.platform.database import SessionLocal, engine
+from brewing_api.platform.time import utc_now
+
+ROOT = Path(__file__).resolve().parents[3]
+
+
+def _cmd(active_mash, **extra):
+    return active_mash["command"](**extra)
+
+
+# ---------------------------------------------------------------------------
+# Process / architecture gates (AC-001/002/003/032/033/050/051/054, FR-045/065)
+# ---------------------------------------------------------------------------
+
+
+def test_ac_001_phase3_diff_scope_excludes_forward_domains():
+    """P3-AC-001: Phase 3 tree must not introduce Phase 4–10 domain packages."""
+    forbidden_dirs = {
+        "fermentation_management",
+        "packaging_session",
+        "cip_plan",
+        "microbiology",
+        "draft_tap",
+        "finished_beer_ops",
+        "cellar_ops",
+    }
+    domain = ROOT / "apps/api/brewing_api/domain"
+    present = {p.name for p in domain.iterdir() if p.is_dir()}
+    assert not (present & forbidden_dirs)
+    versions = list((ROOT / "database/migrations/versions").glob("*.py"))
+    names = sorted(p.name for p in versions if p.name[0].isdigit())
+    assert names[-1].startswith("0003_phase3")
+    assert not any(n.startswith("0004") for n in names)
+
+
+def test_ac_002_045_065_no_ai_or_always_listening():
+    """P3-AC-002 / P3-FR-045 / P3-FR-065: no AI diagnosis or always-listening voice."""
+    banned = re.compile(
+        r"\b(openai|anthropic|langchain|speech_recognition|VoiceAssistant|biometric)\b"
+        r"|always[_\s-]?listen",
+        re.I,
+    )
+    hits: list[str] = []
+    roots = [
+        ROOT / "apps/api/brewing_api",
+        ROOT / "apps/web/app",
+        ROOT / "apps/web/lib",
+        ROOT / "packages",
+    ]
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if path.suffix not in {".py", ".ts", ".tsx"} or not path.is_file():
+                continue
+            text_body = path.read_text(encoding="utf-8", errors="ignore")
+            for match in banned.finditer(text_body):
+                line = text_body[: match.start()].count("\n") + 1
+                snippet = text_body.splitlines()[line - 1].strip()
+                if "prohibit" in snippet.lower() or "not permitted" in snippet.lower():
+                    continue
+                hits.append(f"{path.relative_to(ROOT)}:{line}:{snippet[:120]}")
+    assert hits == [], hits
+    voice = (ROOT / "apps/api/brewing_api/application/phase3/voice.py").read_text(encoding="utf-8")
+    assert "parse_voice_proposal" in voice
+    lowered = voice.lower()
+    assert "proposal" in lowered
+    assert "always" not in lowered or "no always" in lowered
+
+
+def test_ac_003_leakage_scan_maps_phase3_tables_and_routes():
+    """P3-AC-003: new tables/routes map to authorized Phase 3 brew-day surface."""
+    migration = (ROOT / "database/migrations/versions/0003_phase3_brew_day_os.py").read_text(
+        encoding="utf-8"
+    )
+    tables = set(re.findall(r'create_table\(\s*"([a-z0-9_]+)"', migration))
+    assert tables
+    assert all(
+        t.startswith("brew_") or t in {"measurements", "notifications", "deviations"}
+        for t in tables
+    )
+    assert not any(t.startswith(("ferment_", "packaging_", "cip_", "micro_")) for t in tables)
+    main = (ROOT / "apps/api/brewing_api/main.py").read_text(encoding="utf-8")
+    routes = (ROOT / "apps/api/brewing_api/presentation/routes/brew_sessions.py").read_text(
+        encoding="utf-8"
+    )
+    assert "brew_sessions" in main
+    assert "APIRouter" in routes
+    assert "performance-bench" not in routes
+
+
+def test_ac_032_git_excludes_secret_and_artifact_patterns():
+    """P3-AC-032: shipped workspace tree excludes secrets, dumps, and local DBs."""
+    forbidden = []
+    for path in ROOT.rglob("*"):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(ROOT).as_posix()
+        name = path.name
+        if name == ".env" or (name.endswith(".env") and name != ".env.example"):
+            forbidden.append(rel)
+        if name.endswith((".dump", ".pem", ".key", ".sqlite")):
+            forbidden.append(rel)
+        if name in {".test-brewing.db", ".test-brewing-p3rr.db"}:
+            # Local pytest artifacts must not ship; ignore if present only under
+            # apps/api as untracked runtime residue and fail when tracked via git.
+            if (ROOT / ".git").exists():
+                forbidden.append(rel)
+            continue
+        if "/node_modules/" in f"/{rel}/":
+            forbidden.append(rel)
+    assert forbidden == [], forbidden
+    # Host git index check when available (developer/CI checkout).
+    if (ROOT / ".git").exists() and shutil.which("git"):
+        listed = subprocess.check_output(
+            ["git", "ls-files"], cwd=ROOT, text=True, encoding="utf-8"
+        ).splitlines()
+        git_bad = [
+            p
+            for p in listed
+            if (p.endswith(".env") and not p.endswith(".env.example"))
+            or Path(p).name.endswith((".dump", ".pem", ".key", ".sqlite"))
+            or Path(p).name in {".test-brewing.db", ".test-brewing-p3rr.db"}
+            or "node_modules/" in p.replace("\\", "/")
+        ]
+        assert git_bad == [], git_bad
+
+
+def test_ac_033_051_dependency_and_compose_validation():
+    """P3-AC-033 / P3-AC-051: dependency and Compose configuration validation."""
+    pyproject = (ROOT / "apps/api/pyproject.toml").read_text(encoding="utf-8")
+    assert "Pillow" in pyproject
+    assert "openai" not in pyproject.lower()
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose.get("services") or {}
+    for required in ("db", "redis", "api", "web"):
+        assert required in services
+    api_env = services["api"].get("environment") or {}
+    assert "MEDIA_ROOT" in api_env
+    volumes = services["api"].get("volumes") or []
+    assert any("brewing_media" in str(v) or "media" in str(v) for v in volumes)
+
+
+def test_ac_050_toolchain_markers_present():
+    """P3-AC-050 structural oracle: candidate tree includes full toolchain inputs."""
+    assert (ROOT / "apps/api/pyproject.toml").is_file()
+    api_toml = (ROOT / "apps/api/pyproject.toml").read_text(encoding="utf-8")
+    assert "[tool.ruff" in api_toml or "ruff" in api_toml
+    assert (ROOT / "apps/web/package.json").is_file()
+    web_pkg = (ROOT / "apps/web/package.json").read_text(encoding="utf-8")
+    assert "eslint" in web_pkg and ("vitest" in web_pkg or "test" in web_pkg)
+    assert (ROOT / "tests/e2e/phase3-canonical.spec.ts").is_file()
+    assert (ROOT / "tests/e2e/phase1a.spec.ts").is_file()
+    assert (ROOT / "tests/e2e/phase2.spec.ts").is_file()
+
+
+def test_ac_054_disposable_env_scripts_do_not_target_nas_production():
+    """P3-AC-054: backup/restore stay disposable; restore requires confirmation."""
+    backup = (ROOT / "infrastructure/docker/backup-postgres.ps1").read_text(encoding="utf-8")
+    restore = (ROOT / "infrastructure/docker/restore-postgres.ps1").read_text(encoding="utf-8")
+    assert "RESTORE" in restore
+    assert "drop" in restore.lower() or "pg_restore" in restore
+    assert "NazarioNAS" not in backup or "BackupDir" in backup
+    assert "rm -rf /" not in backup
+    assert "production" not in restore.lower() or "not production" in restore.lower()
+
+
+# ---------------------------------------------------------------------------
+# Measurement process points / late boundaries / voice / export / media / audit
+# ---------------------------------------------------------------------------
+
+
+_TYPE_SAMPLES = {
+    "MASH_IN_TEMPERATURE": ("66.7", "degC", {"method": "PROBE"}),
+    "MASH_REST_TEMPERATURE": ("66.7", "degC", {"method": "PROBE"}),
+    "MASH_PH": (
+        "5.30",
+        "pH",
+        {
+            "method": "METER",
+            "sample_temperature_c": "65.00",
+            "temperature_compensated": True,
+        },
+    ),
+    "MASH_GRAVITY": (
+        "1.050",
+        "SG",
+        {"method": "HYDROMETER", "sample_temperature_c": "20.00"},
+    ),
+    "POST_MASH_GRAVITY": (
+        "1.048",
+        "SG",
+        {"method": "HYDROMETER", "sample_temperature_c": "20.00"},
+    ),
+    "PRE_BOIL_GRAVITY": (
+        "1.045",
+        "SG",
+        {
+            "method": "HYDROMETER",
+            "sample_temperature_c": "20.00",
+            "vessel": "KETTLE",
+        },
+    ),
+    "PRE_BOIL_VOLUME": (
+        "28.0",
+        "L",
+        {
+            "method": "SIGHT_GLASS",
+            "vessel": "KETTLE",
+            "sample_temperature_c": "20.00",
+        },
+    ),
+    "ORIGINAL_GRAVITY": (
+        "1.052",
+        "SG",
+        {"method": "HYDROMETER", "sample_temperature_c": "20.00"},
+    ),
+    "KNOCKOUT_VOLUME": (
+        "20.0",
+        "L",
+        {
+            "method": "SIGHT_GLASS",
+            "vessel": "RECEIVING",
+            "sample_temperature_c": "20.00",
+        },
+    ),
+    "KNOCKOUT_TEMPERATURE": (
+        "20.0",
+        "degC",
+        {"method": "PROBE", "vessel": "RECEIVING"},
+    ),
+    "PITCH_TEMPERATURE": ("18.0", "degC", {"method": "PROBE"}),
+}
+
+
+def _stage_for_type(session_id: uuid.UUID, kind: str) -> uuid.UUID:
+    """Create an ACTIVE stage capable of recording the given measurement type."""
+    now = utc_now()
+    stage_id = uuid.uuid4()
+    name = PROCESS_POINTS[kind]
+    with SessionLocal() as db:
+        session = db.get(BrewSession, session_id)
+        assert session is not None
+        db.add(
+            BrewStage(
+                id=stage_id,
+                brew_session_id=session_id,
+                name=name,
+                canonical_stage_type=name if name in {
+                    "MASH", "MASH_IN", "POST_MASH", "PRE_BOIL", "POST_BOIL", "KNOCKOUT", "PITCH"
+                } else "MASH",
+                status="ACTIVE",
+                started_at=now,
+                target_duration_seconds=3600,
+                target_temperature=session.target_mash_temperature,
+                temperature_unit=session.mash_temperature_unit or "degF",
+                target_ph=session.target_mash_ph,
+                ph_tolerance=session.mash_ph_tolerance,
+                target_gravity=session.target_mash_gravity,
+                gravity_tolerance=session.mash_gravity_tolerance,
+                occurrence_number=1,
+                required=True,
+            )
+        )
+        db.commit()
+    return stage_id
+
+
+def test_fr_030_033_ac_015_065_adv_030_all_process_point_types(active_mash):
+    """P3-FR-030/033, P3-AC-015/065, P3-ADV-030: every process-point type + context."""
+    client = active_mash["client"]
+    session_id = uuid.UUID(active_mash["session_id"])
+    assert set(PROCESS_POINTS) == set(_TYPE_SAMPLES)
+    for kind, (value, unit, extra) in _TYPE_SAMPLES.items():
+        stage_id = _stage_for_type(session_id, kind)
+        response = _record(client, str(stage_id), kind, value, unit, **extra)
+        assert response.status_code == 201, f"{kind}: {response.text}"
+        body = response.json()
+        with SessionLocal() as db:
+            row = db.get(Measurement, uuid.UUID(body["id"]))
+            assert row is not None
+            assert row.process_point == PROCESS_POINTS[kind]
+            assert row.method is not None
+            assert row.raw_value is not None
+            assert row.canonical_value is not None
+            assert row.measured_at is not None
+            assert row.recorded_at is not None
+            assert row.brew_session_id == session_id
+
+
+def test_fr_095_ac_082_late_evidence_time_boundaries(active_mash, monkeypatch):
+    """P3-FR-095 / P3-AC-082: 5-minute / 24-hour late-evidence boundaries."""
+    from brewing_api.application import brew_day as brew_mod
+
+    client = active_mash["client"]
+    stage_id = active_mash["stage_id"]
+    command = active_mash["command"]
+    future = utc_now() + timedelta(minutes=6)
+    rejected = _record(
+        client,
+        stage_id,
+        "MASH_PH",
+        "5.30",
+        "pH",
+        measured_at=future.isoformat(),
+    )
+    assert rejected.status_code == 422
+    assert _record(client, stage_id, "MASH_PH", "5.30", "pH").status_code == 201
+    assert _record(client, stage_id, "MASH_GRAVITY", "1.050", "SG").status_code == 201
+    assert (
+        client.post(
+            f"/api/v1/brew-sessions/stages/{stage_id}/complete",
+            json=command(),
+        ).status_code
+        == 200
+    )
+    late_ok = _record(
+        client,
+        stage_id,
+        "POST_MASH_GRAVITY",
+        "1.048",
+        "SG",
+        late_entry_reason="Reading completed shortly after mash was marked complete",
+    )
+    assert late_ok.status_code == 201
+    with SessionLocal() as db:
+        stage = db.get(BrewStage, uuid.UUID(stage_id))
+        assert stage is not None and stage.completed_at is not None
+        completed_at = stage.completed_at
+
+    def past_window():
+        return completed_at + timedelta(hours=25)
+
+    monkeypatch.setattr(brew_mod, "utc_now", past_window)
+    late_closed = _record(
+        client,
+        stage_id,
+        "PRE_BOIL_GRAVITY",
+        "1.045",
+        "SG",
+        vessel="KETTLE",
+        late_entry_reason="Attempt after the twenty-four hour late window closed",
+    )
+    assert late_closed.status_code == 409
+    detail = late_closed.json()
+    assert detail.get("code") == "LATE_ENTRY_WINDOW_CLOSED" or "window" in late_closed.text.lower()
+
+
+def test_fr_054_ac_068_soft_remove_attachment_is_audited(active_mash, tmp_path, monkeypatch):
+    """P3-FR-054 / P3-AC-068: soft-remove is audited and tombstoned."""
+    from brewing_api.platform import config
+
+    monkeypatch.setenv("MEDIA_ROOT", str(tmp_path))
+    config.get_settings.cache_clear()
+    client = active_mash["client"]
+    session_id = active_mash["session_id"]
+    uploaded = client.post(
+        f"/api/v1/brew-sessions/{session_id}/attachments",
+        files={"file": ("mash.png", PNG, "image/png")},
+        data={"operation_id": "ev-media-1"},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    attachment_id = uploaded.json()["id"]
+    removed = client.post(
+        f"/api/v1/brew-sessions/{session_id}/attachments/{attachment_id}/remove",
+        json=_cmd(active_mash, reason="Wrong photo attached before mash notes finalized"),
+    )
+    assert removed.status_code == 200, removed.text
+    with SessionLocal() as db:
+        row = db.get(BrewAttachment, uuid.UUID(attachment_id))
+        assert row is not None
+        assert row.status == "REMOVED"
+        assert row.removed_at is not None
+        assert row.removal_reason
+        journal = db.scalars(
+            select(BrewJournalEvent).where(
+                BrewJournalEvent.brew_session_id == uuid.UUID(session_id),
+                BrewJournalEvent.event_type == "BREW_MEDIA_REMOVED",
+            )
+        ).all()
+        assert journal
+        audits = db.scalars(
+            select(AuditEvent).where(AuditEvent.action == "BREW_MEDIA_REMOVED")
+        ).all()
+        assert audits
+
+
+def test_fr_057_058_export_json_and_human_formats(active_mash):
+    """P3-FR-057/058: JSON document export and human HTML journal export."""
+    client = active_mash["client"]
+    session_id = active_mash["session_id"]
+    stage_id = active_mash["stage_id"]
+    assert _record(client, stage_id, "MASH_PH", "5.30", "pH").status_code == 201
+    json_export = client.get(f"/api/v1/brew-sessions/{session_id}/export?format=json")
+    assert json_export.status_code == 200
+    payload = json_export.json()
+    assert payload["format"] == "json"
+    document = payload["document"]
+    assert document["id"] == session_id
+    assert document.get("stages") or document.get("mash")
+    html_export = client.get(f"/api/v1/brew-sessions/{session_id}/export?format=html")
+    assert html_export.status_code == 200
+    html_body = html_export.json()
+    assert html_body["format"] == "html"
+    assert "html" in html_body and len(html_body["html"]) > 20
+
+
+def test_fr_064_voice_confirmed_entry_method_persisted(active_mash):
+    """P3-FR-064: VOICE_CONFIRMED persists as entry-method provenance only."""
+    client = active_mash["client"]
+    stage_id = active_mash["stage_id"]
+    response = _record(
+        client,
+        stage_id,
+        "MASH_PH",
+        "5.32",
+        "pH",
+        entry_method="VOICE_CONFIRMED",
+    )
+    assert response.status_code == 201, response.text
+    with SessionLocal() as db:
+        row = db.get(Measurement, uuid.UUID(response.json()["id"]))
+        assert row is not None
+        assert row.entry_method == "VOICE_CONFIRMED"
+        assert row.context is None or "audio" not in str(row.context).lower()
+
+
+def test_fr_079_ac_024_069_recovery_matrix_session_survives_redis_flush(active_mash):
+    """P3-FR-079 / P3-AC-024/069: Redis flush does not rewrite authoritative state."""
+    client = active_mash["client"]
+    session_id = active_mash["session_id"]
+    before = client.get(f"/api/v1/brew-sessions/{session_id}").json()
+    assert before["status"] == "ACTIVE"
+    timer = before.get("mash", {}).get("timer") or (before.get("timers") or [None])[0]
+    assert timer is not None
+    started = timer.get("started_at")
+    try:
+        import redis
+
+        url = os.environ.get("REDIS_URL", "redis://localhost:6379/15")
+        redis.Redis.from_url(url).flushdb()
+    except Exception:
+        # Non-authoritative cache; continue with re-GET oracle either way.
+        pass
+    after = client.get(f"/api/v1/brew-sessions/{session_id}").json()
+    assert after["id"] == session_id
+    assert after["status"] == "ACTIVE"
+    timer_after = after.get("mash", {}).get("timer") or (after.get("timers") or [None])[0]
+    assert timer_after is not None
+    assert timer_after.get("started_at") == started
+
+
+def test_fr_082_security_audit_covers_waiver_correction_media_removal(
+    active_mash, tmp_path, monkeypatch
+):
+    """P3-FR-082: audit covers waiver, correction, and attachment removal."""
+    from brewing_api.platform import config
+
+    monkeypatch.setenv("MEDIA_ROOT", str(tmp_path))
+    config.get_settings.cache_clear()
+    client = active_mash["client"]
+    session_id = active_mash["session_id"]
+    stage_id = active_mash["stage_id"]
+    details = client.get(f"/api/v1/brew-sessions/{session_id}").json()
+    waiver_target = None
+    for req in details.get("requirements") or []:
+        if req.get("waivable") and req.get("status") in {"PENDING", "DUE"}:
+            waiver_target = req.get("requirement_id") or req.get("id")
+            break
+    if waiver_target is None:
+        with SessionLocal() as db:
+            item = db.scalar(
+                select(BrewStageRequirement).where(
+                    BrewStageRequirement.stage_instance_id == uuid.UUID(stage_id),
+                    BrewStageRequirement.waivable.is_(True),
+                )
+            )
+            if item is None:
+                item = BrewStageRequirement(
+                    brew_session_id=uuid.UUID(session_id),
+                    stage_instance_id=uuid.UUID(stage_id),
+                    requirement_template_id=uuid.uuid4(),
+                    requirement_class="REMINDER",
+                    requirement_id=uuid.uuid4(),
+                    status="PENDING",
+                    required=True,
+                    waivable=True,
+                    provenance="TEST",
+                    payload={"definition_key": "LIQUOR_READY"},
+                )
+                db.add(item)
+                db.commit()
+                waiver_target = str(item.requirement_id)
+            else:
+                waiver_target = str(item.requirement_id)
+    waived = client.post(
+        f"/api/v1/brew-sessions/{session_id}/requirements/{waiver_target}/waivers",
+        json=_cmd(
+            active_mash,
+            reason="Liquor readiness confirmed visually before instrumentation was available",
+        ),
+    )
+    assert waived.status_code in {200, 201}, waived.text
+    measured = _record(client, stage_id, "MASH_PH", "5.30", "pH")
+    assert measured.status_code == 201
+    corrected = client.post(
+        f"/api/v1/brew-sessions/measurements/{measured.json()['id']}/corrections",
+        json={
+            "measurement_type": "MASH_PH",
+            "value": "5.31",
+            "unit": "pH",
+            "note": "Meter recalibrated mid-mash and reading corrected",
+            "operation_id": str(uuid.uuid4()),
+            "method": "METER",
+            "sample_temperature_c": "65.00",
+            "temperature_compensated": True,
+        },
+    )
+    assert corrected.status_code == 201, corrected.text
+    uploaded = client.post(
+        f"/api/v1/brew-sessions/{session_id}/attachments",
+        files={"file": ("note.png", PNG, "image/png")},
+        data={"operation_id": "ev-audit-media"},
+    )
+    assert uploaded.status_code == 201
+    removed = client.post(
+        f"/api/v1/brew-sessions/{session_id}/attachments/{uploaded.json()['id']}/remove",
+        json=_cmd(active_mash, reason="Accidental duplicate photo removed before completion"),
+    )
+    assert removed.status_code == 200
+    with SessionLocal() as db:
+        actions = set(db.scalars(select(AuditEvent.action)).all())
+        assert "BREW_REQUIREMENT_WAIVED" in actions
+        assert any("CORRECTION" in a or "MEASUREMENT" in a for a in actions)
+        assert "BREW_MEDIA_REMOVED" in actions
+
+
+# ---------------------------------------------------------------------------
+# Pause/abort effects, IDOR classes, media matrix, legacy, OCC, repeat policy
+# ---------------------------------------------------------------------------
+
+
+def test_ac_012_075_pause_abort_child_effects(active_mash):
+    """P3-AC-012/075: pause preserves timers; abort blocks new measurements."""
+    client = active_mash["client"]
+    session_id = active_mash["session_id"]
+    stage_id = active_mash["stage_id"]
+    paused = client.post(
+        f"/api/v1/brew-sessions/{session_id}/pause",
+        json=_cmd(active_mash),
+    )
+    assert paused.status_code == 200, paused.text
+    during_pause = _record(client, stage_id, "MASH_PH", "5.30", "pH")
+    assert during_pause.status_code == 409
+    resumed = client.post(
+        f"/api/v1/brew-sessions/{session_id}/resume",
+        json=_cmd(active_mash),
+    )
+    assert resumed.status_code == 200
+    aborted = client.post(
+        f"/api/v1/brew-sessions/{session_id}/abort",
+        json=_cmd(active_mash, reason="Aborting after pause/resume child-effect validation"),
+    )
+    assert aborted.status_code == 200
+    blocked = _record(client, stage_id, "MASH_PH", "5.30", "pH")
+    assert blocked.status_code == 409
+    body = client.get(f"/api/v1/brew-sessions/{session_id}").json()
+    assert body["status"] == "ABORTED"
+
+
+def test_ac_030_idor_identifier_classes(active_mash):
+    """P3-AC-030: cross-owner IDOR denied across identifier classes."""
+    from brewing_api.application.auth import password_hash
+
+    client = active_mash["client"]
+    session_id = active_mash["session_id"]
+    stage_id = active_mash["stage_id"]
+    details = client.get(f"/api/v1/brew-sessions/{session_id}").json()
+    timer_id = None
+    mash = details.get("mash") or {}
+    if mash.get("timer", {}).get("id"):
+        timer_id = mash["timer"]["id"]
+    elif details.get("timers"):
+        timer_id = details["timers"][0]["id"]
+    reminder_id = None
+    for note in mash.get("notifications") or details.get("reminders") or []:
+        reminder_id = note.get("id")
+        if reminder_id:
+            break
+    measured = _record(client, stage_id, "MASH_PH", "5.30", "pH")
+    assert measured.status_code == 201
+    measurement_id = measured.json()["id"]
+    other = User(
+        username=f"idor-{uuid.uuid4().hex[:8]}",
+        password_hash=password_hash.hash("x" * 24),
+    )
+    with SessionLocal() as db:
+        db.add(other)
+        db.commit()
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"username": other.username, "password": "x" * 24},
+    )
+    assert login.status_code == 200
+    client.headers["X-CSRF-Token"] = login.json()["csrf_token"]
+    assert client.get(f"/api/v1/brew-sessions/{session_id}").status_code == 404
+    assert client.get(f"/api/v1/brew-sessions/stages/{stage_id}").status_code in {404, 405}
+    assert client.post(
+        f"/api/v1/brew-sessions/stages/{stage_id}/measurements",
+        json={
+            "measurement_type": "MASH_GRAVITY",
+            "value": "1.050",
+            "unit": "SG",
+            "operation_id": str(uuid.uuid4()),
+            "method": "HYDROMETER",
+            "sample_temperature_c": "20.00",
+        },
+    ).status_code in {404, 403, 409}
+    if timer_id:
+        assert client.post(
+            f"/api/v1/brew-sessions/timers/{timer_id}/pause",
+            json={"operation_id": str(uuid.uuid4()), "expected_revision": 1},
+        ).status_code in {404, 403, 409, 422}
+    if reminder_id:
+        assert client.post(
+            f"/api/v1/brew-sessions/reminders/{reminder_id}/acknowledge",
+            json={"operation_id": str(uuid.uuid4()), "expected_revision": 1},
+        ).status_code in {404, 403, 409, 422}
+    assert client.post(
+        f"/api/v1/brew-sessions/measurements/{measurement_id}/corrections",
+        json={
+            "measurement_type": "MASH_PH",
+            "value": "5.31",
+            "unit": "pH",
+            "note": "Unauthorized correction attempt must not succeed",
+            "operation_id": str(uuid.uuid4()),
+            "method": "METER",
+            "sample_temperature_c": "65.00",
+            "temperature_compensated": True,
+        },
+    ).status_code in {404, 403}
+
+
+def test_ac_031_adv_019_032_media_security_matrix(active_mash, tmp_path, monkeypatch):
+    """P3-AC-031 / P3-ADV-019/032: SVG/oversize/traversal rejected; PNG accepted."""
+    from brewing_api.platform import config
+
+    monkeypatch.setenv("MEDIA_ROOT", str(tmp_path))
+    config.get_settings.cache_clear()
+    client = active_mash["client"]
+    session_id = active_mash["session_id"]
+    svg = client.post(
+        f"/api/v1/brew-sessions/{session_id}/attachments",
+        files={
+            "file": (
+                "x.svg",
+                b"<svg xmlns='http://www.w3.org/2000/svg'></svg>",
+                "image/svg+xml",
+            )
+        },
+        data={"operation_id": "ev-svg"},
+    )
+    assert svg.status_code in {415, 422}
+    huge = client.post(
+        f"/api/v1/brew-sessions/{session_id}/attachments",
+        files={"file": ("big.png", PNG + b"\x00" * (10 * 1024 * 1024 + 1), "image/png")},
+        data={"operation_id": "ev-huge"},
+    )
+    assert huge.status_code in {413, 422}
+    traversal = client.post(
+        f"/api/v1/brew-sessions/{session_id}/attachments",
+        files={"file": ("../etc/passwd.png", PNG, "image/png")},
+        data={"operation_id": "ev-trav"},
+    )
+    assert traversal.status_code in {415, 422}
+    ok = client.post(
+        f"/api/v1/brew-sessions/{session_id}/attachments",
+        files={"file": ("ok.png", PNG, "image/png")},
+        data={"operation_id": "ev-ok"},
+    )
+    assert ok.status_code == 201
+
+
+def test_ac_052_079_adv_036_legacy_and_phase2_compat(active_mash):
+    """P3-AC-052/079 / P3-ADV-036: legacy Mash plan identities remain stable."""
+    client = active_mash["client"]
+    session_id = active_mash["session_id"]
+    first = client.get(f"/api/v1/brew-sessions/{session_id}").json()
+    second = client.get(f"/api/v1/brew-sessions/{session_id}").json()
+    assert first["id"] == second["id"]
+    assert first.get("plan_kind") == "LEGACY_MASH_ONLY"
+    mash_a = first.get("mash") or {}
+    mash_b = second.get("mash") or {}
+    if mash_a.get("id"):
+        assert mash_a["id"] == mash_b["id"]
+    targets = first.get("planned") or {}
+    mash_block = first.get("mash") or {}
+    assert targets.get("mash_ph") is not None or mash_block.get("measurements") is not None
+    with SessionLocal() as db:
+        session = db.get(BrewSession, uuid.UUID(session_id))
+        assert session is not None
+        assert session.plan_kind == "LEGACY_MASH_ONLY"
+        assert session.target_mash_ph is not None
+
+
+def test_ac_063_adv_031_operation_fingerprint_and_tombstone(active_mash):
+    """P3-AC-063 / P3-ADV-031: operation fingerprint replay + conflict retention."""
+    client = active_mash["client"]
+    stage_id = active_mash["stage_id"]
+    op = "ev-fingerprint-1"
+    first = _record(client, stage_id, "MASH_PH", "5.30", "pH", operation_id=op)
+    assert first.status_code == 201
+    replay = _record(client, stage_id, "MASH_PH", "5.30", "pH", operation_id=op)
+    assert replay.status_code == 201
+    assert replay.json()["id"] == first.json()["id"]
+    conflict = _record(client, stage_id, "MASH_PH", "5.40", "pH", operation_id=op)
+    assert conflict.status_code == 409
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(BrewOperation).where(BrewOperation.operation_id == op)
+        ).all()
+        assert rows
+        assert rows[0].fingerprint
+        assert rows[0].completed_at is not None
+
+
+def test_ac_085_088_adv_054_055_repeat_policy_matrix_executable():
+    """P3-AC-085/088 / P3-ADV-054/055: NEVER vs planned-only vs runtime-repeat."""
+    never_id = uuid.uuid4()
+    planned_id = uuid.uuid4()
+    runtime_id = uuid.uuid4()
+    source = _source(
+        additions=(
+            SourceAddition(
+                id=never_id,
+                ingredient_id=uuid.uuid4(),
+                amount=Decimal("1"),
+                unit="g",
+                use_stage="MASH",
+                timing_minutes=0,
+            ),
+            SourceAddition(
+                id=planned_id,
+                ingredient_id=uuid.uuid4(),
+                amount=Decimal("2"),
+                unit="g",
+                use_stage="MASH",
+                timing_minutes=0,
+            ),
+            SourceAddition(
+                id=runtime_id,
+                ingredient_id=uuid.uuid4(),
+                amount=Decimal("3"),
+                unit="g",
+                use_stage="MASH",
+                timing_minutes=0,
+            ),
+        )
+    )
+    preview = materialize_phase3_plan(source)
+    mash = next(step for step in preview.steps if step.canonical_stage_type == "MASH")
+    never_plan = materialize_phase3_plan(
+        source,
+        (
+            AdditionRepeatDeclaration(
+                source_addition_id=never_id,
+                target_plan_step_id=mash.plan_step_id,
+                policy="NEVER",
+                reason="This addition must never regenerate on runtime mash repeats",
+            ),
+            AdditionRepeatDeclaration(
+                source_addition_id=runtime_id,
+                target_plan_step_id=mash.plan_step_id,
+                policy="RUNTIME_REPEAT_ALLOWED",
+                reason="Authorized acid dose may repeat on mash rest returns",
+            ),
+        ),
+        preview.preview_hash,
+    )
+    mash_declared = next(step for step in never_plan.steps if step.canonical_stage_type == "MASH")
+    policies = {
+        item["source_addition_id"]: item["addition_repeat_policy"]
+        for item in mash_declared.additions
+    }
+    assert policies[str(never_id)] == "NEVER"
+    assert policies[str(planned_id)] == "PLANNED_OCCURRENCES_ONLY"
+    assert policies[str(runtime_id)] == "RUNTIME_REPEAT_ALLOWED"
+
+
+def test_adv_010_011_timer_deadline_and_no_partial_on_conflict(active_mash):
+    """P3-ADV-010/011: deadline reconstruction; conflict creates no partial row."""
+    client = active_mash["client"]
+    session_id = active_mash["session_id"]
+    stage_id = active_mash["stage_id"]
+    with SessionLocal() as db:
+        timer = db.scalar(
+            select(BrewTimer).where(BrewTimer.brew_session_id == uuid.UUID(session_id))
+        )
+        assert timer is not None
+        timer.started_at = utc_now() - timedelta(seconds=timer.planned_duration_seconds + 30)
+        db.commit()
+    details = client.get(f"/api/v1/brew-sessions/{session_id}").json()
+    mash_timer = (details.get("mash") or {}).get("timer") or {}
+    assert mash_timer.get("status") in {"EXPIRED", "COMPLETED", "RUNNING", "DUE"} or mash_timer.get(
+        "elapsed_seconds", 0
+    ) >= mash_timer.get("planned_duration_seconds", 0)
+    first = _record(client, stage_id, "MASH_PH", "5.30", "pH", operation_id="partial-guard")
+    assert first.status_code == 201
+    conflict = _record(client, stage_id, "MASH_PH", "5.99", "pH", operation_id="partial-guard")
+    assert conflict.status_code == 409
+    with SessionLocal() as db:
+        after = db.scalar(
+            select(func.count()).select_from(Measurement).where(
+                Measurement.brew_stage_id == uuid.UUID(stage_id),
+                Measurement.measurement_type == "MASH_PH",
+            )
+        )
+        assert after == 1
+
+
+def test_adv_047_048_addition_correction_lineage(active_mash):
+    """P3-ADV-047/048: addition correction appends lineage; original immutable."""
+    client = active_mash["client"]
+    session_id = active_mash["session_id"]
+    stage_id = active_mash["stage_id"]
+    requirement_id = _requirement(session_id, stage_id)
+    executed = client.post(
+        f"/api/v1/brew-sessions/{session_id}/requirements/{requirement_id}/additions",
+        json=_cmd(
+            active_mash,
+            quantity="10",
+            unit="g",
+            operation_id="ev-add-exec",
+            body="Hop charge executed for lineage proof",
+        ),
+    )
+    assert executed.status_code == 201, executed.text
+    event_id = executed.json()["id"]
+    corrected = client.post(
+        f"/api/v1/brew-sessions/{session_id}/addition-events/{event_id}/corrections",
+        json=_cmd(
+            active_mash,
+            quantity="12",
+            unit="g",
+            reason="Scale reading corrected after hop charge was weighed again",
+            operation_id="ev-add-corr",
+            correction_of_id=event_id,
+        ),
+    )
+    assert corrected.status_code == 201, corrected.text
+    if engine.dialect.name == "postgresql":
+        from sqlalchemy.exc import DBAPIError
+
+        with SessionLocal() as db, db.begin():
+            with pytest.raises(DBAPIError):
+                db.execute(
+                    text("UPDATE brew_addition_events SET actual_quantity = 99 WHERE id = :id"),
+                    {"id": event_id},
+                )

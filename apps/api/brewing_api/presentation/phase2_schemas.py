@@ -185,8 +185,14 @@ class RecipeIngredientInput(BaseModel):
     amount: Decimal = Field(gt=0)
     unit: CanonicalUnit
     use_stage: Literal[
-        "MASH", "FIRST_WORT", "BOIL", "WHIRLPOOL", "DRY_HOP", "FERMENTATION",
-        "PACKAGING", "MISCELLANEOUS",
+        "MASH",
+        "FIRST_WORT",
+        "BOIL",
+        "WHIRLPOOL",
+        "DRY_HOP",
+        "FERMENTATION",
+        "PACKAGING",
+        "MISCELLANEOUS",
     ]
     timing_minutes: int | None = Field(default=None, ge=0, le=10080)
     percentage: Decimal | None = Field(default=None, ge=0, le=100)

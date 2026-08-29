@@ -21,4 +21,3 @@ def current_user(
 
 
 CurrentUser = Annotated[User, Depends(current_user)]
-

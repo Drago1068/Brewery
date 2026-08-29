@@ -1,2 +1,1 @@
 """Measurement and deviation domain."""
-

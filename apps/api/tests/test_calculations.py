@@ -19,4 +19,3 @@ def test_variance_outside_tolerance():
 def test_negative_tolerance_is_rejected():
     with pytest.raises(ValueError, match="cannot be negative"):
         compare_measurement(Decimal("1"), Decimal("1"), Decimal("-0.1"))
-

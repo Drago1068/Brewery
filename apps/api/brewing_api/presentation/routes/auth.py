@@ -10,9 +10,9 @@ from brewing_api.presentation.schemas import LoginRequest, UserResponse
 router = APIRouter(prefix="/auth", tags=["identity"])
 
 
-@router.post("/login", response_model=UserResponse)
-def login(command: LoginRequest, response: Response, db: Db, settings: AppSettings) -> UserResponse:
-    user, token = auth_service.login(db, settings, command.username, command.password)
+@router.post("/login")
+def login(command: LoginRequest, response: Response, db: Db, settings: AppSettings) -> dict:
+    user, token, csrf = auth_service.login(db, settings, command.username, command.password)
     response.set_cookie(
         "brewing_session",
         token,
@@ -24,7 +24,37 @@ def login(command: LoginRequest, response: Response, db: Db, settings: AppSettin
     )
     audit(db, user.id, "USER_LOGGED_IN", "User", user.id)
     db.commit()
-    return UserResponse.model_validate(user)
+    return {"id": str(user.id), "username": user.username, "csrf_token": csrf}
+
+
+@router.get("/csrf")
+def csrf(
+    user: CurrentUser,
+    db: Db,
+    settings: AppSettings,
+    brewing_session: Annotated[str | None, Cookie()] = None,
+) -> dict:
+    from sqlalchemy import select
+
+    from brewing_api.application.auth import token_digest
+    from brewing_api.application.phase3.tokens import csrf_digest, generate_csrf_token
+    from brewing_api.domain.identity.models import AuthSession
+    from brewing_api.platform.time import utc_now
+
+    session = db.scalar(
+        select(AuthSession).where(
+            AuthSession.token_hash == token_digest(brewing_session or "", settings.session_secret),
+            AuthSession.expires_at > utc_now(),
+        )
+    )
+    if session is None:
+        from brewing_api.application.errors import DomainError
+
+        raise DomainError("Authentication required", 401)
+    token = generate_csrf_token()
+    session.csrf_token_hash = csrf_digest(token, settings.session_secret)
+    db.commit()
+    return {"csrf_token": token}
 
 
 @router.post("/logout", status_code=204)

@@ -174,9 +174,7 @@ def test_recipe_calculate_availability_scale_and_clone_preserves_original(authen
     clone_body = clone.json()
     assert clone_body["version_number"] == 2
     assert Decimal(clone_body["batch_size_liters"]) == Decimal("10")
-    reread = authenticated_client.get(
-        f"/api/v1/recipe-designs/{original['version_id']}"
-    ).json()
+    reread = authenticated_client.get(f"/api/v1/recipe-designs/{original['version_id']}").json()
     assert reread["version_number"] == 1
     assert Decimal(reread["batch_size_liters"]) == Decimal("20")
     assert reread["calculations"] == original["calculations"]
@@ -199,9 +197,7 @@ def test_rejects_mixed_units_and_cross_owner_is_not_exposed(authenticated_client
 
 def test_supplier_item_requires_owned_ingredient_and_matching_unit(authenticated_client):
     _equipment, _location, ingredients = create_foundation(authenticated_client)
-    supplier = authenticated_client.post(
-        "/api/v1/suppliers", json={"name": "Local Homebrew Shop"}
-    )
+    supplier = authenticated_client.post("/api/v1/suppliers", json={"name": "Local Homebrew Shop"})
     assert supplier.status_code == 201
     item = authenticated_client.post(
         f"/api/v1/suppliers/{supplier.json()['id']}/items",

@@ -32,4 +32,3 @@ def create(command: RecipeCreate, db: Db, user: CurrentUser) -> RecipeResponse:
 @router.get("", response_model=list[RecipeResponse])
 def list_recipes(db: Db, user: CurrentUser) -> list[RecipeResponse]:
     return [serialize(recipe, version) for recipe, version in service.list_owned_recipes(db, user)]
-

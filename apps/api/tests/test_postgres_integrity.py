@@ -44,7 +44,7 @@ def test_migration_head_and_immutability_are_enforced_by_postgres():
     with engine.connect() as connection, connection.begin():
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0002_phase2_brewing_core"
+            == "0003_phase3_brew_day_os"
         )
         connection.execute(
             text(
@@ -103,11 +103,11 @@ def test_migration_head_and_immutability_are_enforced_by_postgres():
         connection.execute(
             text(
                 "INSERT INTO measurements "
-                "(id, created_at, brew_stage_id, measurement_type, value, unit, "
+                "(id, created_at, brew_stage_id, brew_session_id, measurement_type, value, unit, "
                 "measured_at, provenance) "
-                "VALUES (:id, :now, :stage, 'MASH_PH', 5.3, 'pH', :now, 'BREWER')"
+                "VALUES (:id, :now, :stage, :session, 'MASH_PH', 5.3, 'pH', :now, 'BREWER')"
             ),
-            {"id": measurement_id, "now": now, "stage": stage_id},
+            {"id": measurement_id, "now": now, "stage": stage_id, "session": session_id},
         )
         savepoint = connection.begin_nested()
         with pytest.raises(DBAPIError, match="immutable"):

@@ -30,4 +30,6 @@ The production Docker build runs the Next.js TypeScript compilation.
 docker compose --profile test run --rm --build e2e
 ```
 
-The Playwright suite proves both the accepted Phase 1A Mash slice and the Phase 2 path from equipment/catalog/inventory through calculation, availability, scaling, immutable cloning, and original-version verification. Failures retain traces and screenshots inside the ephemeral test container.
+The Playwright suite proves the accepted Phase 1A Mash slice, the Phase 2 designer/inventory path, and the Phase 3 voice-confirmation boundary. Failures retain traces and screenshots inside the ephemeral test container.
+
+Phase 3 API/domain coverage lives in `apps/api/tests/test_phase3_*.py` and includes materialization, CSRF, reminder acknowledgement, timers, additions, waivers, media, idempotency, recovery, and a local p95 dashboard projection check.

@@ -62,6 +62,19 @@ ai_interactions
 audit_events
 notifications
 
+Phase 3 additive brew-day tables:
+brew_plan_steps
+brew_requirement_templates
+brew_stage_requirements
+brew_addition_events
+brew_addition_corrections
+brew_timer_revisions
+brew_waivers
+brew_attachments
+brew_operations
+brew_pitch_handoffs
+brew_reminder_history
+
 ## Data Rules
 - UUID identifiers unless a documented ADR selects otherwise.
 - UTC timestamps.

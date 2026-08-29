@@ -1,6 +1,20 @@
 """Imports all model modules for SQLAlchemy/Alembic metadata discovery."""
 
 from brewing_api.domain.audit.models import AuditEvent, BrewJournalEvent
+from brewing_api.domain.brew_day.models import (
+    BrewAdditionCorrection,
+    BrewAdditionEvent,
+    BrewAttachment,
+    BrewNote,
+    BrewOperation,
+    BrewPitchHandoff,
+    BrewPlanStep,
+    BrewReminderHistory,
+    BrewRequirementTemplate,
+    BrewStageRequirement,
+    BrewTimerRevision,
+    BrewWaiver,
+)
 from brewing_api.domain.brew_sessions.models import BrewSession, BrewStage, BrewTimer
 from brewing_api.domain.equipment.models import EquipmentProfile
 from brewing_api.domain.identity.models import AuthSession, User
@@ -25,10 +39,22 @@ from brewing_api.domain.recipes.models import (
 __all__ = [
     "AuditEvent",
     "AuthSession",
+    "BrewAdditionCorrection",
+    "BrewAdditionEvent",
+    "BrewAttachment",
     "BrewJournalEvent",
+    "BrewNote",
+    "BrewOperation",
+    "BrewPitchHandoff",
+    "BrewPlanStep",
+    "BrewReminderHistory",
+    "BrewRequirementTemplate",
     "BrewSession",
     "BrewStage",
+    "BrewStageRequirement",
     "BrewTimer",
+    "BrewTimerRevision",
+    "BrewWaiver",
     "Deviation",
     "EquipmentProfile",
     "Ingredient",

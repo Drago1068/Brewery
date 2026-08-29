@@ -45,3 +45,5 @@ During Mash:
 9. Record any deviation.
 10. Complete stage.
 11. Create automatic journal entries.
+
+Phase 3 extends this Mash slice across the canonical brew-day stages through yeast-pitch handoff. PostgreSQL remains authoritative for stage, timer, reminder, measurement, addition, waiver, and journal truth. Browser refresh reconstructs the current worksheet from `GET /api/v1/brew-sessions/{id}`. Phase 4 fermentation management is out of scope.

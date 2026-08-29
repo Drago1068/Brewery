@@ -1,12 +1,14 @@
 export type Measurement = {
   id: string;
-  type: "MASH_PH" | "MASH_GRAVITY";
+  type: string;
   value: string;
   unit: string;
   measured_at: string;
   note?: string;
   instrument?: string;
   provenance: string;
+  process_point?: string;
+  method?: string;
   correction_of_id?: string;
   deviation?: { variance: string; tolerance: string; status: string };
 };
@@ -16,6 +18,9 @@ export type BrewDetails = {
   status: string;
   started_at: string;
   completed_at?: string;
+  revision?: number;
+  plan_kind?: string | null;
+  logical_plan_hash?: string | null;
   planned: {
     mash_temperature: string;
     temperature_unit: string;
@@ -45,12 +50,75 @@ export type BrewDetails = {
       due_at: string;
     }>;
   };
+  current_stage?: {
+    id: string;
+    name: string;
+    status: string;
+    canonical_stage_type?: string;
+  };
+  stages?: Array<{
+    id: string;
+    name: string;
+    status: string;
+    occurrence_number: number;
+    required: boolean;
+    canonical_stage_type?: string;
+  }>;
+  timers?: Array<{
+    id: string;
+    name: string;
+    status: string;
+    planned_duration_seconds: number;
+    elapsed_seconds: number;
+    deadline_at?: string;
+    timer_type?: string;
+    brew_stage_id?: string;
+  }>;
+  due_reminders?: Array<{
+    id: string;
+    message: string;
+    status: string;
+    type: string;
+  }>;
+  requirements?: Array<{
+    id: string;
+    class: string;
+    status: string;
+    required: boolean;
+    waivable?: boolean;
+    stage_instance_id?: string;
+    definition_key?: string;
+    planned_amount?: string;
+    planned_unit?: string;
+  }>;
+  additions?: Array<{
+    id: string;
+    status: string;
+    actual_quantity?: string;
+    actual_unit?: string;
+    planned_amount?: string;
+    planned_unit?: string;
+    requirement_id?: string;
+  }>;
+  waivers?: Array<{ id: string; status: string; reason: string; requirement_id: string }>;
+  attachments?: Array<{ id: string; status: string; content_type: string; caption?: string }>;
+  notes?: Array<{ id: string; body: string; created_at: string }>;
+  next_required_action?: string | null;
   journal: Array<{
     id: string;
     event_type: string;
     message: string;
     created_at: string;
   }>;
+};
+
+export type VoiceProposal = {
+  transcript: string;
+  field: string;
+  value: string;
+  unit: string;
+  action: string;
+  committed: string;
 };
 
 export function formatDuration(totalSeconds: number): string {
@@ -75,3 +143,238 @@ export function variance(actual: string | undefined, target: string): string | u
   return `${value >= 0 ? "+" : ""}${value.toFixed(precision)}`;
 }
 
+const ONES: Record<string, number> = {
+  zero: 0,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+};
+const TENS: Record<string, number> = {
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
+};
+
+function numberFromTokens(tokens: string[]): string | null {
+  let whole: number | null = null;
+  const fraction: string[] = [];
+  let inFraction = false;
+  for (const token of tokens) {
+    if (token === "." || token === "point") {
+      inFraction = true;
+      continue;
+    }
+    if (/^\d+(\.\d+)?$/.test(token)) {
+      if (inFraction) fraction.push(token.replace(".", ""));
+      else whole = whole === null ? Number(token) : Number(`${whole}${token}`);
+      continue;
+    }
+    if (token in TENS) {
+      whole = whole === null ? TENS[token] : whole + TENS[token];
+      continue;
+    }
+    if (token in ONES) {
+      const value = ONES[token];
+      if (inFraction) fraction.push(String(value));
+      else if (whole !== null && whole >= 20 && whole % 10 === 0) whole += value;
+      else if (whole === null) whole = value;
+      else whole = Number(`${whole}${value}`);
+    }
+  }
+  if (whole === null && fraction.length === 0) return null;
+  if (fraction.length) return `${whole ?? 0}.${fraction.join("")}`;
+  return String(whole);
+}
+
+/** Idempotency keys must work on non-secure HTTP origins (Docker e2e uses http://web:3000). */
+export function newOperationId(): string {
+  const c = typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  if (c && typeof c.getRandomValues === "function") {
+    const bytes = new Uint8Array(16);
+    c.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  return `op-${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
+export type MeasurementContext = {
+  unit: string;
+  method: string;
+  methods: string[];
+  vessel?: string;
+  needsSampleTemperature: boolean;
+  needsCompensated: boolean;
+  needsVessel: boolean;
+};
+
+export const MEASUREMENT_CONTEXT: Record<string, MeasurementContext> = {
+  MASH_PH: {
+    unit: "pH",
+    method: "METER",
+    methods: ["METER", "STRIP", "OTHER"],
+    needsSampleTemperature: true,
+    needsCompensated: true,
+    needsVessel: false,
+  },
+  MASH_GRAVITY: {
+    unit: "SG",
+    method: "HYDROMETER",
+    methods: ["HYDROMETER", "REFRACTOMETER", "OTHER"],
+    needsSampleTemperature: true,
+    needsCompensated: false,
+    needsVessel: false,
+  },
+  POST_MASH_GRAVITY: {
+    unit: "SG",
+    method: "HYDROMETER",
+    methods: ["HYDROMETER", "REFRACTOMETER", "OTHER"],
+    needsSampleTemperature: true,
+    needsCompensated: false,
+    needsVessel: false,
+  },
+  PRE_BOIL_GRAVITY: {
+    unit: "SG",
+    method: "HYDROMETER",
+    methods: ["HYDROMETER", "REFRACTOMETER", "OTHER"],
+    vessel: "KETTLE",
+    needsSampleTemperature: true,
+    needsCompensated: false,
+    needsVessel: true,
+  },
+  PRE_BOIL_VOLUME: {
+    unit: "L",
+    method: "SIGHT_GLASS",
+    methods: ["SIGHT_GLASS", "GRADUATED", "SCALE", "OTHER"],
+    vessel: "KETTLE",
+    needsSampleTemperature: true,
+    needsCompensated: false,
+    needsVessel: true,
+  },
+  ORIGINAL_GRAVITY: {
+    unit: "SG",
+    method: "HYDROMETER",
+    methods: ["HYDROMETER", "REFRACTOMETER", "OTHER"],
+    needsSampleTemperature: true,
+    needsCompensated: false,
+    needsVessel: false,
+  },
+  MASH_IN_TEMPERATURE: {
+    unit: "degC",
+    method: "PROBE",
+    methods: ["THERMOMETER", "PROBE", "OTHER"],
+    needsSampleTemperature: false,
+    needsCompensated: false,
+    needsVessel: false,
+  },
+  MASH_REST_TEMPERATURE: {
+    unit: "degC",
+    method: "PROBE",
+    methods: ["THERMOMETER", "PROBE", "OTHER"],
+    needsSampleTemperature: false,
+    needsCompensated: false,
+    needsVessel: false,
+  },
+  KNOCKOUT_TEMPERATURE: {
+    unit: "degC",
+    method: "PROBE",
+    methods: ["THERMOMETER", "PROBE", "OTHER"],
+    vessel: "RECEIVING",
+    needsSampleTemperature: false,
+    needsCompensated: false,
+    needsVessel: true,
+  },
+  KNOCKOUT_VOLUME: {
+    unit: "L",
+    method: "SIGHT_GLASS",
+    methods: ["SIGHT_GLASS", "GRADUATED", "SCALE", "OTHER"],
+    vessel: "RECEIVING",
+    needsSampleTemperature: true,
+    needsCompensated: false,
+    needsVessel: true,
+  },
+  PITCH_TEMPERATURE: {
+    unit: "degC",
+    method: "PROBE",
+    methods: ["THERMOMETER", "PROBE", "OTHER"],
+    needsSampleTemperature: false,
+    needsCompensated: false,
+    needsVessel: false,
+  },
+};
+
+export function sessionCommand(
+  expectedRevision: number | undefined,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    operation_id: newOperationId(),
+    expected_revision: expectedRevision ?? 0,
+    ...extra,
+  };
+}
+
+export function measurementCommand(
+  type: string,
+  value: string,
+  observed: {
+    method: string;
+    sample_temperature_c?: string;
+    temperature_compensated?: boolean;
+    vessel?: string;
+    note?: string | null;
+    instrument?: string | null;
+    entry_method?: string;
+  },
+): Record<string, unknown> {
+  const defaults = MEASUREMENT_CONTEXT[type];
+  const payload: Record<string, unknown> = {
+    measurement_type: type,
+    value,
+    unit: defaults?.unit ?? "pH",
+    operation_id: newOperationId(),
+    method: observed.method,
+    entry_method: observed.entry_method ?? "MANUAL",
+    note: observed.note ?? null,
+    instrument: observed.instrument ?? null,
+  };
+  if (observed.sample_temperature_c !== undefined && observed.sample_temperature_c !== "") {
+    payload.sample_temperature_c = observed.sample_temperature_c;
+  }
+  if (observed.temperature_compensated !== undefined) {
+    payload.temperature_compensated = observed.temperature_compensated;
+  }
+  if (observed.vessel) payload.vessel = observed.vessel;
+  return payload;
+}
+
+export function parseVoiceProposal(transcript: string): VoiceProposal | null {
+  if (!transcript.trim()) return null;
+  const lowered = transcript.toLowerCase().trim();
+  const value = numberFromTokens(lowered.replaceAll("-", " ").split(/\s+/));
+  if (!value) return null;
+  const gravity = lowered.includes("gravity");
+  return {
+    transcript,
+    field: gravity ? "MASH_GRAVITY" : "MASH_PH",
+    value,
+    unit: gravity ? "SG" : "pH",
+    action: "record_measurement",
+    committed: "false",
+  };
+}

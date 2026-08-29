@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brewing_api.application.errors import DomainError
+from brewing_api.application.phase3.tokens import csrf_digest, generate_csrf_token
 from brewing_api.domain.identity.models import AuthSession, User
 from brewing_api.platform.config import Settings
 from brewing_api.platform.time import utc_now
@@ -31,7 +32,7 @@ def ensure_bootstrap_user(db: Session, settings: Settings) -> User:
     return user
 
 
-def login(db: Session, settings: Settings, username: str, password: str) -> tuple[User, str]:
+def login(db: Session, settings: Settings, username: str, password: str) -> tuple[User, str, str]:
     user = db.scalar(select(User).where(User.username == username, User.is_active.is_(True)))
     if user is None or not password_hash.verify(password, user.password_hash):
         raise DomainError("Invalid username or password", 401)
@@ -42,8 +43,11 @@ def login(db: Session, settings: Settings, username: str, password: str) -> tupl
         expires_at=utc_now() + timedelta(hours=settings.session_ttl_hours),
     )
     db.add(session)
+    db.flush()
+    csrf = generate_csrf_token()
+    session.csrf_token_hash = csrf_digest(csrf, settings.session_secret)
     db.commit()
-    return user, token
+    return user, token, csrf
 
 
 def authenticate(db: Session, settings: Settings, token: str | None) -> User:
@@ -73,4 +77,3 @@ def logout(db: Session, settings: Settings, token: str | None) -> None:
         if session:
             db.delete(session)
             db.commit()
-

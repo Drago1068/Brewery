@@ -6,6 +6,8 @@
 **/__pycache__
 **/.pytest_cache
 **/.test-brewing.db
+**/.test-brewing-p3rr.db
+**/*.sqlite
 playwright-report
 test-results
 backups

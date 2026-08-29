@@ -1,14 +1,14 @@
 # Brewing Platform
 
-Phase 2 accepted baseline for a private Brewing Knowledge & Execution Platform.
+Phase 3 Brew-Day OS implementation candidate on `codex/phase3-brew-day-os`. Phase 3 is not accepted and is not merged to `main`.
 
 ## Status
 
-**Phase 2 Brewing Core accepted baseline**
+**Phase 2 Brewing Core remains the accepted `v0.2.0-phase2` baseline**
 
-**Phase 3 awaiting explicit authorization**
+**Phase 3 Brew-Day OS implementation candidate — not yet independently reviewed or accepted**
 
-The platform now provides owned equipment profiles, a category-aware ingredient catalog, lot inventory derived from an append-only ledger, safety-stock warnings, a responsive Recipe Designer, immutable calculation snapshots, process-aware scaling, availability checks, and manual substitution metadata. The accepted Phase 1A Mash slice remains intact. Later roadmap phases are intentionally absent.
+The candidate adds persistent multi-stage brew-day execution through yeast-pitch handoff: plan materialization, stage lifecycle, PostgreSQL-authoritative timers/reminders/measurements/additions, CSRF, notes/photos, and journal projection. Phase 4 fermentation management and NAS production deployment are not authorized.
 
 ## Repository
 
@@ -19,8 +19,8 @@ packages/calculations    Deterministic brewing calculations
 packages/shared-types    Shared-contract boundary
 database/migrations      Alembic migrations and integrity triggers
 infrastructure/docker    Runtime images and backup/restore helpers
-tests/e2e                Complete Playwright vertical slice
-docs                     Architecture baseline and runbooks
+tests/e2e                Playwright Phase 1A, Phase 2, and Phase 3 slices
+docs                     Architecture baseline, specifications, and evidence
 ```
 
 ## Quick start
@@ -59,10 +59,8 @@ See [Local Development](docs/operations/LOCAL_DEVELOPMENT.md), [Database](docs/o
 
 The authoritative long-range product scope and phase boundaries are defined in the [Brewing Intelligence & Competition OS Master Plan](docs/product/BREWING_INTELLIGENCE_AND_COMPETITION_OS_MASTER_PLAN.md) and [Development Roadmap](docs/DEVELOPMENT_ROADMAP.md).
 
-The next engineering gate is the documentation-only [Phase 3 Brew-Day OS Engineering and Acceptance Specification](docs/specifications/PHASE_3_ENGINEERING_AND_ACCEPTANCE_SPECIFICATION.md). It is awaiting architecture review and does not authorize Phase 3 implementation.
-
-Use the [Codex Phase 3 Engineering Specification Independent Review Master Prompt](docs/prompts/CODEX_PHASE_3_ENGINEERING_SPECIFICATION_INDEPENDENT_REVIEW_MASTER_PROMPT.md) to perform the required review without editing the specification or starting implementation.
+The next independent review gate is Codex review of the Phase 3 implementation candidate on `codex/phase3-brew-day-os`. Phase 3 acceptance is not granted by this README. Phase 4 implementation and production deployment remain unauthorized.
 
 ## Scope gate
 
-Phase 2 is closed as the accepted `v0.2.0-phase2` baseline. Work stops here: Phase 3 and NAS production deployment are not authorized, and no fermentation, packaging, serving, advanced analytics/AI, IoT, or production deployment capability is included.
+Phase 2 remains the accepted `v0.2.0-phase2` baseline on `main`. Phase 3 implementation lives on `codex/phase3-brew-day-os` until independent review and acceptance. Work stops at yeast-pitch handoff: fermentation, packaging, serving, advanced analytics/AI, IoT, inventory reservation-to-consumption, and NAS production deployment are not included.
