@@ -28,17 +28,21 @@ Equipment profiles and snapshots, ingredients/lots/suppliers, ledger inventory a
 
 ## Phase 3 — Brew-Day OS
 
-Status: ENGINEERING SPECIFICATION DRAFTED — AWAITING ARCHITECTURE REVIEW AND EXPLICIT IMPLEMENTATION AUTHORIZATION
+Status: ACCEPTED — `v0.3.0-phase3`
 
 Complete stage-aware worksheet; multiple persistent timers; hop/addition schedules; required-data reminders; mash, post-mash, pre-boil, OG, knockout, volume, and temperature measurements; validation; planned-versus-actual deviations; voice-entry confirmation boundary; event log; photos/notes; automatic journal; and refresh recovery.
 
 Normative gate: [Phase 3 Engineering and Acceptance Specification](specifications/PHASE_3_ENGINEERING_AND_ACCEPTANCE_SPECIFICATION.md).
 
-Independent review prompt: [Codex Phase 3 Engineering Specification Independent Review Master Prompt](prompts/CODEX_PHASE_3_ENGINEERING_SPECIFICATION_INDEPENDENT_REVIEW_MASTER_PROMPT.md).
+Acceptance record: [Phase 3 Formal Acceptance Record](evidence/PHASE_3_ACCEPTANCE.md).
 
 ## Phase 4 — Fermentation, Conditioning & Yeast
 
+Status: ENGINEERING SPECIFICATION REVIEW CANDIDATE — AWAITING INDEPENDENT SPECIFICATION REVIEW AND EXPLICIT IMPLEMENTATION AUTHORIZATION
+
 Gravity/temperature/pH tracking, fermentation curves, alerts, yeast lots and pitch history, milestones/additions, conditioning, readiness, and troubleshooting.
+
+Normative gate: [Phase 4 Engineering and Acceptance Specification](specifications/PHASE_4_ENGINEERING_AND_ACCEPTANCE_SPECIFICATION.md).
 
 ## Phase 5 — Quality, Packaging & Finished Beer
 
