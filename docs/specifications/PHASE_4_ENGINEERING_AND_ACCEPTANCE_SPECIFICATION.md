@@ -210,8 +210,8 @@ Phase 4 may emit versioned `PackagingReadinessHandoff` **readiness facts**. It m
 | `original_gravity_source_id` | pinned/reconciled measurement/correction ID | null iff `UNKNOWN` |
 | `final_gravity_sg` | current effective last qualifying stable-gravity observation, else current last valid ferment gravity | null if none |
 | `apparent_attenuation_ratio` | `packages.calculations.brewing.apparent_attenuation` via §13 adapter | null if undefined |
-| `fermentation_completed_at` | server time of successful `CompleteFermentation` | required for `READY`/`READY_WITH_WAIVERS`; null for `NOT_READY` |
-| `conditioning_completed_at` | server time of successful `CompleteConditioning`; **null** when conditioning skipped | null when skipped or not complete |
+| `fermentation_completed_at` | `fermentation_current_completed_at` (latest successful `CompleteFermentation`); original first confirmation remains on the session as `fermentation_first_completed_at` | required for `READY`/`READY_WITH_WAIVERS`; null for `NOT_READY` |
+| `conditioning_completed_at` | `conditioning_current_completed_at` of successful `CompleteConditioning`; **null** when conditioning skipped | null when skipped or not complete |
 | `conditioning_skipped` | plan `CONDITIONING_NOT_REQUIRED` skip path | required boolean |
 | `assessment_id` | `PackagingReadinessAssessment` PK | required |
 | `evidence_summary` | IDs/versions of gravity leaves, checkpoints, waivers | required |
@@ -219,13 +219,11 @@ Phase 4 may emit versioned `PackagingReadinessHandoff` **readiness facts**. It m
 | `invalidated_at` / `invalidation_cause_id` | set when superseded or evidence-invalidated | null while current and valid |
 | `journal_reconstruction_handle` | brew session ID + generation rule version | required |
 
-`READY` requires fermentation confirmed complete, conditioning complete or skipped, no `INVALIDATED` current assessment, and no active completion-affecting unresolved invalidation.
+Handoff status mapping is **§14.4**. `READY` means R1, R2, known OG, and no readiness-level waiver or R3-only override. `READY_WITH_WAIVERS` means R1, R2, and at least one contributing waiver or an R3-only override. After `CLOSED`, R1/R2 are evaluated from current evidence per §14.6 even when original Complete* assessment rows remain `INVALIDATED`.
 
 Exactly one handoff row per session may have `current=true` (partial unique constraint or equivalent). Recording a new version sets the previous current row to `current=false` in the same transaction. The previous row is preserved.
 
-`READY_WITH_WAIVERS` is `READY` plus at least one waiver that contributed to eligibility.
-
-`NOT_READY` is a valid recorded handoff when the owner requests recording and eligibility fails; it does not permit `CLOSED`.
+`NOT_READY` is a valid recorded handoff when the owner records failed eligibility. `CloseFermentationSession` requires a current non-invalidated `READY` or `READY_WITH_WAIVERS` handoff. A later CLOSED-path `NOT_READY` version does not un-close the session.
 
 `INVALIDATED` is appended status on a previously current handoff after completion-affecting correction/late entry/reconciliation. The row is preserved. A new current version may be recorded later.
 
@@ -290,14 +288,14 @@ No mandatory `BrewPlan`, `BrewBatch`, transactional outbox, or distributed worke
 
 ### 8.4 Stage occurrence cardinality
 
-| Stage type | Occurrences per session | Status vocabulary |
+| Stage type | Instance rows per session | Status vocabulary |
 |---|---|---|
 | `PITCH_CONFIRMED` | exactly one, created at start | `COMPLETED` immediately (reference-only) |
-| `ACTIVE_FERMENTATION` | exactly one | `PENDING` until start commit completes as `ACTIVE`; then `ACTIVE`/`PAUSED`/`COMPLETED`/`ABORTED`/`INVALIDATED` |
-| `CONDITIONING` | zero or one | created only by `StartConditioning`; never created on skip path |
+| `ACTIVE_FERMENTATION` | exactly one row; **reused** after invalidation (§9.8) | `PENDING` until start commit completes as `ACTIVE`; then `ACTIVE`/`PAUSED`/`COMPLETED`/`ABORTED` |
+| `CONDITIONING` | zero or one row; created only by first `StartConditioning`; **reused** after invalidation; never created on skip path | `ACTIVE`/`PAUSED`/`COMPLETED`/`ABORTED`/`INVALIDATED` |
 | `HANDOFF_READY` | zero or one reference stage, created when a `READY` or `READY_WITH_WAIVERS` current handoff is recorded | not an independent executable worksheet |
 
-Runtime repeat of `ACTIVE_FERMENTATION` or `CONDITIONING` is denied (`409 STAGE_REPEAT_PROHIBITED`). Stage identity is `stage_instance_id`. Commands address that ID.
+A second `ACTIVE_FERMENTATION` or `CONDITIONING` **row** is denied (`409 STAGE_REPEAT_PROHIBITED`). After invalidation the existing row is reactivated (§9.8); that is not a second occurrence. Stage identity is `stage_instance_id`. Commands address that ID.
 
 Session `status` is authoritative for lifecycle. Stage status is synchronized in the same transaction as the session command that changes it. `HANDOFF_READY` as a session status means a current non-invalidated ready handoff exists; the stage type of the same name is a reference marker only.
 
@@ -347,29 +345,38 @@ Resume restores **only** that origin. A stale tab that sends resume with the wro
 
 Legend: INV = `409 INVALID_TRANSITION` and zero domain writes except safe conflict audit. Replay of the same operation returns the original result.
 
+§9.4 is the **sole** session command transition authority. §9.5 is a non-normative index and must not permit a cell that lacks a row here. Every `A` in §9.5 has a row below.
+
 | CURRENT_STATE | COMMAND/EVENT | PRECONDITIONS | NEXT_STATE | SIDE_EFFECTS | IDEMPOTENCY | INVALID_BEHAVIOR | CORRECTION_EFFECT |
 |---|---|---|---|---|---|---|---|
 | (none) | `StartFermentationSession` | §6 | `ACTIVE` | §6.6 children; `ACTIVE_FERMENTATION` ACTIVE; `started_at` server time | scope brew_session_id | §6.4 | n/a |
-| `ACTIVE` | `PauseFermentationSession` | owner; expected revision | `PAUSED` | `pause_origin_state=ACTIVE`; pause `ACTIVE_TIME` timers `paused_by=SESSION_ACTION`; WALL_CLOCK continues | session+command | other commands per allowlist | note-only n/a |
-| `PAUSED` (origin ACTIVE) | `ResumeFermentationSession` | expected revision; origin persisted | `ACTIVE` | resume only session-paused timers; restore ACTIVE_FERMENTATION ACTIVE | session+command | resume with missing origin is integrity `409` | n/a |
-| `ACTIVE` | `CompleteFermentation` | eligibility §14 or authorized override/waivers; expected revision | `FERMENTATION_COMPLETE` | persist assessment; complete fermentation-primary timers; `fermentation_completed_at` server time; freeze availability-at-completion | session+command | `422 COMPLETION_INELIGIBLE` persists failed assessment, state unchanged | completion-affecting correction → `ACTIVE` if not CLOSED |
-| `ACTIVE` | `AbortFermentationSession` | reason 10–1000 chars; confirm | `ABORTED` | §9.6 abort children | session+command | missing reason `422` | post-abort matrix §25 |
-| `FERMENTATION_COMPLETE` | `StartConditioning` | plan not `CONDITIONING_NOT_REQUIRED`; expected revision | `CONDITIONING` | create one CONDITIONING instance ACTIVE; materialize conditioning checkpoints/reminders/timers from snapshot; `conditioning_started_at` server time | session+command | if plan skip-only: `409 CONDITIONING_NOT_REQUIRED` | n/a |
-| `FERMENTATION_COMPLETE` | `SkipConditioning` | snapshot `conditioning_required=false`; expected revision | `CONDITIONING_COMPLETE` | no CONDITIONING instance; `conditioning_skipped=true`; `conditioning_started_at`/`conditioning_completed_at` null; persist skip assessment | session+command | if conditioning required: `409 CONDITIONING_REQUIRED` | n/a |
+| `ACTIVE` | `PauseFermentationSession` | owner; expected revision | `PAUSED` | `pause_origin_state=ACTIVE`; pause `ACTIVE_TIME` timers `paused_by=SESSION_ACTION`; WALL_CLOCK continues | session+command | other commands per this table | note-only n/a |
+| `PAUSED` (origin ACTIVE) | `ResumeFermentationSession` | expected revision; origin persisted | `ACTIVE` | resume only session-paused timers; restore ACTIVE_FERMENTATION ACTIVE | session+command | missing origin `409` | n/a |
+| `PAUSED` (origin ACTIVE or CONDITIONING) | `AbortFermentationSession` | reason 10–1000 chars | `ABORTED` | §9.6; origin discarded | session+command | missing reason `422` | §25 |
+| `ACTIVE` | `CompleteFermentation` | eligibility §14 or authorized override/waivers; expected revision | `FERMENTATION_COMPLETE` | persist confirmed assessment; complete fermentation-primary timers; set `fermentation_first_completed_at` if null else keep it; set `fermentation_current_completed_at` = server now; freeze availability-at-completion for this confirmation | session+command | `422 COMPLETION_INELIGIBLE` persists failed assessment, **increments revision**, state unchanged | §14.6 |
+| `ACTIVE` | `AbortFermentationSession` | reason 10–1000 chars | `ABORTED` | §9.6 | session+command | missing reason `422` | §25 |
+| `FERMENTATION_COMPLETE` | `StartConditioning` | plan not `CONDITIONING_NOT_REQUIRED`; expected revision | `CONDITIONING` | §9.8: create CONDITIONING row if none, else reactivate INVALIDATED row; never a second PK; materialize/recreate activation-scoped timers/reminders; set `conditioning_first_started_at` if null; set `current_activation_started_at` = server now | session+command | skip-only plan: `409 CONDITIONING_NOT_REQUIRED`; existing non-INVALIDATED CONDITIONING: `409 STAGE_REPEAT_PROHIBITED` | n/a |
+| `FERMENTATION_COMPLETE` | `SkipConditioning` | snapshot `conditioning_required=false`; expected revision | `CONDITIONING_COMPLETE` | no CONDITIONING instance; `conditioning_skipped=true`; conditioning start/complete current timestamps null; persist skip assessment | session+command | if conditioning required: `409 CONDITIONING_REQUIRED` | n/a |
 | `FERMENTATION_COMPLETE` | `AbortFermentationSession` | reason | `ABORTED` | §9.6 | session+command | n/a | §25 |
 | `CONDITIONING` | `PauseFermentationSession` | expected revision | `PAUSED` | `pause_origin_state=CONDITIONING`; pause ACTIVE_TIME; WALL_CLOCK continues | session+command | n/a | n/a |
 | `PAUSED` (origin CONDITIONING) | `ResumeFermentationSession` | expected revision | `CONDITIONING` | resume session-paused timers; CONDITIONING ACTIVE | session+command | n/a | n/a |
-| `CONDITIONING` | `CompleteConditioning` | §17 predicate or waivers/override | `CONDITIONING_COMPLETE` | persist conditioning assessment; `conditioning_completed_at` server time; complete conditioning-primary timers | session+command | `422 COMPLETION_INELIGIBLE` + failed assessment row | completion-affecting → `CONDITIONING` if not CLOSED |
+| `CONDITIONING` | `CompleteConditioning` | §14.3 or waivers/override | `CONDITIONING_COMPLETE` | persist conditioning assessment; set `conditioning_first_completed_at` if null; set `conditioning_current_completed_at` = server now; complete conditioning-primary timers | session+command | `422 COMPLETION_INELIGIBLE` + failed assessment + revision increment | §14.6 |
 | `CONDITIONING` | `AbortFermentationSession` | reason | `ABORTED` | §9.6 | session+command | n/a | §25 |
-| `CONDITIONING_COMPLETE` | `AssessPackagingReadiness` | expected revision | `COMPLETION_ASSESSED` | persist readiness assessment (including unsuccessful); unsuccessful keeps this state | session+command | see §14.4 | invalidation §14.6 |
-| `COMPLETION_ASSESSED` | `RecordPackagingReadinessHandoff` | current assessment exists; expected revision | `HANDOFF_READY` if status READY or READY_WITH_WAIVERS; else remain `COMPLETION_ASSESSED` with current NOT_READY handoff | versioned handoff row; exactly one `current=true` | session+command | missing assessment `422` | invalidation §14.6 |
-| `HANDOFF_READY` | `CloseFermentationSession` | current handoff READY or READY_WITH_WAIVERS and not INVALIDATED | `CLOSED` | `closed_at` server time; cancel remaining optional nonterminal timers cause `SESSION_CLOSED`; freeze terminal facts | session+command | NOT_READY or INVALIDATED current handoff: `409 HANDOFF_NOT_READY` | no implicit reopen |
-| `HANDOFF_READY` | `AbortFermentationSession` | **denied** | — | — | — | `409 INVALID_TRANSITION` | use invalidation + remain until close or stay |
+| `CONDITIONING_COMPLETE` | `AssessPackagingReadiness` | expected revision | success READY/READY_WITH_WAIVERS → `COMPLETION_ASSESSED`; unsuccessful → remain `CONDITIONING_COMPLETE` | persist readiness assessment including unsuccessful; skip path uses R2 skipped | session+command | §14.4; override limits §14.5 | §14.6 |
+| `CONDITIONING_COMPLETE` | `AbortFermentationSession` | reason | `ABORTED` | §9.6 including invalidate any assessments | session+command | n/a | §25 |
+| `COMPLETION_ASSESSED` | `AssessPackagingReadiness` | expected revision | remain `COMPLETION_ASSESSED` | persist **new current** packaging assessment (success or INSUFFICIENT); previous packaging assessment INVALIDATED; no handoff change | session+command | §14.4–14.5 | §14.6 |
+| `COMPLETION_ASSESSED` | `RecordPackagingReadinessHandoff` | latest packaging assessment exists; expected revision | READY or READY_WITH_WAIVERS → `HANDOFF_READY`; NOT_READY → remain `COMPLETION_ASSESSED` with current NOT_READY handoff | versioned handoff; exactly one `current=true` | session+command | missing assessment `422` | §14.6 |
 | `COMPLETION_ASSESSED` | `AbortFermentationSession` | **denied** | — | — | — | `409 INVALID_TRANSITION` | n/a |
-| `CLOSED` | any normal state command | — | — | — | replay only | `409 TERMINAL_SESSION` | §14.6 no implicit reopen |
+| `HANDOFF_READY` | `AssessPackagingReadiness` | expected revision | if new assessment READY or READY_WITH_WAIVERS: remain `HANDOFF_READY` (current handoff **unchanged** until RecordHandoff); if INSUFFICIENT/R1/R2 fail: `COMPLETION_ASSESSED` | persist new packaging assessment; on R1/R2 failure mark current handoff `INVALIDATED` | session+command | §14.4–14.5 | §14.6 |
+| `HANDOFF_READY` | `RecordPackagingReadinessHandoff` | latest packaging assessment id; expected revision | remain `HANDOFF_READY` if READY/READY_WITH_WAIVERS; if recording NOT_READY → `COMPLETION_ASSESSED` | previous current `current=false`; new version current | session+command | `409` if assessment already bound to current handoff unless replay | §14.6 |
+| `HANDOFF_READY` | `CloseFermentationSession` | current handoff READY or READY_WITH_WAIVERS and not INVALIDATED | `CLOSED` | `closed_at` server time; cancel remaining optional nonterminal timers cause `SESSION_CLOSED` | session+command | NOT_READY or INVALIDATED: `409 HANDOFF_NOT_READY` | no implicit reopen |
+| `HANDOFF_READY` | `AbortFermentationSession` | **denied** | — | — | — | `409 INVALID_TRANSITION` | n/a |
+| `CLOSED` | `AssessPackagingReadiness` | expected revision; §14.6 CLOSED path | remain `CLOSED` | persist packaging assessment from **current evidence** without CompleteFermentation/CompleteConditioning; unsuccessful INSUFFICIENT still persisted | session+command | ABORTED n/a | may follow evidence invalidation |
+| `CLOSED` | `RecordPackagingReadinessHandoff` | latest CLOSED-path packaging assessment; expected revision | remain `CLOSED` | new current handoff version (READY, READY_WITH_WAIVERS, or NOT_READY); previous current=false | session+command | no assessment `422`; if current handoff already binds this assessment: replay or `409` | n/a |
+| `CLOSED` | any other session command including Abort/Pause/Complete*/StartConditioning | — | — | — | replay only if identical prior success | `409 TERMINAL_SESSION` | §14.6 no reopen |
 | `ABORTED` | `ResumeFermentationSession` | — | — | — | — | `409 INVALID_TRANSITION`; never resumable | §25 |
 | `ABORTED` | `StartFermentationSession` (new operation) | uniqueness: only aborted sessions exist | new `ACTIVE` session | new identities; same pitch handoff | new operation | old start operation replays aborted session | n/a |
-| any listed nonterminal except as denied | unlisted forward/backward edge | — | — | — | — | `409 INVALID_TRANSITION` | n/a |
+| any state | unlisted forward/backward edge | — | — | — | — | `409 INVALID_TRANSITION` | n/a |
 
 `AssessPackagingReadiness` after skipped conditioning uses the skip path: fermentation confirmed complete AND `conditioning_skipped=true`.
 
@@ -406,7 +413,28 @@ Skip conditioning is **not** abort and **not** successful packaging readiness.
 
 ### 9.7 Timestamp effects of lifecycle commands
 
-All of `started_at`, `paused_at`, `resumed_at`, `fermentation_completed_at`, `conditioning_started_at`, `conditioning_completed_at`, `assessed_at`, `handoff_recorded_at`, `closed_at`, `aborted_at` are **server-assigned UTC**. They are not client-supplied. Original values are never rewritten. Invalidation does not clear original completion timestamps; it sets `invalidated_at` on the assessment/handoff.
+All of `started_at`, `paused_at`, `resumed_at`, `fermentation_first_completed_at`, `fermentation_current_completed_at`, `conditioning_first_started_at`, `conditioning_current_activation_started_at`, `conditioning_first_completed_at`, `conditioning_current_completed_at`, `assessed_at`, `handoff_recorded_at`, `closed_at`, `aborted_at` are **server-assigned UTC**. They are not client-supplied.
+
+Immutable original facts: `fermentation_first_completed_at`, `conditioning_first_started_at`, `conditioning_first_completed_at`, each stage's first `completed_at` and first `started_at`. Invalidation never clears those fields.
+
+Current facts: `*_current_*` and `current_activation_started_at` are updated on later successful complete/reactivate. Handoff provenance uses **current** completion instants. Journal shows both original and current.
+
+### 9.8 Stage reactivation (`phase4-stage-reactivation-v1`)
+
+Applies when §14.6 returns a session to `ACTIVE` or `CONDITIONING` without creating a second stage row.
+
+| Field | Rule |
+|---|---|
+| `stage_instance_id` | Unchanged. No second PK. |
+| `activation_ordinal` | Integer starting at 1; increment on each reactivation |
+| `current_activation_started_at` | Server now on each activation including first start |
+| Historical `started_at` / `completed_at` | First values immutable |
+| Status | `INVALIDATED` or `COMPLETED` → `ACTIVE` (or `PAUSED` is not used as the reactivation landing status) |
+| Timers | Cancel remaining nonterminal timers of the prior activation cause `COMPLETION_INVALIDATED`. Create **new** timer identities for the new ordinal from the plan snapshot. Do not reuse prior timer PKs. |
+| Reminders | Same requirement rows. If satisfaction source was invalidated, reminder becomes `DUE` (unsatisfied). ACKNOWLEDGED remains ACKNOWLEDGED until evidence satisfies. New due_at recomputed from plan + current activation where the requirement is activation-scoped; `FROM_PITCH` additions keep original due_at. |
+| Measurements | Remain attached to the same `stage_instance_id`. New observations use §18 current-activation window. |
+
+`StartConditioning` after fermentation re-completion: if a CONDITIONING row exists with status `INVALIDATED`, reactivate it (ordinal+1). If none exists, create the first row (ordinal 1). If a row exists in `ACTIVE`, `PAUSED`, or `COMPLETED` (not invalidated): `409 STAGE_REPEAT_PROHIBITED`.
 
 ## 10. Fermentation plan versus actual
 
@@ -419,7 +447,7 @@ Inputs, in this order, all owned/readable through the brew session:
 1. BrewSession execution snapshot (recipe_version_id, equipment_snapshot, calculation outputs).
 2. RecipeVersion fields: `target_og`, `target_fg`, `apparent_attenuation`, `batch_size_liters`.
 3. RecipeProcessStep rows with `step_type = FERMENTATION_FOUNDATION` ordered by `sequence ASC`, `id ASC`.
-4. RecipeIngredient rows with `use_stage ∈ {FERMENTATION, DRY_HOP}`.
+4. RecipeIngredient rows with `use_stage ∈ {FERMENTATION, DRY_HOP}`, ordered by `use_stage ASC`, `timing_minutes ASC NULLS FIRST`, `ingredient_id ASC`, `id ASC`. That order is the sole array order for canonical snapshot hashing. Database physical order is never authority.
 5. Phase 3 exclusion provenance for those additions (they were not executed on brew day).
 
 | Source | Mapping |
@@ -429,16 +457,18 @@ Inputs, in this order, all owned/readable through the brew session:
 | Two or more `FERMENTATION_FOUNDATION` | `422 PLAN_MATERIALIZATION_FAILED` reason `DUPLICATE_FERMENTATION_FOUNDATION`. |
 | Conflicting `details.conditioning_mode` values | cannot occur with one row; invalid enum → `422`. |
 
-Recognized `details` keys (unknown keys ignored, not fatal):
+Recognized `details` keys (unknown keys ignored, not fatal). Keys not in this table have no plan effect.
 
-| Key | Effect |
-|---|---|
-| `conditioning_mode` | must be one of §17.1 or absent |
-| `conditioning_temperature_c` | Decimal; optional |
-| `conditioning_duration_minutes` | non-negative integer; optional |
-| `temperature_tolerance_c` | Decimal ≥ 0; optional |
-| `required_ph` | boolean; default false |
-| `conditioning_required` | boolean; default derived |
+| Key | Schema | Effect |
+|---|---|---|
+| `conditioning_mode` | enum §17.1 or absent | mode frozen at start |
+| `conditioning_temperature_c` | Decimal; optional | conditioning target |
+| `conditioning_duration_minutes` | non-negative integer; optional | conditioning duration |
+| `temperature_tolerance_c` | Decimal ≥ 0; optional | fermentation/conditioning tolerance source |
+| `required_ph` | boolean; default false | PH checkpoint requiredness |
+| `conditioning_required` | boolean; default derived | skip vs start path |
+| `schedule` | array of `{effective_offset_minutes, target_temp_c}` | fermentation temperature schedule §10.2 |
+| `conditioning_schedule` | array of `{effective_offset_minutes, target_temp_c}` | conditioning schedule §10.2; absent means single target or UNSPECIFIED |
 
 Derivation of `conditioning_required`:
 
@@ -452,23 +482,24 @@ Mode is frozen at start. Selecting lagering (or any mode) at completion is denie
 
 ### 10.2 Temperature schedule
 
-If `details.schedule` is a list of `{effective_offset_minutes, target_temp_c}`:
+If `details.schedule` is present it **must** be an array of objects `{effective_offset_minutes, target_temp_c}` (both required per element). Invalid shape → `422 PLAN_MATERIALIZATION_FAILED`. Canonical serialization sorts that array by `effective_offset_minutes ASC`.
 
 - `effective_offset_minutes` is nonnegative integer minutes from **`pitched_at`** (Phase 3), clock `WALL_CLOCK`;
 - duplicate offsets → `422`;
-- order by offset ASC;
 - interpolation is **piecewise constant**: a target applies from its offset inclusive until the next offset exclusive;
 - after the last entry the last target remains in force while `ACTIVE_FERMENTATION` is current.
 
-If no schedule, a single target from `temperature_c` applies from `pitched_at` while fermentation is current, or `UNSPECIFIED` if temperature is null.
+If no `schedule` key, a single target from `temperature_c` applies from `pitched_at` while fermentation is current, or `UNSPECIFIED` if temperature is null.
 
 **Tolerance:** `details.temperature_tolerance_c` if present, else default `Decimal("1.0")` degC with provenance `PHASE4_DEFAULT_TOLERANCE_V1`. Record the chosen value and provenance in the snapshot. No unnamed tolerance.
 
-Schedule entries during CONDITIONING use conditioning target/tolerance from the snapshot, anchored at `conditioning_started_at` if a conditioning schedule list exists; otherwise a single conditioning target.
+If `details.conditioning_schedule` is present, the same array schema applies, anchored at `conditioning_first_started_at` (not later reactivations). If absent, a single conditioning target from `conditioning_temperature_c` applies, or `UNSPECIFIED`.
 
 ### 10.3 Checkpoints and requiredness
 
-Materialized requirement identities use UUIDv5 namespace `c4e21b8a-7d0e-5f33-9a14-8b6c2d91e0aa` and name `phase4-plan-v1:{recipe_version_id}:{requirement_class}:{stable_source}`.
+Logical requirement **template** identity uses UUIDv5 namespace `c4e21b8a-7d0e-5f33-9a14-8b6c2d91e0aa` and name `phase4-plan-v1:{recipe_version_id}:{requirement_class}:{stable_source}`. That template ID is identical across abort/restart sessions of the same recipe and is **not** a database primary key.
+
+Session-owned requirement **row** ID is a newly generated UUID stored on `FermentationAdditionRequirement` / checkpoint rows. Uniqueness: `(fermentation_session_id, requirement_template_id)`. API paths use the session-owned row ID. Abort then restart must not collide on row ID.
 
 | Requirement class | Required? | Waivable? |
 |---|---|---|
@@ -479,6 +510,7 @@ Materialized requirement identities use UUIDv5 namespace `c4e21b8a-7d0e-5f33-9a1
 | `CONDITIONING_DURATION` | yes iff conditioning required and planned duration present | yes |
 | `PLANNED_ADDITION` | yes for each materialized FERMENTATION/DRY_HOP source | yes |
 | `ATTENUATION_TARGET` | yes iff RecipeVersion `apparent_attenuation` is not null | yes |
+| `ORIGINAL_GRAVITY_KNOWN` | yes for packaging `READY` only; not a fermentation-complete predicate | yes; readiness-only; never yields silent `READY` |
 
 Missing planned values remain `UNSPECIFIED`. The API/UI must not invent them.
 
@@ -580,7 +612,7 @@ All fermentation calculations remain in `packages/calculations` (or bounded doma
 | `abv_from_gravity` | OG, FG | ABV percent | Call `brewing.abv` = `(OG - FG) × 131.25`. If FG > OG: `CALCULATION_UNDEFINED`. If either `UNKNOWN`: undefined. FG < 1.000 is allowed by `abv` as specified in the accepted function (only FG > OG raises); still persist the function result. |
 | `pitch_rate_estimate` | volume liters, OG, rate million/ml/°P | cells | Call `brewing.yeast_pitch_cells` only when all three inputs are present and valid. Else `NOT_COMPUTED`. Output labeled `CALCULATED`. Volume provenance: RecipeVersion `batch_size_liters` snapshot if present, else brew knockout volume current leaf if present, else missing. Do not invent volume. |
 | `planned_vs_actual_temperature_delta` | planned, actual degC | signed delta | If planned `UNSPECIFIED`: `NOT_APPLICABLE`. |
-| `plato_to_sg` | Plato Decimal | SG Decimal | Adapter `phase4-plato-to-sg-v1`: invert accepted `specific_gravity_to_plato` by Decimal binary search on SG in `[0.900, 1.300]` until `|f(SG) - Plato| < Decimal("0.0000001")` or 80 iterations. If Plato converts to SG < 1.000, still persist if in hard bounds. This adapter is new; it does not change `specific_gravity_to_plato`. |
+| `plato_to_sg` | Plato Decimal | SG Decimal or hard reject | Adapter `phase4-plato-to-sg-v1`. **Domain:** raw Plato must lie in the closed image of accepted `specific_gravity_to_plato` over canonical SG `[0.900, 1.300]`. Compute `PLATO_MIN = specific_gravity_to_plato(Decimal("0.900"))` and `PLATO_MAX = specific_gravity_to_plato(Decimal("1.300"))` with the accepted function (independent Decimal evaluation ≈ `-28.220507` and `61.239729`; goldens must use the function, not these approximations as authority). If raw Plato `< PLATO_MIN` or `> PLATO_MAX`: `422 PLATO_OUT_OF_DOMAIN` and **no measurement row**. If inside the image, invert by Decimal binary search on SG `[0.900, 1.300]` until `|f(SG) - Plato| < Decimal("0.0000001")`. If 80 iterations complete without meeting residual: `422 PLATO_CONVERSION_FAILED`, **no row**, do not clamp to an endpoint. Round-trip golden: convert then `specific_gravity_to_plato` residual `< 1e-7`. Vector `100` Plato → `PLATO_OUT_OF_DOMAIN`. Just-inside endpoints convert; just-outside reject. |
 
 Golden tests are required for every adapter, including undefined/missing cases. Intermediate calculation results are not rounded (UNITS_AND_ROUNDING).
 
@@ -625,7 +657,7 @@ Unsuccessful assessments **persist** with outcome `INSUFFICIENT_EVIDENCE`, actor
 | ID | Predicate | Notes |
 |---|---|---|
 | C0 | Session `CONDITIONING` | else invalid transition |
-| C1 | If planned duration specified: `server_now - conditioning_started_at >= duration` | WALL_CLOCK; pause does not freeze WALL_CLOCK |
+| C1 | If planned duration specified: `server_now - conditioning_first_started_at >= duration` | WALL_CLOCK from **first** start; pause and reactivation do not reset elapsed beer time |
 | C2 | If planned temperature specified: at least one current effective `CONDITIONING_TEMPERATURE` with `|actual - target| <= tolerance` | if unspecified, N/A |
 | C3 | Required conditioning checkpoints satisfied or waived |  |
 | C4 | When both duration and temperature planned, C1 AND C2 |  |
@@ -638,22 +670,32 @@ Skip path: C* N/A; `SkipConditioning` records `CONDITIONING_NOT_REQUIRED`.
 |---|---|
 | R1 | Current fermentation assessment is `COMPLETION_CONFIRMED` or `COMPLETION_WAIVED` or `COMPLETION_OVERRIDDEN` and not invalidated |
 | R2 | Conditioning skipped OR current conditioning assessment confirmed/waived/overridden and not invalidated |
-| R3 | Current OG consumption known **or** readiness status will be `READY_WITH_WAIVERS`/`NOT_READY` (missing OG cannot be `READY`) |
+| R3 | Current OG consumption known, **or** an active waiver of `ORIGINAL_GRAVITY_KNOWN`, **or** readiness override under §14.5 that is limited to R3 |
 
-`READY` requires R1, R2, and OG known, and no readiness-level waiver.
+`READY` requires R1, R2, OG known, and no readiness-level waiver or R3 override.
 
-`READY_WITH_WAIVERS` requires R1, R2, and at least one contributing waiver (including missing-OG waiver if that waiver class is granted — missing OG is waivable for readiness status only as `READY_WITH_WAIVERS`, never silent `READY`).
+`READY_WITH_WAIVERS` requires R1, R2, and at least one contributing waiver or an R3-only override. Missing OG without that waiver/override cannot be `READY` or `READY_WITH_WAIVERS`; the assessment is `INSUFFICIENT_EVIDENCE` / recordable as `NOT_READY`.
+
+`ORIGINAL_GRAVITY_KNOWN` waiver:
+
+- Actor: owner; reason 10–1000 characters; operation_id; expected revision.
+- Allowed only while session is `CONDITIONING_COMPLETE`, `COMPLETION_ASSESSED`, or `HANDOFF_READY` (not `CLOSED`/`ABORTED`; not before fermentation is confirmed).
+- Does not fabricate OG, does not satisfy F1/F2, does not satisfy R1/R2.
+- Same requirement: one active waiver; replay same key; second active `409`.
+- Effect: R3 passes via waiver; packaging status at most `READY_WITH_WAIVERS`.
 
 ### 14.5 OVERRIDE_WITH_REASON
 
 - Actor: session owner only.
 - Allowed only on `CompleteFermentation`, `CompleteConditioning`, or `AssessPackagingReadiness`.
 - Requires reason 10–1000 characters and `override=true`.
-- Requires at least one valid current `FERMENTATION_GRAVITY` leaf for fermentation override.
+- Fermentation override: at least one valid current `FERMENTATION_GRAVITY` leaf; may bypass F1–F3 only; cannot bypass F4 (must be `ACTIVE`).
+- Conditioning override: may bypass C1–C3 only; cannot bypass C0.
+- Readiness override: may bypass **R3 only**. If R1 or R2 is false: `409 OVERRIDE_PROHIBITED`, persist `INSUFFICIENT_EVIDENCE` packaging assessment, no READY handoff. If R1 and R2 hold and R3 fails: assessment `COMPLETION_OVERRIDDEN`, mappable handoff status `READY_WITH_WAIVERS` only.
 - Must not fabricate measurements.
 - Must not override ownership, CSRF, idempotency, uniqueness, pitch timestamp/note, or cross-session rules.
-- Effect: assessment outcome `COMPLETION_OVERRIDDEN`; predicates recorded as overridden, not as measured-true.
-- Denied if session `CLOSED` or `ABORTED` (`409`).
+- Denied if session `ABORTED` (`409`). Readiness override after `CLOSED` is allowed only on `AssessPackagingReadiness` and still cannot bypass R1/R2 as evaluated from **current evidence** (§14.6 CLOSED path).
+- Effect: assessment outcome `COMPLETION_OVERRIDDEN` for the bypassed predicates; they are recorded as overridden, not measured-true.
 
 ### 14.6 Invalidation, requalification, no implicit reopen
 
@@ -668,18 +710,25 @@ Non-affecting: notes, media, non-required temperature/pH unless that checkpoint 
 1. Append evidence.
 2. Mark current fermentation and/or conditioning and/or readiness assessments `COMPLETION_INVALIDATED` with cause ID.
 3. Mark current handoff `INVALIDATED` if present (preserve row).
-4. State destination:
-   - if conditioning stage never started: session → `ACTIVE`; `ACTIVE_FERMENTATION` returns to `ACTIVE` if it was `COMPLETED` (stage completion timestamp preserved as historical; `invalidated_at` set);
-   - if conditioning started or later (including `CONDITIONING_COMPLETE` / `COMPLETION_ASSESSED` / `HANDOFF_READY`): if the affecting evidence is fermentation gravity/OG/F2: cancel CONDITIONING nonterminal timers cause `COMPLETION_INVALIDATED`, mark CONDITIONING stage `INVALIDATED`, session → `ACTIVE`;
-   - if affecting evidence is conditioning-only: session → `CONDITIONING` (re-open conditioning instance to `ACTIVE` without creating a second occurrence).
-5. Child reminders for required checkpoints return to unsatisfied per Phase 3-style satisfaction projection (`ACKNOWLEDGED != SATISFIED`).
-6. Original assessment rows and original `*_completed_at` values remain.
+4. State destination (never a second stage PK):
+   - if conditioning stage never started: session → `ACTIVE`; reactivate `ACTIVE_FERMENTATION` per §9.8;
+   - if conditioning started or later (including `CONDITIONING_COMPLETE` / `COMPLETION_ASSESSED` / `HANDOFF_READY`) and affecting evidence is fermentation gravity/OG/F2: cancel CONDITIONING nonterminal timers cause `COMPLETION_INVALIDATED`; set CONDITIONING status `INVALIDATED`; session → `ACTIVE`; reactivate `ACTIVE_FERMENTATION` per §9.8. Later `StartConditioning` **reuses** the INVALIDATED CONDITIONING row;
+   - if affecting evidence is conditioning-only: session → `CONDITIONING`; reactivate the same CONDITIONING instance per §9.8 (status ACTIVE).
+5. Child reminders: §9.8.
+6. Original assessment rows and `*_first_*` timestamps remain. `*_current_completed_at` is set null until the next successful complete command.
 
-**After CLOSED:** session remains `CLOSED`. No return to `ACTIVE` or `CONDITIONING`. Current handoff becomes `INVALIDATED` / effective readiness `NOT_READY`. `AssessPackagingReadiness` and `RecordPackagingReadinessHandoff` may create a new current version without Phase 5 execution. There is **no** `ReopenFermentationSession` command.
+**After CLOSED:** session remains `CLOSED`. No return to `ACTIVE` or `CONDITIONING`. Current handoff becomes `INVALIDATED` / effective readiness `NOT_READY`. There is **no** `ReopenFermentationSession` and no `CompleteFermentation`/`CompleteConditioning` after CLOSED. Do **not** null `*_first_*` or `*_current_completed_at`. Those last confirmation instants remain the handoff provenance timestamps. New packaging assessments attach the current evidence-set IDs.
+
+CLOSED requalification (makes AC-026 exact):
+
+- `AssessPackagingReadiness` evaluates F1–F3 and C1–C3 **against current effective evidence** in the same transaction (skip path if `conditioning_skipped=true`). It does **not** require non-invalidated fermentation/conditioning assessment rows. R1 is true iff current evidence would currently satisfy fermentation confirmation predicates (or waivers/override still valid for those predicates). R2 likewise for conditioning or skip. Original Complete* assessment rows stay `INVALIDATED`.
+- The new packaging assessment stores the evidence set actually used.
+- `RecordPackagingReadinessHandoff` may then emit a new current version (`READY` / `READY_WITH_WAIVERS` / `NOT_READY`) while status remains `CLOSED`.
+- New measurements/additions remain late-entry only (§24); they do not reopen stages.
 
 **Note-only correction:** no invalidation.
 
-**Concurrent confirmation:** §33.
+**Concurrent confirmation:** §32.
 
 **Evidence invalidation after conditioning started:** fermentation-affecting path above; do not rewrite Phase 3 `BrewSession`.
 
@@ -769,7 +818,12 @@ All persisted instants are UTC. Naive local timestamps and ambiguous DST local c
 
 Inherited from Phase 3 §6.8 unless a row says otherwise: `recorded_at` is always server-assigned; `observed_at` may not be more than five minutes in the future relative to server receipt.
 
-Process chronology: `observed_at` must be ≥ `pitched_at - 5 minutes` and, for a stage-bound measurement, within `[stage.started_at - 5 minutes, min(server_now + 5 minutes, stage.completed_at + 5 minutes if stage completed else server_now + 5 minutes)]`.
+Process chronology for a stage-bound measurement:
+
+- If the stage status is `ACTIVE` or `PAUSED`: `observed_at` must be in `[current_activation_started_at - 5 minutes, server_now + 5 minutes]`. Historical `completed_at` is **not** an upper bound while the stage is active.
+- If the stage status is `COMPLETED`: `observed_at` must be in `[first_started_at - 5 minutes, completed_at + 5 minutes]` and late-entry §24 applies.
+- If the stage status is `INVALIDATED`: new normal measurements are denied (`409 STAGE_NOT_ACTIVE`) until §9.8 reactivation.
+- Always `observed_at >= pitched_at - 5 minutes`.
 
 | FIELD | MEANING | SOURCE | TIMEZONE | FUTURE_ALLOWED | LATE_ENTRY_ALLOWED | CORRECTABLE | ORDERING_RULE | TERMINAL_EFFECT |
 |---|---|---|---|---|---|---|---|---|
@@ -778,8 +832,9 @@ Process chronology: `observed_at` must be ≥ `pitched_at - 5 minutes` and, for 
 | `recorded_at` | server receipt of the command | server only | UTC | n/a (server now) | n/a | no | journal record time | set once |
 | `occurred_at` (journal) | event family process time | server: for measurements = observed_at; for commands = recorded_at | UTC | command = now | derived | no independently | `(occurred_at, recorded_at, id)` | regeneration only |
 | `due_at` | reminder/timer due | server from plan offset + anchor | UTC | planned future ok | n/a | via inherited timer revision | plan order | freeze on terminal cancel |
-| `schedule.effective_at` | planned target switch | `pitched_at + offset` or `conditioning_started_at + offset` | UTC | planned | n/a | no (plan immutable) | offset ASC | snapshot |
-| `started_at` / `*_completed_at` / `closed_at` / `aborted_at` | lifecycle facts | server | UTC | no | no | no | session history | never rewritten |
+| `schedule.effective_at` | planned target switch | `pitched_at + offset` or `conditioning_first_started_at + offset` | UTC | planned | n/a | no (plan immutable) | offset ASC | snapshot |
+| `started_at` / first `completed_at` / `closed_at` / `aborted_at` | original lifecycle facts | server | UTC | no | no | no | session history | never rewritten |
+| `current_activation_started_at` / `*_current_completed_at` | current activation / latest confirmation | server | UTC | no | no | no (updated only by defined commands) | current window | handoff uses current |
 | `corrected_at` | alias of correction `recorded_at` | server | UTC | no | within correction window | n/a | chain order | append |
 | `waived_at` | waiver `recorded_at` | server | UTC | no | waiver window | supplemental note only | waiver id | §25 |
 | `og_pinned_at` | OG consumption pin | server | UTC | no | reconcile command | new pin row | pin version | historical pins kept |
@@ -894,12 +949,16 @@ Phase 4 **explicitly inherits** Phase 3 §6.8 windows, mapped onto fermentation 
 
 | Late-evidence class | Allowed states and fixed boundary | Deterministic effect |
 |---|---|---|
-| Measurement after stage completion, session not CLOSED/ABORTED | Target stage `COMPLETED` or `INVALIDATED`; submit ≤ 24 hours after `stage.completed_at`; `observed_at` in §18 chronology | Append; update current projection; original stage completion time unchanged; `available_at_original_stage_completion=false` |
-| Addition after stage completion, session not CLOSED/ABORTED | ≤ 24 hours after stage completion | Append; reminder/waiver projection; planned schedule unchanged |
-| Measurement/addition after session `CLOSED` | ≤ 24 hours after `closed_at`; target stage must exist | Append evidence only; no new stage/timer; no session reopen; may invalidate current handoff; `available_at_original_session_completion=false` |
-| New measurement/addition after `ABORTED` | Prohibited | `409 TERMINAL_SESSION_EVIDENCE_PROHIBITED` |
-| Correction of existing measurement/addition | Nonterminal any time; `CLOSED` or `ABORTED` ≤ 30 calendar days after terminal time | Append correction; current leaf; may invalidate completion if affecting |
+| Measurement on currently `ACTIVE`/`PAUSED` stage | `observed_at` in §18 current-activation window; not classified late solely because a historical `completed_at` exists | Normal append; `late_entry=false` |
+| Measurement after stage `COMPLETED`, session not CLOSED/ABORTED | Target stage `COMPLETED` (not INVALIDATED); submit ≤ 24 hours after that stage's **first** `completed_at`; `observed_at` in the COMPLETED window of §18 | Append; `late_entry=true`; original first completion unchanged |
+| Addition after stage `COMPLETED`, session not CLOSED/ABORTED | ≤ 24 hours after stage first `completed_at` | Append; reminder/waiver projection |
+| `RecordAction` after stage or session terminal | New actions never use the addition 24-hour window | After `CLOSED`/`ABORTED`: `409 TERMINAL_SESSION` for CREATE. Correction of an **existing** action ≤ 30 days. |
+| Measurement or addition after session `CLOSED` | ≤ 24 hours after `closed_at`; target stage must exist; measurements and planned/unplanned additions allowed; **not** `RecordAction` | Append evidence only; no new stage/timer; no session reopen; may invalidate current handoff; `available_at_original_session_completion=false` |
+| New measurement/addition/action after `ABORTED` | Prohibited | `409 TERMINAL_SESSION_EVIDENCE_PROHIBITED` |
+| Correction of existing measurement/addition/action | Nonterminal any time; `CLOSED` or `ABORTED` ≤ 30 calendar days after terminal time | Append correction; current leaf; may invalidate completion if affecting |
 | Note/annotation | Nonterminal any time; `CLOSED`/`ABORTED` ≤ 7 calendar days after terminal | Append; never satisfies requirements |
+| Yeast source-pair/lot change | Nonterminal only | After CLOSED/ABORTED: DENY (`409`). Annotation note ≤7d allowed. |
+| Equipment snapshot | never after start | DENY all mutation |
 | Media | Nonterminal `ACTIVE` or `CONDITIONING` or `PAUSED` only | No new upload after `CLOSED`/`ABORTED` |
 | Journal regeneration | Any state | Read-only |
 
@@ -907,7 +966,7 @@ Expired windows: `409 LATE_ENTRY_WINDOW_CLOSED`.
 
 ## 25. Terminal behavior
 
-### 25.1 Combined post-terminal matrix
+### 25.1 Post-terminal matrix (one row per resource class)
 
 Cells: `ALLOW` / `DENY` / `ALLOW_WITH_CONDITIONS`. After `CLOSED` unless a column says ABORTED.
 
@@ -916,12 +975,14 @@ Cells: `ALLOW` / `DENY` / `ALLOW_WITH_CONDITIONS`. After `CLOSED` unless a colum
 | Session/stage/plan | ALLOW | DENY | DENY state rewrite | DENY new stages | DENY | DENY plan | DENY | ALLOW_WITH_CONDITIONS ≤7d | DENY | ALLOW | ALLOW_WITH_CONDITIONS via evidence; session stays CLOSED | DENY |
 | Fermentation measurement | ALLOW | DENY normal; LATE_ENTRY ≤24h after close | ALLOW_WITH_CONDITIONS ≤30d | ALLOW_WITH_CONDITIONS ≤24h create | DENY new waiver | DENY overwrite | DENY | via note | DENY | ALLOW | if affecting, invalidate handoff | DENY |
 | Conditioning measurement | ALLOW | same | same | same | DENY | DENY | DENY | via note | DENY | ALLOW | if affecting | DENY |
-| Action / addition | ALLOW | DENY normal; addition LATE_ENTRY ≤24h | ALLOW_WITH_CONDITIONS ≤30d | ALLOW_WITH_CONDITIONS | DENY | DENY | DENY | ALLOW_WITH_CONDITIONS ≤7d | DENY | ALLOW | if checkpoint satisfaction changes | DENY |
+| Action | ALLOW | DENY | ALLOW_WITH_CONDITIONS existing action ≤30d (note/`occurred_at` only) | DENY new action | DENY | DENY | DENY | ALLOW_WITH_CONDITIONS ≤7d session note | DENY | ALLOW | DENY | DENY |
+| Addition | ALLOW | DENY normal; ALLOW_WITH_CONDITIONS planned/unplanned execute ≤24h after `closed_at` per §24 | ALLOW_WITH_CONDITIONS ≤30d | ALLOW_WITH_CONDITIONS ≤24h create | DENY | DENY | DENY | ALLOW_WITH_CONDITIONS ≤7d | DENY | ALLOW | if checkpoint satisfaction changes | DENY |
+| Yeast reference | ALLOW snapshots | DENY | DENY source-pair/lot; ALLOW_WITH_CONDITIONS annotation note ≤7d | DENY | DENY | DENY | DENY | ALLOW_WITH_CONDITIONS ≤7d | DENY | ALLOW | n/a | DENY |
+| Equipment snapshot | ALLOW | DENY | DENY | DENY | DENY | DENY | DENY | DENY | DENY | ALLOW | n/a | DENY |
 | Timer | ALLOW | DENY | DENY new transitions | DENY | DENY | DENY | DENY history | DENY | DENY | ALLOW via session | n/a | DENY |
 | Reminder | ALLOW | DENY | DENY except projection from evidence | n/a | DENY new | DENY | DENY | DENY | DENY | ALLOW | satisfaction may move | DENY |
 | Waiver | ALLOW | DENY | supplemental note ≤7d | n/a | DENY new | DENY original | DENY | supplemental | DENY | ALLOW | n/a | DENY |
 | Assessment / handoff | ALLOW including INVALIDATED | ALLOW_WITH_CONDITIONS new version on requalify | DENY rewrite | n/a | DENY | new version only | DENY original | DENY | DENY | ALLOW | current flag moves | DENY session reopen |
-| Yeast / equipment | ALLOW snapshots | DENY | yeast annotation only | DENY pair change | DENY | DENY snapshot | DENY | ALLOW_WITH_CONDITIONS ≤7d | DENY | ALLOW | n/a | DENY |
 | Notes | ALLOW | ALLOW_WITH_CONDITIONS ≤7d | DENY overwrite; append | n/a | n/a | n/a | DENY silent erase | — | — | ALLOW | n/a | DENY |
 | Media metadata/bytes | ALLOW retrieval | DENY upload | DENY | DENY | n/a | DENY | DENY silent erase | n/a | DENY | ALLOW; missing bytes `MEDIA_UNAVAILABLE` | n/a | DENY |
 | Journal | ALLOW | DENY user-authored operational events | DENY | derived | n/a | ALLOW read-only regen | DENY | via evidence | via evidence | ALLOW | reflect invalidation | n/a |
@@ -931,7 +992,7 @@ Cells: `ALLOW` / `DENY` / `ALLOW_WITH_CONDITIONS`. After `CLOSED` unless a colum
 Same as Phase 3 aborted mapping for new Phase 4 records:
 
 - READ, EXPORT, journal regen, media **retrieval** ALLOW;
-- new measurement/addition DENY;
+- new measurement/addition/action DENY;
 - correction ALLOW_WITH_CONDITIONS ≤30d;
 - notes ALLOW_WITH_CONDITIONS ≤7d;
 - new waiver, media upload, resume, start children, reopen DENY;
@@ -945,7 +1006,7 @@ Accepted Phase 3 order is `(occurred_at ASC, recorded_at ASC, id ASC)` or accept
 
 Closed event types (typed, versioned payloads):
 
-`FERMENTATION_SESSION_STARTED`, `FERMENTATION_STAGE_ENTERED`, `FERMENTATION_STAGE_PAUSED`, `FERMENTATION_STAGE_RESUMED`, `FERMENTATION_SESSION_ABORTED`, `FERMENTATION_MEASUREMENT_RECORDED`, `FERMENTATION_MEASUREMENT_CORRECTED`, `FERMENTATION_TIMER_STARTED`, `FERMENTATION_TIMER_PAUSED`, `FERMENTATION_TIMER_RESUMED`, `FERMENTATION_TIMER_COMPLETED`, `FERMENTATION_TIMER_EXPIRED`, `FERMENTATION_TIMER_CANCELLED`, `FERMENTATION_TIMER_REPLACED`, `FERMENTATION_REMINDER_SCHEDULED`, `FERMENTATION_REMINDER_DUE`, `FERMENTATION_REMINDER_ACKNOWLEDGED`, `FERMENTATION_REMINDER_COMPLETED`, `FERMENTATION_REMINDER_SKIPPED`, `FERMENTATION_REMINDER_CANCELLED`, `FERMENTATION_REMINDER_EXPIRED`, `FERMENTATION_ACTION_RECORDED`, `FERMENTATION_ACTION_CORRECTED`, `FERMENTATION_ADDITION_RECORDED`, `FERMENTATION_ADDITION_CORRECTED`, `FERMENTATION_DEVIATION_RECORDED`, `FERMENTATION_DEVIATION_SUPERSEDED`, `FERMENTATION_WAIVER_RECORDED`, `FERMENTATION_WAIVER_SUPERSEDED`, `FERMENTATION_COMPLETION_ASSESSED`, `FERMENTATION_COMPLETION_INVALIDATED`, `CONDITIONING_STARTED`, `CONDITIONING_SKIPPED`, `CONDITIONING_COMPLETED`, `PACKAGING_READINESS_ASSESSED`, `PACKAGING_READINESS_HANDOFF_RECORDED`, `PACKAGING_READINESS_HANDOFF_INVALIDATED`, `YEAST_REFERENCE_RECORDED`, `YEAST_REFERENCE_CORRECTED`, `OG_CONSUMPTION_PINNED`, `OG_CONSUMPTION_RECONCILED`, `FERMENTATION_SESSION_CLOSED`.
+`FERMENTATION_SESSION_STARTED`, `FERMENTATION_STAGE_ENTERED`, `FERMENTATION_STAGE_PAUSED`, `FERMENTATION_STAGE_RESUMED`, `FERMENTATION_STAGE_REACTIVATED`, `FERMENTATION_SESSION_ABORTED`, `FERMENTATION_MEASUREMENT_RECORDED`, `FERMENTATION_MEASUREMENT_CORRECTED`, `FERMENTATION_TIMER_STARTED`, `FERMENTATION_TIMER_PAUSED`, `FERMENTATION_TIMER_RESUMED`, `FERMENTATION_TIMER_COMPLETED`, `FERMENTATION_TIMER_EXPIRED`, `FERMENTATION_TIMER_CANCELLED`, `FERMENTATION_TIMER_REPLACED`, `FERMENTATION_REMINDER_SCHEDULED`, `FERMENTATION_REMINDER_DUE`, `FERMENTATION_REMINDER_ACKNOWLEDGED`, `FERMENTATION_REMINDER_COMPLETED`, `FERMENTATION_REMINDER_SKIPPED`, `FERMENTATION_REMINDER_CANCELLED`, `FERMENTATION_REMINDER_EXPIRED`, `FERMENTATION_ACTION_RECORDED`, `FERMENTATION_ACTION_CORRECTED`, `FERMENTATION_ADDITION_RECORDED`, `FERMENTATION_ADDITION_CORRECTED`, `FERMENTATION_DEVIATION_RECORDED`, `FERMENTATION_DEVIATION_SUPERSEDED`, `FERMENTATION_WAIVER_RECORDED`, `FERMENTATION_WAIVER_SUPERSEDED`, `FERMENTATION_COMPLETION_ASSESSED`, `FERMENTATION_COMPLETION_INVALIDATED`, `CONDITIONING_STARTED`, `CONDITIONING_SKIPPED`, `CONDITIONING_COMPLETED`, `PACKAGING_READINESS_ASSESSED`, `PACKAGING_READINESS_HANDOFF_RECORDED`, `PACKAGING_READINESS_HANDOFF_INVALIDATED`, `YEAST_REFERENCE_RECORDED`, `YEAST_REFERENCE_CORRECTED`, `OG_CONSUMPTION_PINNED`, `OG_CONSUMPTION_RECONCILED`, `FERMENTATION_SESSION_CLOSED`.
 
 Correction/late display is dual-time: process `occurred_at` and server `recorded_at`. Regeneration is read-only and must show original and current assessments/handoffs. Missing media: `MEDIA_UNAVAILABLE` placeholder; generation succeeds.
 
@@ -999,26 +1060,28 @@ Every mutation capability:
 | ReconcileUpstreamOriginalGravity | POST | `/{id}/og-consumption` | owner | phase3 leaf ids | new pin | session | §6.2.1 | 409 | deny CLOSED/ABORTED | 422 |
 | RecordMeasurement | POST | `/{id}/measurements` | owner | type, raw, observed_at, method, stage_instance_id, late flag | measurement | user+RecordMeasurement+session+op | §12/§18 | 409 key | §24 | 422 domain |
 | CorrectMeasurement | POST | `/{id}/measurements/{mid}/corrections` | owner | correction_of_id, fields, reason | correction | user+CorrectMeasurement+mid+op | §23 | 409 superseded | §24 | 422 |
-| RecordAction | POST | `/{id}/actions` | owner | type enum, occurred_at | action | session | §21.1 | 409 | §25 | 422 |
-| RecordPlannedAdditionExecution | POST | `/{id}/additions/{req_id}/execute` | owner | actual fields | event | requirement+op | §21.2 | 409 | §24 | 422 |
-| RecordUnplannedAddition | POST | `/{id}/additions/unplanned` | owner | actual fields | event | session+op | nonterminal ACTIVE/CONDITIONING | 409 | deny | 422 |
+| RecordAction | POST | `/{id}/actions` | owner | type enum, occurred_at | action | session | §21.1 | 409 | DENY after CLOSED/ABORTED | 422 |
+| RecordPlannedAdditionExecution | POST | `/{id}/additions/{req_id}/execute` | owner | actual fields | event | requirement+op | §21.2 | 409 | §24 late ≤24h CLOSED | 422 |
+| RecordUnplannedAddition | POST | `/{id}/additions/unplanned` | owner | actual fields | event | session+op | ACTIVE/CONDITIONING or CLOSED late §24 | 409 | CLOSED ≤24h; ABORTED deny | 422 |
+| Yeast enrich/correct | POST | `/{id}/yeast-reference` | owner | pair/lot/fields | reference | session+op | §11 | 409 cycle | CLOSED: annotation only; source-pair DENY | 422 pair |
 | CorrectAddition | POST | `/{id}/addition-events/{id}/corrections` | owner | phase3-adapted | correction | original event+op | §21.2 | 409 superseded | §24 | 422 |
 | Timer commands | POST | `/{id}/timers...` | owner | inherited Phase 3 set | timer | timer+op | inherited | 409 | deny new after terminal | inherited |
 | Reminder acknowledge/skip | POST | `/{id}/reminders/{id}/...` | owner | inherited; skip may require waiver | reminder | reminder+op | ACK ≠ SATISFIED | 409 | §25 | inherited |
 | RecordWaiver | POST | `/{id}/waivers` | owner | requirement_id, reason | waiver | requirement+op | §24 catalog | 409 duplicate active | deny CLOSED/ABORTED | 409 WAIVER_PROHIBITED |
-| Yeast enrich/correct | POST | `/{id}/yeast-reference` | owner | pair/lot/fields | reference | session+op | §11 | 409 cycle | annotation only terminal | 422 pair |
 | Notes | POST | `/{id}/notes` | owner | text ≤4000 | note | session+op | length | 409 | §24 | 422 |
 | Media upload/list/get/remove | POST/GET | media routes | owner | Phase 3 controls | metadata | upload op | MIME/size | 409 quota | no upload terminal | 413/415 |
 | Export | GET | `/{id}/export?format=json\|html` | owner | — | original+current history | n/a | — | — | allowed | MEDIA_UNAVAILABLE |
 | Pitch history | GET | `/pitch-history` | owner | filters session/lot | snapshots | n/a | — | — | allowed | 404 |
 
-Domain invariants cannot be bypassed by extra JSON fields (mass assignment: server allowlists semantic fields per command; unknown fields ignored or `422` if the command schema is closed — closed schema is required).
+Every closed command schema **rejects unknown fields** with `422 UNKNOWN_FIELD` and creates no domain/operation-success rows. Unknown fields are never ignored. Owner, session, stage, status, and server timestamps cannot be client-set except documented semantic fields.
 
 ## 31. Idempotency
 
 `phase4-operation-v1` binds `phase3-operation-v1` canonicalization, fingerprint, 90-day full-result retention after fermentation terminal (`CLOSED` or `ABORTED`), lifetime tombstone, rollback, and lost-response replay. Terminal mapping for retention: fermentation session `CLOSED`/`ABORTED`.
 
-Canonicalization: UTF-8, schema version, semantic defaults, sorted keys, ordered arrays unless sets, canonical UUID/UTC microsecond/Decimal, SHA-256. Omitted vs null equivalent only where the command schema says so.
+Canonicalization uses UTF-8, schema version, semantic defaults, sorted keys, ordered arrays unless sets, canonical UUID/UTC microsecond/Decimal, and SHA-256. Omitted vs null are equivalent only where the command schema says so. Canonicalization includes **only the client semantic command** plus those defaults. It does **not** include server-derived evidence fingerprints or computed eligibility. The server **looks up** `(scope, operation_id)` **before** rereading completion evidence. Same key + same client canonical payload always replays the stored result even if evidence changed after a lost response.
+
+`expected_revision` is a request precondition. A retry after `409 STALE_REVISION` **must use a new operation_id**. Evidence fingerprints belong on the assessment/result provenance document only.
 
 | MUTATION | KEY_REQUIRED | KEY_SCOPE | CANONICALIZATION | RETENTION | SAME_KEY_SAME_PAYLOAD | SAME_KEY_DIFFERENT_PAYLOAD | RETRY_AFTER_PARTIAL_FAILURE | TERMINAL_BEHAVIOR |
 |---|---|---|---|---|---|---|---|---|
@@ -1033,7 +1096,7 @@ Canonicalization: UTF-8, schema version, semantic defaults, sorted keys, ordered
 | Waiver | yes | requirement_id | reason | inherited | replay | 409 | inherited | deny new |
 | Override (on complete commands) | yes | session + command | reason+override flag | inherited | replay | 409 | inherited | deny CLOSED |
 | Correction | yes | original evidence id | correction_of_id+fields | inherited | replay | 409 | inherited | 30d window |
-| Assessment | yes | session_id | evidence fingerprint + command | inherited | replay | 409 | assessment+no state on fail; success atomic with state | CLOSED requalify |
+| Assessment | yes | session_id | client command name + override flag + reason defaults only | inherited | replay original assessment/HTTP even if evidence later changed | 409 | lookup before evidence reread; fail persists assessment+journal and **increments revision** | CLOSED requalify |
 | Handoff | yes | session_id | assessment_id | inherited | replay | 409 | atomic current flag | new version rules |
 | Yeast enrich | yes | session_id | pair+lot | inherited | replay | 409 | cycle-safe | annotation only |
 | Deviation user | yes | session_id | class+text | inherited | replay | 409 | inherited | notes only |
@@ -1045,25 +1108,27 @@ Canonicalization: UTF-8, schema version, semantic defaults, sorted keys, ordered
 
 Authoritative boundary: one PostgreSQL transaction per command. Lock: `SELECT ... FOR UPDATE` on `FermentationSession` (or brew session row for start) **before** reading evidence used in completion. Evidence inserts for that session take the same session lock. Frontend control is not enforcement.
 
-Revision: integer `revision` on `FermentationSession`, increment on every successful mutation. Stale `expected_revision` → `409 STALE_REVISION`. Start uses brew session revision.
+Revision: integer `revision` on `FermentationSession`. Every command that persists domain, assessment, journal, or operation-success rows **increments** revision, including `422 COMPLETION_INELIGIBLE` (failed assessment is a persisted mutation). `409 STALE_REVISION` and `409 INVALID_TRANSITION` that write no domain rows do **not** increment revision and do **not** store a successful operation result (safe conflict audit only). Stale `expected_revision` → `409 STALE_REVISION`. Start uses brew session revision.
+
+When two nonterminal mutations share the **same initial** `expected_revision`, exactly one wins the session lock and commits. The loser **always** returns `409 STALE_REVISION` and writes no domain rows. The loser does not observe the winner’s new evidence in that request. Observing it requires a **new command** with a **new operation_id** and the fresh revision from GET.
 
 | RACE_ID | OPERATION_A | OPERATION_B | AUTHORITATIVE_TRANSACTION_BOUNDARY | WINNER/CONFLICT_RULE | EXPECTED_RESPONSE | FINAL_PERSISTED_STATE | JOURNAL_EFFECT |
 |---|---|---|---|---|---|---|---|
 | R1 | two Start different keys | same brew | brew row lock | one session; loser 409 EXISTS | 201 vs 409 | one non-aborted session | one start event |
-| R2 | Start same key | retry | operation table | replay | 200 replay | original | no second event |
-| R3 | CompleteFermentation | RecordMeasurement gravity | session lock | serializable; completion sees committed evidence only | one succeeds then the other; if measurement commits first, complete uses it | consistent leaves | both events ordered |
-| R4 | CompleteFermentation | CorrectMeasurement | session lock | same | if correction first, eligibility uses new leaf | no READY on stale evidence | correction + assess |
-| R5 | CompleteFermentation | RecordWaiver | session lock | same | waiver visible to later complete | at most one confirm | waiver + complete |
-| R6 | two CompleteFermentation | concurrent | session lock + revision | one winner; loser 409 STALE or already complete INVALID_TRANSITION | one FERMENTATION_COMPLETE | one success assessment | one success assess event |
-| R7 | two corrections same leaf | concurrent | leaf unique successor | one winner; loser 409 SUPERSEDED | one successor | unique leaf | one correction event |
-| R8 | Waiver vs satisfaction evidence | concurrent | session lock | evidence satisfaction wins if both commit; waiver then evidence supersedes; two actives denied | Phase 3-style | one active satisfaction source | waiver and/or complete reminder |
-| R9 | two handoff records | concurrent | unique current=true | one current | 409 loser | one current handoff | one or two versions with one current |
-| R10 | Pause vs Complete | concurrent | session lock | one winner | 409 loser | one state | one transition |
-| R11 | Resume stale tab | concurrent resume | revision | one resume | 409 STALE | origin restored once | one resume |
+| R2 | Start same key | retry | operation table lookup first | replay | 200 replay | original | no second event |
+| R3 | CompleteFermentation | RecordMeasurement gravity | session lock + OCC | same initial revision: one winner; loser 409 STALE | 2xx/422 vs 409 | only winner’s rows; revision +1 once | only winner |
+| R4 | CompleteFermentation | CorrectMeasurement | session lock + OCC | same as R3 | same | no READY from the stale request | only winner |
+| R5 | CompleteFermentation | RecordWaiver | session lock + OCC | same as R3 | same | at most one of the two requests commits | only winner |
+| R6 | two CompleteFermentation | concurrent | session lock + OCC | one winner; loser 409 STALE or already-complete INVALID_TRANSITION | one FERMENTATION_COMPLETE | one success assessment | one success assess event |
+| R7 | two corrections same leaf | concurrent | leaf unique successor + session lock | one winner; loser 409 SUPERSEDED or STALE | one successor | unique leaf | one correction event |
+| R8 | Waiver vs satisfaction evidence | concurrent | session lock + OCC | same initial revision: one winner; loser 409 STALE. After retry, Phase 3 supersession applies | 409 loser | one committed mutation from the pair | only winner |
+| R9 | two handoff records | concurrent | unique current=true + OCC | one current; loser 409 STALE or conflict | one 2xx | one new current handoff | one version from winner |
+| R10 | Pause vs Complete | concurrent | session lock + OCC | one winner; loser 409 STALE | 409 loser | one state | one transition |
+| R11 | Resume stale tab | concurrent resume | revision | one resume; loser 409 STALE | 409 STALE | origin restored once | one resume |
 | R12 | Yeast A→B vs B→A | concurrent | ordered row locks | one cycle loser 409 | 409 | acyclic | one enrich |
-| R13 | Complete vs new measurement after read without lock | forbidden implementation | must lock session first | specification requires lock-before-read | tests with PostgreSQL interleaving | no stale READY | — |
+| R13 | Complete vs new measurement after read without lock | forbidden implementation | must lock session first **and** match expected_revision | specification forbids lock-free read | tests with PostgreSQL interleaving | no stale READY | — |
 
-Atomic write vector for successful CompleteFermentation: session state, stage status, assessment row, timer/reminder child effects, journal events, audit, operation result, revision increment. Failed eligibility: assessment row + operation result + journal assess event + **no** state change, same transaction.
+Atomic write vector for successful CompleteFermentation: session state, stage status, assessment row, timer/reminder child effects, journal events, audit, operation result, revision increment. Failed eligibility: assessment row + operation result + journal assess event + revision increment + **no** session-state change, same transaction.
 
 ## 33. Security and authorization
 
@@ -1073,7 +1138,7 @@ Server-side ownership for every fermentation resource including nested yeast sou
 
 IDOR matrix (executable): session, stage, measurement, correction, action, addition, timer, reminder, waiver, assessment, handoff, yeast reference, source session, lot, equipment profile, note, media bytes, journal, export, OG pin.
 
-Mass assignment: closed command schemas; owner, session, stage, revision, timestamps, status cannot be client-set except documented semantic fields.
+Mass assignment: closed command schemas; unknown fields `422 UNKNOWN_FIELD`; owner, session, stage, revision, timestamps, status cannot be client-set except documented semantic fields.
 
 Media: Phase 3 path-safe keys, MIME/signature/decode, 10 MiB, quota, nosniff, no path disclosure.
 
@@ -1189,7 +1254,7 @@ Software-system safety (testable):
 | Class | BICOS validates (reject `422`) | BICOS warns (persist + deviation) | BICOS rejects | External responsibility |
 |---|---|---|---|---|
 | Time | future >5 min; naive/DST-ambiguous; before pitch−5 min | n/a | those timestamps | brewer process timing |
-| Gravity domain | outside 0.900–1.300 SG | FG > OG or FG < 1.000 while in bounds: allow store, `CALCULATION_UNDEFINED` / eligibility fail | hard bounds | hydrometer use |
+| Gravity domain | outside 0.900–1.300 SG; raw Plato outside `PLATO_MIN`/`PLATO_MAX` or nonconvergent inverse | FG > OG or FG < 1.000 while in SG bounds: allow store, `CALCULATION_UNDEFINED` / eligibility fail | `422 PLATO_OUT_OF_DOMAIN` / `PLATO_CONVERSION_FAILED`; SG hard bounds | hydrometer use |
 | Temperature | outside type bounds | excursion vs plan | hard bounds | fermentation control hardware |
 | pH | outside 2.5–8.0 | n/a | hard bounds | process sanitation |
 | Pressure | n/a deferred | n/a | pressure execution APIs | physical PRV |
@@ -1217,23 +1282,23 @@ Each `P4-FR` is mandatory, atomic, implementation-independent, and testable.
 - **P4-FR-008:** Enforce at most one non-aborted fermentation session per brew session, including after `CLOSED`.
 - **P4-FR-009:** Allow a new start after `ABORTED` that reuses the same accepted pitch handoff and new identities.
 - **P4-FR-010:** Allow multiple concurrent fermentation sessions for one user only when they reference different brew sessions.
-- **P4-FR-011:** Materialize `phase4-plan-v1` atomically in the start transaction with stored SHA-256.
+- **P4-FR-011:** Materialize `phase4-plan-v1` atomically in the start transaction with stored SHA-256, recognized `schedule`/`conditioning_schedule` keys, ingredient total order, template IDs distinct from session-owned requirement row IDs.
 - **P4-FR-012:** Never mutate `RecipeVersion`, `BrewSession`, Phase 3 measurements, pitch handoff, timers, or inventory during Phase 4 operations.
 - **P4-FR-013:** Record packaging readiness facts without creating packaging sessions or ledger consumption.
 - **P4-FR-014:** Scope start idempotency to `brew_session_id` before a fermentation session ID exists.
 
 ### Lifecycle
 
-- **P4-FR-015:** Implement §9.4 as the total session state contract.
+- **P4-FR-015:** Implement §9.4 as the sole session command transition contract; §9.5 is an index of those rows only.
 - **P4-FR-016:** Reject invalid transitions with `409 INVALID_TRANSITION` and no partial writes.
 - **P4-FR-017:** Persist `pause_origin_state` and resume only to that origin.
-- **P4-FR-018:** Apply Phase 3-equivalent timer/reminder child effects on pause, resume, abort, skip, complete, and invalidation.
+- **P4-FR-018:** Apply Phase 3-equivalent timer/reminder child effects on pause, resume, abort, skip, complete, invalidation, and §9.8 reactivation (new timer identities; reminders not silently satisfied).
 - **P4-FR-019:** Separate fermentation completion from conditioning start.
 - **P4-FR-020:** Keep conditioning completion distinct from fermentation completion.
 - **P4-FR-021:** Abort with reason 10–1000 characters, preserved history, and §9.6 child effects.
 - **P4-FR-022:** Close only when a current `READY` or `READY_WITH_WAIVERS` handoff exists and is not `INVALIDATED`.
 - **P4-FR-023:** On `SkipConditioning`, move `FERMENTATION_COMPLETE` → `CONDITIONING_COMPLETE` with `conditioning_skipped=true` and null conditioning timestamps, creating no CONDITIONING instance.
-- **P4-FR-024:** Deny a second `ACTIVE_FERMENTATION` or `CONDITIONING` occurrence (`409 STAGE_REPEAT_PROHIBITED`).
+- **P4-FR-024:** Deny a second `ACTIVE_FERMENTATION` or `CONDITIONING` row (`409 STAGE_REPEAT_PROHIBITED`); invalidation reuses the existing row per §9.8.
 
 ### Measurements and time
 
@@ -1253,7 +1318,7 @@ Each `P4-FR` is mandatory, atomic, implementation-independent, and testable.
 - **P4-FR-035:** Evaluate stable gravity exclusively with `phase4-stable-gravity-v1`.
 - **P4-FR-036:** Compute ABV with accepted `(OG-FG)×131.25` when defined.
 - **P4-FR-037:** Label pitch-rate outputs `CALCULATED` and omit them when volume/OG/rate inputs are missing.
-- **P4-FR-038:** Convert Plato to SG only through `phase4-plato-to-sg-v1` inversion of the accepted SG-to-Plato function.
+- **P4-FR-038:** Convert Plato to SG only through `phase4-plato-to-sg-v1`, rejecting out-of-image inputs (`PLATO_OUT_OF_DOMAIN`) and nonconvergence (`PLATO_CONVERSION_FAILED`) without persisting a row.
 
 ### Completion and conditioning
 
@@ -1261,7 +1326,7 @@ Each `P4-FR` is mandatory, atomic, implementation-independent, and testable.
 - **P4-FR-040:** Evaluate fermentation eligibility with §14.2 and persist unsuccessful assessments without state change.
 - **P4-FR-041:** Move to `FERMENTATION_COMPLETE` only on successful `CompleteFermentation`.
 - **P4-FR-042:** Apply override limits in §14.5.
-- **P4-FR-043:** Invalidate and destinate state per §14.6 with no implicit reopen after `CLOSED`.
+- **P4-FR-043:** Invalidate and destinate state per §14.6 with no implicit reopen after `CLOSED` and with stage-row reuse rather than a second occurrence.
 - **P4-FR-044:** Version packaging handoffs with exactly one current row and preserve invalidated rows.
 - **P4-FR-045:** Evaluate conditioning with §14.3.
 - **P4-FR-046:** Freeze conditioning mode in the start snapshot; deny mode selection at completion.
@@ -1286,7 +1351,7 @@ Each `P4-FR` is mandatory, atomic, implementation-independent, and testable.
 ### Deviations, waivers, late entry
 
 - **P4-FR-058:** Record derived deviations with §22 identity and supersession.
-- **P4-FR-059:** Support waivers with reason/actor/timestamp/effect for the §10.3 waivable catalog only.
+- **P4-FR-059:** Support waivers with reason/actor/timestamp/effect for the §10.3 waivable catalog only, including readiness-only `ORIGINAL_GRAVITY_KNOWN`.
 - **P4-FR-060:** Reject non-waivable waiver requests with `409 WAIVER_PROHIBITED`.
 - **P4-FR-061:** Enforce late-entry windows in §24.
 
@@ -1308,12 +1373,12 @@ Each `P4-FR` is mandatory, atomic, implementation-independent, and testable.
 ### API, idempotency, concurrency, security
 
 - **P4-FR-071:** Require `operation_id` on all Phase 4 mutation commands.
-- **P4-FR-072:** Implement `phase4-operation-v1` including tombstones and rollback.
+- **P4-FR-072:** Implement `phase4-operation-v1` including tombstones, rollback, client-only canonical fingerprints, and lookup-before-evidence-reread.
 - **P4-FR-073:** Enforce optimistic revision conflicts as `409 STALE_REVISION`.
-- **P4-FR-074:** Serialize completion against evidence mutations under the session lock in §32.
+- **P4-FR-074:** Serialize completion against evidence mutations under the session lock and OCC rule in §32 (same initial revision: one winner; loser `409 STALE_REVISION`).
 - **P4-FR-075:** Enforce owner-only access (`404` cross-owner) including nested source IDs.
 - **P4-FR-076:** Preserve CSRF protections on every new mutating route.
-- **P4-FR-077:** Validate units/domains server-side with closed command schemas.
+- **P4-FR-077:** Validate units/domains server-side with closed command schemas; unknown fields return `422 UNKNOWN_FIELD`.
 
 ### Recovery, backup, performance, accessibility, safety
 
@@ -1330,6 +1395,8 @@ Each `P4-FR` is mandatory, atomic, implementation-independent, and testable.
 - **P4-FR-085:** Preserve accepted Phase 2 core/calculation/inventory and Phase 1A browser regression surfaces.
 - **P4-FR-086:** Enforce the Phase 5+ leakage matrix in §51.
 - **P4-FR-087:** Apply additive migrations from accepted Phase 3 head to verified Phase 4 head, preserving legacy data, constraints, and predecessor round-trip policy.
+- **P4-FR-088:** Reactivate an invalidated stage by reusing `stage_instance_id`, incrementing `activation_ordinal`, setting `current_activation_started_at`, and creating new timer identities per §9.8.
+- **P4-FR-089:** After `CLOSED`, evaluate packaging readiness from current evidence without `CompleteFermentation`/`CompleteConditioning` and without leaving `CLOSED`.
 
 ## 45. Acceptance criteria
 
@@ -1360,7 +1427,7 @@ Format: PRECONDITION / ACTION / EXPECTED / EVIDENCE / RELATED_FR.
 - **P4-AC-023:** PRECONDITION: eligible ACTIVE. ACTION: complete. EXPECTED: FERMENTATION_COMPLETE, confirmed assessment. EVIDENCE: DB. RELATED_FR: 041,019.
 - **P4-AC-024:** PRECONDITION: confirmed then gravity correction. ACTION: correct. EXPECTED: §14.6 destination; original assessment preserved INVALIDATED. EVIDENCE: state vector. RELATED_FR: 043.
 - **P4-AC-025:** PRECONDITION: CLOSED with READY handoff. ACTION: completion-affecting correction. EXPECTED: session stays CLOSED; handoff INVALIDATED; no ACTIVE. EVIDENCE: DB. RELATED_FR: 043,044.
-- **P4-AC-026:** PRECONDITION: CLOSED invalidated. ACTION: requalify+new handoff. EXPECTED: version 2 current; version 1 preserved; no packaging rows. EVIDENCE: DB. RELATED_FR: 044,013.
+- **P4-AC-026:** PRECONDITION: CLOSED with current READY handoff; FG correction within 24h invalidates current handoff; original Complete* rows INVALIDATED. ACTION: AssessPackagingReadiness then RecordPackagingReadinessHandoff. EXPECTED: session remains CLOSED; no CompleteFermentation/CompleteConditioning; R1/R2 from current evidence; handoff version 2 current; version 1 preserved `current=false`; zero packaging-operation rows. EVIDENCE: DB. RELATED_FR: 044,013,089.
 - **P4-AC-027:** PRECONDITION: sparse recipe. ACTION: start then complete fermentation. EXPECTED: deterministic plan; unspecified targets; skip-only conditioning. EVIDENCE: snapshot JSON+hash. RELATED_FR: 011,046,047.
 - **P4-AC-028:** PRECONDITION: duplicate FERMENTATION_FOUNDATION. ACTION: start. EXPECTED: 422, no session. EVIDENCE: API. RELATED_FR: 011.
 - **P4-AC-029:** PRECONDITION: timers on F-REC-1. ACTION: refresh, API restart, Redis stop, deadline outage. EXPECTED: §36. EVIDENCE: IDs/due_at/expiry count. RELATED_FR: 048–051,078,079.
@@ -1391,6 +1458,18 @@ Format: PRECONDITION / ACTION / EXPECTED / EVIDENCE / RELATED_FR.
 - **P4-AC-054:** PRECONDITION: any nonterminal fermentation session. ACTION: waive `pitched_at`, yeast-addition note, ownership, or idempotency. EXPECTED: `409 WAIVER_PROHIBITED`, no waiver row. EVIDENCE: API+DB. RELATED_FR: 060.
 - **P4-AC-055:** PRECONDITION: planned fermentation duration elapsed, fewer than three valid gravities. ACTION: CompleteFermentation. EXPECTED: `422 COMPLETION_INELIGIBLE`, state remains `ACTIVE`. EVIDENCE: DB. RELATED_FR: 039.
 - **P4-AC-056:** PRECONDITION: ACTIVE session. ACTION: RecordAction with a type not in §21.1. EXPECTED: `422`, no action row. EVIDENCE: API. RELATED_FR: 056.
+- **P4-AC-057:** PRECONDITION: PAUSED from CONDITIONING; separately CONDITIONING_COMPLETE. ACTION: Abort. EXPECTED: `ABORTED` and §9.6 children; zero remaining nonterminal timers. EVIDENCE: state vector. RELATED_FR: 015,021.
+- **P4-AC-058:** PRECONDITION: HANDOFF_READY then completion-affecting gravity making F1 fail. ACTION: AssessPackagingReadiness. EXPECTED: session `COMPLETION_ASSESSED`; current handoff `INVALIDATED`. EVIDENCE: DB. RELATED_FR: 015,044.
+- **P4-AC-059:** PRECONDITION: R1 and R2 true, OG UNKNOWN. ACTION: (a) assess without waiver; (b) waive `ORIGINAL_GRAVITY_KNOWN` then record handoff; (c) override while R1 false. EXPECTED: (a) not READY; (b) `READY_WITH_WAIVERS`; (c) `409 OVERRIDE_PROHIBITED`. EVIDENCE: API+DB. RELATED_FR: 059,042,089.
+- **P4-AC-060:** PRECONDITION: CONDITIONING started then fermentation-affecting correction. ACTION: CompleteFermentation again then StartConditioning. EXPECTED: same `stage_instance_id`; `activation_ordinal=2`; no second CONDITIONING PK. EVIDENCE: DB. RELATED_FR: 024,088.
+- **P4-AC-061:** PRECONDITION: CLOSED READY then FG correction within 24h. ACTION: AssessPackagingReadiness then RecordPackagingReadinessHandoff. EXPECTED: session stays CLOSED; new current handoff version; no CompleteFermentation. EVIDENCE: IDs/status. RELATED_FR: 089,044,026-related 043.
+- **P4-AC-062:** PRECONDITION: FERMENTATION_GRAVITY raw Plato 100; just-outside PLATO_MAX; just-inside PLATO_MAX. ACTION: submit. EXPECTED: first two `422 PLATO_OUT_OF_DOMAIN` zero rows; inside converts with residual < 1e-7. EVIDENCE: goldens. RELATED_FR: 038.
+- **P4-AC-063:** PRECONDITION: conditioning completed 10 days ago; session still nonterminal; correction invalidates; session CONDITIONING. ACTION: Record CONDITIONING_TEMPERATURE now. EXPECTED: accepted; `late_entry=false`; not rejected by historical `completed_at`. EVIDENCE: API+timestamps. RELATED_FR: 029,088.
+- **P4-AC-064:** PRECONDITION: abort then restart same brew/recipe with `details.schedule`. ACTION: compare plan hashes and requirement IDs. EXPECTED: same template IDs and logical hash; distinct row IDs; schedule applied. EVIDENCE: snapshot JSON. RELATED_FR: 011.
+- **P4-AC-065:** PRECONDITION: two clients, `expected_revision=10`. ACTION: CompleteFermentation and RecordMeasurement concurrently. EXPECTED: one commit; loser `409 STALE_REVISION`; loser writes zero domain rows. EVIDENCE: PG interleaving. RELATED_FR: 073,074.
+- **P4-AC-066:** PRECONDITION: CompleteFermentation commits; HTTP lost; new gravity commits; client retries same operation_id and body. EXPECTED: replay original assessment/HTTP, not `IDEMPOTENCY_KEY_REUSED`. EVIDENCE: operation table. RELATED_FR: 072.
+- **P4-AC-067:** PRECONDITION: any mutation. ACTION: extra undocumented JSON field (including owner/status). EXPECTED: `422 UNKNOWN_FIELD`, no rows. EVIDENCE: API. RELATED_FR: 077.
+- **P4-AC-068:** PRECONDITION: CLOSED at T. ACTION: RecordAction at T+12h and T+25h; addition execute at T+12h and T+25h; yeast source-pair change; yeast annotation at T+2d. EXPECTED: both actions 409; addition 12h allowed 25h 409; source-pair 409; annotation allowed. EVIDENCE: API. RELATED_FR: 061.
 
 ## 46. Adversarial scenarios
 
@@ -1427,6 +1506,15 @@ Format: PRECONDITION / ACTION / EXPECTED / EVIDENCE / RELATED_FR.
 - **P4-ADV-031:** PRECONDITION: unplanned addition while PAUSED. ACTION: create. EXPECTED: 409/422 no execution. EVIDENCE: API. RELATED_FR: 054. RELATED_AC: 012.
 - **P4-ADV-032:** PRECONDITION: override with zero gravities. ACTION: complete override. EXPECTED: 422. EVIDENCE: API. RELATED_FR: 042. RELATED_AC: 022.
 - **P4-ADV-033:** PRECONDITION: HANDOFF_READY. ACTION: abort. EXPECTED: 409 INVALID_TRANSITION. EVIDENCE: API. RELATED_FR: 016. RELATED_AC: 012.
+- **P4-ADV-034:** PRECONDITION: PAUSED origin CONDITIONING. ACTION: abort. EXPECTED: ABORTED, §9.6. EVIDENCE: DB. RELATED_FR: 021. RELATED_AC: 057.
+- **P4-ADV-035:** PRECONDITION: UNKNOWN OG, R1/R2 true. ACTION: record READY without waiver; then override with R1 false. EXPECTED: not READY; `409 OVERRIDE_PROHIBITED`. EVIDENCE: API. RELATED_FR: 059. RELATED_AC: 059.
+- **P4-ADV-036:** PRECONDITION: INVALIDATED CONDITIONING row. ACTION: StartConditioning creating a new UUID. EXPECTED: reuse existing ID or 409 if a non-invalidated row exists; never two PKs. EVIDENCE: DB. RELATED_FR: 088. RELATED_AC: 060.
+- **P4-ADV-037:** PRECONDITION: ACTIVE. ACTION: 100 Plato gravity. EXPECTED: `422 PLATO_OUT_OF_DOMAIN`, no leaf. EVIDENCE: API. RELATED_FR: 038. RELATED_AC: 062.
+- **P4-ADV-038:** PRECONDITION: day-10 reactivation. ACTION: new temperature. EXPECTED: accepted in current-activation window. EVIDENCE: API. RELATED_FR: 088. RELATED_AC: 063.
+- **P4-ADV-039:** PRECONDITION: `details.schedule` present. ACTION: start. EXPECTED: schedule in snapshot hash, not ignored. EVIDENCE: hash. RELATED_FR: 011. RELATED_AC: 064.
+- **P4-ADV-040:** PRECONDITION: shared expected_revision. ACTION: complete vs measure. EXPECTED: one STALE loser. EVIDENCE: PG. RELATED_FR: 074. RELATED_AC: 065.
+- **P4-ADV-041:** PRECONDITION: lost assessment response then new gravity. ACTION: retry same key/body. EXPECTED: replay. EVIDENCE: operation row. RELATED_FR: 072. RELATED_AC: 066.
+- **P4-ADV-042:** PRECONDITION: CLOSED. ACTION: RecordAction at 12h. EXPECTED: 409, not addition window. EVIDENCE: API. RELATED_FR: 016. RELATED_AC: 068.
 
 ## 47. Testing strategy
 
@@ -1526,6 +1614,8 @@ Declared register plus independent-review implicit questions. All blocking items
 | RQ-10 | Yeast source relation | resolved | §11 |
 | RQ-11 | Concurrent evidence/assessment | resolved | §32 |
 
+RQ-01 through RQ-11 remain the original implicit review questions. The second bounded remediation closed the residual implementation-critical gaps that the independent re-review still found in RQ-02, RQ-03, RQ-04, RQ-06, RQ-07, RQ-08, and RQ-11. No new product decision was invented. `P4-OQ-001` through `P4-OQ-003` remain non-blocking.
+
 `OPEN_BLOCKING_QUESTIONS=0`
 
 ## 54. Traceability contract
@@ -1544,25 +1634,25 @@ The following mapping is normative. Every FR, AC, and ADV appears at least once.
 | P4-FR-008 | 007 | 023 | POSTGRESQL | unique partial index |
 | P4-FR-009 | 008 | — | API_INTEGRATION | new session after abort |
 | P4-FR-010 | 009 | — | API_INTEGRATION | two brews |
-| P4-FR-011 | 004,027,028,049 | 029 | DOMAIN_UNIT | hash goldens |
+| P4-FR-011 | 004,027,028,049,064 | 029,039 | DOMAIN_UNIT | hash goldens + schedule keys + template vs row IDs |
 | P4-FR-012 | 001,010 | 020 | POSTGRESQL | Phase 3 row hashes |
 | P4-FR-013 | 011 | 017 | API_INTEGRATION | zero packaging rows |
 | P4-FR-014 | 004 | 001 | API_INTEGRATION | start replay before list |
-| P4-FR-015 | 012,050 | 024,033 | DOMAIN_UNIT | full table |
-| P4-FR-016 | 012 | 012,024,033 | API_INTEGRATION | 409 no writes |
+| P4-FR-015 | 012,050,057,058 | 024,033 | DOMAIN_UNIT | full table including every §9.5 A cell |
+| P4-FR-016 | 012,068 | 012,024,033,042 | API_INTEGRATION | 409 no writes |
 | P4-FR-017 | 013 | 024 | POSTGRESQL | pause_origin |
-| P4-FR-018 | 013,016,029 | 011 | POSTGRESQL | child states |
+| P4-FR-018 | 013,016,029,057 | 011,034 | POSTGRESQL | child states including abort/reactivation |
 | P4-FR-019 | 023,050 | — | API_INTEGRATION | no auto conditioning |
 | P4-FR-020 | 050,053 | — | API_INTEGRATION | distinct assessments |
-| P4-FR-021 | 016 | 012 | API_INTEGRATION | abort vector |
+| P4-FR-021 | 016,057 | 012,034 | API_INTEGRATION | abort vector including PAUSED and COND_COMPLETE |
 | P4-FR-022 | 017 | 012 | API_INTEGRATION | close guard |
 | P4-FR-023 | 014 | — | API_INTEGRATION | skip destination |
-| P4-FR-024 | 012 | — | API_INTEGRATION | repeat deny |
+| P4-FR-024 | 012,060 | 036 | API_INTEGRATION | repeat deny; reuse after invalidation |
 | P4-FR-025 | 020 | 004,025 | DOMAIN_UNIT | gravity matrix |
 | P4-FR-026 | 020 | 026 | API_INTEGRATION | temp bounds |
 | P4-FR-027 | 020 | — | API_INTEGRATION | pH bounds |
 | P4-FR-028 | 020 | — | API_INTEGRATION | stage required |
-| P4-FR-029 | 020 | 019 | API_INTEGRATION | dual timestamps |
+| P4-FR-029 | 020,063 | 019,038 | API_INTEGRATION | dual timestamps; current-activation window |
 | P4-FR-030 | 020 | 026 | API_INTEGRATION | 422 time |
 | P4-FR-031 | 020,024 | 006 | POSTGRESQL | leaf uniqueness |
 | P4-FR-032 | 020 | 004 | POSTGRESQL | FK/API |
@@ -1571,13 +1661,13 @@ The following mapping is normative. Every FR, AC, and ADV appears at least once.
 | P4-FR-035 | 018,019 | 005,025 | DOMAIN_UNIT | §15 vectors |
 | P4-FR-036 | 021 | — | DOMAIN_UNIT | ABV formula |
 | P4-FR-037 | 021 | — | DOMAIN_UNIT | missing inputs |
-| P4-FR-038 | 019 | — | DOMAIN_UNIT | inversion goldens |
+| P4-FR-038 | 019,062 | 037 | DOMAIN_UNIT | inversion goldens including 100 Plato and endpoints |
 | P4-FR-039 | 055,022 | 007 | API_INTEGRATION | duration-only fail |
 | P4-FR-040 | 022,053 | 007,032 | POSTGRESQL | failed assessment row |
 | P4-FR-041 | 023 | 002 | API_INTEGRATION | success transition |
-| P4-FR-042 | 022 | 032 | API_INTEGRATION | override limits |
-| P4-FR-043 | 024,025,047 | 006 | POSTGRESQL | destination+CLOSED |
-| P4-FR-044 | 026 | 017 | POSTGRESQL | versions/current |
+| P4-FR-042 | 022,059 | 032,035 | API_INTEGRATION | override limits including R3-only |
+| P4-FR-043 | 024,025,047,061 | 006 | POSTGRESQL | destination+CLOSED |
+| P4-FR-044 | 026,061 | 017 | POSTGRESQL | versions/current |
 | P4-FR-045 | 053 | — | API_INTEGRATION | C1/C2 |
 | P4-FR-046 | 027 | — | API_INTEGRATION | deny mode at complete |
 | P4-FR-047 | 014,015 | — | API_INTEGRATION | skip guards |
@@ -1592,9 +1682,9 @@ The following mapping is normative. Every FR, AC, and ADV appears at least once.
 | P4-FR-056 | 056 | — | API_INTEGRATION | enum 422 |
 | P4-FR-057 | 033 | — | POSTGRESQL | ledger zero |
 | P4-FR-058 | 020 | 006 | POSTGRESQL | deviation successor |
-| P4-FR-059 | 051 | 008 | API_INTEGRATION | waiver catalog |
+| P4-FR-059 | 051,059 | 008,035 | API_INTEGRATION | waiver catalog including ORIGINAL_GRAVITY_KNOWN |
 | P4-FR-060 | 054 | 008 | API_INTEGRATION | WAIVER_PROHIBITED |
-| P4-FR-061 | 047,048 | 012 | API_INTEGRATION | windows |
+| P4-FR-061 | 047,048,068 | 012,042 | API_INTEGRATION | windows; Action vs Addition vs yeast vs equipment |
 | P4-FR-062 | 046 | 019 | API_INTEGRATION | export order |
 | P4-FR-063 | 046 | 019 | API_INTEGRATION | event types present |
 | P4-FR-064 | 047,052 | 013 | SECURITY | media+notes terminal |
@@ -1605,12 +1695,12 @@ The following mapping is normative. Every FR, AC, and ADV appears at least once.
 | P4-FR-069 | 034 | 018 | POSTGRESQL | cycle race |
 | P4-FR-070 | 033 | 017 | POSTGRESQL | no consumption |
 | P4-FR-071 | 037 | 001 | API_INTEGRATION | missing key |
-| P4-FR-072 | 037 | 001,030 | API_INTEGRATION | fingerprint/tombstone |
-| P4-FR-073 | 036 | 002,024 | POSTGRESQL | stale 409 |
-| P4-FR-074 | 036 | 002,028 | POSTGRESQL | R3–R8,R13 |
+| P4-FR-072 | 037,066 | 001,030,041 | API_INTEGRATION | fingerprint/tombstone; lookup before evidence reread |
+| P4-FR-073 | 036,065 | 002,024,040 | POSTGRESQL | stale 409 |
+| P4-FR-074 | 036,065 | 002,028,040 | POSTGRESQL | R3–R8,R13 OCC loser always STALE |
 | P4-FR-075 | 006,038 | 003,015,027 | SECURITY | IDOR |
 | P4-FR-076 | 039 | 014 | SECURITY | CSRF |
-| P4-FR-077 | 020 | 026 | API_INTEGRATION | closed schema |
+| P4-FR-077 | 020,067 | 026 | API_INTEGRATION | closed schema; 422 UNKNOWN_FIELD |
 | P4-FR-078 | 029 | 010 | RECOVERY | restart |
 | P4-FR-079 | 029 | 009 | RECOVERY | Redis |
 | P4-FR-080 | 040 | 030 | BACKUP_RESTORE | vectors |
@@ -1621,8 +1711,10 @@ The following mapping is normative. Every FR, AC, and ADV appears at least once.
 | P4-FR-085 | 043 | — | PLAYWRIGHT | 1A/2 named suites |
 | P4-FR-086 | 002,003,011 | 017 | API_INTEGRATION | leakage scan |
 | P4-FR-087 | 044 | — | MIGRATION | head-to-head |
+| P4-FR-088 | 060,063 | 036,038 | POSTGRESQL | reuse PK; current-activation window; new timer IDs |
+| P4-FR-089 | 026,059,061 | 035 | POSTGRESQL | CLOSED requalify from current evidence |
 
-AC rows 001–056 and ADV rows 001–033 are each cited above. P4-AC-001 additionally maps FR-084.
+AC rows 001–068 and ADV rows 001–042 are each cited above. P4-AC-001 additionally maps FR-084.
 
 Bidirectional check: no AC or ADV may be introduced without a row in this table.
 
@@ -1651,16 +1743,18 @@ Phase 4 consumption of Phase 3 is reconciled: OG meaning remains pre-pitch; jour
 
 - [x] Phase 3 entry contract decidable including OG pin, null temperature, uniqueness, atomicity, retry
 - [x] Phase 5 readiness versus operations distinguished; handoff versioned
-- [x] Exhaustive session transition table and skip/pause-origin/abort children
-- [x] Completion eligibility/confirmation/invalidation/CLOSED rule
+- [x] Exhaustive session transition table matching the allowlist, including abort from PAUSED/CONDITIONING_COMPLETE and reassessment from ASSESSED/HANDOFF_READY/CLOSED
+- [x] Completion eligibility/confirmation/invalidation/CLOSED requalify without implicit reopen
+- [x] Stage reuse after invalidation; current-activation time window; new timer identities
 - [x] Stable gravity total algorithm plus goldens
-- [x] Time table and inherited late-entry windows
-- [x] Correction/late-entry/terminal matrix including ABORTED
-- [x] Idempotency and concurrency matrices
+- [x] Plato inverse domain, nonconvergence, and fail-closed 422 codes
+- [x] Time table as sole source including current vs first timestamps
+- [x] Correction/late-entry/terminal matrix with Action, Addition, Yeast, and Equipment split
+- [x] Idempotency (client-canonical fingerprints; lookup before evidence reread) and OCC concurrency
 - [x] Yeast pair/cycle/snapshot
 - [x] Addition FROM_PITCH mapping
 - [x] Traceability table with zero orphans
-- [x] Security nested IDOR and CSRF on new commands
+- [x] Security nested IDOR, CSRF, and unknown-field 422 on new commands
 - [x] Recovery/backup/performance measurable
 - [x] Safety software versus hardware
 - [x] No blocking open questions
@@ -1670,26 +1764,36 @@ Phase 4 consumption of Phase 3 is reconciled: OG meaning remains pre-pitch; jour
 
 ## 58. Independent review remediation traceability
 
-Historical finding IDs from `docs/evidence/PHASE_4_INDEPENDENT_ARCHITECTURE_AND_SPECIFICATION_REVIEW.md` are preserved.
+Historical finding IDs from `docs/evidence/PHASE_4_INDEPENDENT_ARCHITECTURE_AND_SPECIFICATION_REVIEW.md` are preserved. Re-review IDs from `docs/evidence/PHASE_4_INDEPENDENT_SPECIFICATION_RE_REVIEW.md` are appended. Prior FAIL history is not erased. First-remediation STATUS values that the re-review reopened remain visible in `FIRST_REMEDIATION_STATUS` / `RE_REVIEW_STATUS`.
 
-| FINDING_ID | SEVERITY | ORIGINAL_SPEC_REFERENCE | REMEDIATED_SPEC_REFERENCE | RELATED_FR | RELATED_AC | RELATED_ADV | STATUS |
-|---|---|---|---|---|---|---|---|
-| P4-SPEC-001 | P1 | §6.2 90–98; §6.4; §7.1; FR-001–008 | §6.2, §6.2.1, §6.4 | 002–007 | 004–006,010 | 021,022,020 | CLOSED |
-| P4-SPEC-002 | P1 | §6.1; §9.1–9.3; §17 | §8.4, §9 | 008,009,015–024 | 007,008,012–017 | 023,024,033 | CLOSED |
-| P4-SPEC-003 | P1 | §14; §17; §24; §9.3 | §14, §10.3, §24 | 039–047 | 022,023,053,054,055 | 007,032 | CLOSED |
-| P4-SPEC-004 | P1 | §7.1; §9.3; §23; §25 | §7, §14.6, §25 | 013,043,044 | 024–026 | 006 | CLOSED |
-| P4-SPEC-005 | P1 | §15; FR-025 | §15 | 035 | 018,019 | 005,025 | CLOSED |
-| P4-SPEC-006 | P1 | §12–13; §15 | §12, §13, §42 | 025–038,083 | 020,021 | 026 | CLOSED |
-| P4-SPEC-007 | P1 | §12.2; §23; §25; §42 | §18, §24 | 029,030,061 | 020,047 | 026 | CLOSED |
-| P4-SPEC-008 | P1 | §8.1/8.3; §10; §16–17; §21; §29 | §10, §16, §22, §29 | 011,046,058 | 027,028,049 | 029 | CLOSED |
-| P4-SPEC-009 | P1 | §20; §10 | §21 | 052–057 | 031–033 | 031 | CLOSED |
-| P4-SPEC-010 | P1 | §8.2; §11; §28 | §11 | 066–070 | 034,035 | 018,027 | CLOSED |
-| P4-SPEC-011 | P1 | §30; §32 | §32, §14.6 | 073,074 | 036 | 002,028 | CLOSED |
-| P4-SPEC-012 | P2 | §30–31 | §30, §31 | 014,071,072 | 004,037 | 001 | CLOSED |
-| P4-SPEC-013 | P2 | §26 | §26 | 062,063,065 | 046 | 019 | CLOSED |
-| P4-SPEC-014 | P2 | §35–37 | §35–37 | 078–081 | 029,040,041 | 009–011,016,030 | CLOSED |
-| P4-SPEC-015 | P2 | §44–47; §54 | §44–47, §54 | 001–087 | 001–053 | 001–033 | CLOSED |
-| P4-SPEC-016 | P2 | §8.3; §22–25; §27–29 | §23, §25 | 031,055,059,064 | 047,048 | 012 | CLOSED |
-| P4-SPEC-017 | P3 | §1; §47; §48 | §1, §47, §48 | 087 | 044 | — | CLOSED |
+| FINDING_ID | ORIGINAL_SEVERITY | FIRST_REMEDIATION_STATUS | RE_REVIEW_STATUS | SECOND_REMEDIATION_REFERENCE | RELATED_FR | RELATED_AC | RELATED_ADV | FINAL_STATUS |
+|---|---|---|---|---|---|---|---|---|
+| P4-SPEC-001 | P1 | CLOSED | CLOSED | unchanged; §§6–7 | 002–007 | 004–006,010 | 021,022,020 | CLOSED |
+| P4-SPEC-002 | P1 | CLOSED | REOPENED | §9.4 sole authority; abort PAUSED/COND_COMPLETE; reassess ASSESSED/HANDOFF_READY/CLOSED | 015–024,088,089 | 012,016,050,057,058 | 024,033,034 | CLOSED |
+| P4-SPEC-003 | P1 | CLOSED | REOPENED | §10.3 `ORIGINAL_GRAVITY_KNOWN`; §14.4–14.5 R3-only override | 042,059,089 | 022,051,059 | 008,032,035 | CLOSED |
+| P4-SPEC-004 | P1 | CLOSED | REOPENED | §9.8 reuse; §14.6 CLOSED current-evidence path; current vs first timestamps | 024,043,044,088,089 | 024–026,060,061 | 006,036 | CLOSED |
+| P4-SPEC-005 | P1 | CLOSED | CLOSED | unchanged; §15 | 035 | 018,019 | 005,025 | CLOSED |
+| P4-SPEC-006 | P1 | CLOSED | REOPENED | §13 Plato image domain; `PLATO_OUT_OF_DOMAIN` / `PLATO_CONVERSION_FAILED` | 038,083 | 019,062 | 026,037 | CLOSED |
+| P4-SPEC-007 | P1 | CLOSED | REOPENED | §18 current-activation window; historical `completed_at` not an active upper bound | 029,030,061,088 | 020,047,063 | 026,038 | CLOSED |
+| P4-SPEC-008 | P1 | CLOSED | REOPENED | §10.1 recognized `schedule`/`conditioning_schedule`; ingredient order; template vs row ID | 011 | 027,028,049,064 | 029,039 | CLOSED |
+| P4-SPEC-009 | P1 | CLOSED | CLOSED | unchanged; §21 | 052–057 | 031–033,056 | 031 | CLOSED |
+| P4-SPEC-010 | P1 | CLOSED | CLOSED | unchanged; §11 | 066–070 | 034,035 | 018,027 | CLOSED |
+| P4-SPEC-011 | P1 | CLOSED | REOPENED | §32 OCC: same initial revision → one winner, loser `409 STALE_REVISION`; fail increments revision | 073,074 | 036,065 | 002,028,040 | CLOSED |
+| P4-SPEC-012 | P2 | CLOSED | REOPENED | §31 client-canonical fingerprint; lookup before evidence reread; `422 UNKNOWN_FIELD` | 014,071,072,077 | 004,037,066,067 | 001,041 | CLOSED |
+| P4-SPEC-013 | P2 | CLOSED | CLOSED | unchanged; §26 | 062,063,065 | 046 | 019 | CLOSED |
+| P4-SPEC-014 | P2 | CLOSED | CLOSED | unchanged; §§35–37 | 078–081 | 029,040,041 | 009–011,016,030 | CLOSED |
+| P4-SPEC-015 | P2 | CLOSED | CLOSED | §54/§58 ranges 001–089 / 001–068 / 001–042 | 001–089 | 001–068 | 001–042 | CLOSED |
+| P4-SPEC-016 | P2 | CLOSED | REOPENED | §24–§25 split Action, Addition, Yeast, Equipment; API alignment | 016,061,064 | 047,048,068 | 012,042 | CLOSED |
+| P4-SPEC-017 | P3 | CLOSED | CLOSED | unchanged; §§1,47–48 | 087 | 044 | — | CLOSED |
+| P4-RR-001 | P1 | n/a | REOPENED | same as P4-SPEC-002 second pass | 015,021,089 | 057,058 | 034 | CLOSED |
+| P4-RR-002 | P1 | n/a | REOPENED | same as P4-SPEC-003 second pass | 059,042,089 | 059 | 035 | CLOSED |
+| P4-RR-003 | P1 | n/a | REOPENED | same as P4-SPEC-004 second pass | 024,088,089 | 060,061,026 | 036 | CLOSED |
+| P4-RR-004 | P1 | n/a | REOPENED | same as P4-SPEC-006 second pass | 038 | 062 | 037 | CLOSED |
+| P4-RR-005 | P1 | n/a | REOPENED | same as P4-SPEC-007 second pass | 029,088 | 063 | 038 | CLOSED |
+| P4-RR-006 | P1 | n/a | REOPENED | same as P4-SPEC-008 second pass | 011 | 064 | 039 | CLOSED |
+| P4-RR-007 | P1 | n/a | REOPENED | same as P4-SPEC-011 second pass | 073,074 | 065 | 040 | CLOSED |
+| P4-RR-008 | P2 | n/a | REOPENED | same as P4-SPEC-012 second pass | 072,077 | 066,067 | 041 | CLOSED |
+| P4-RR-009 | P2 | n/a | REOPENED | same as P4-SPEC-016 second pass | 016,061 | 068 | 042 | CLOSED |
+| P4-RR-010 | P3 | n/a | NEW | §58 RELATED_AC now the full AC range | 001–089 | 001–068 | 001–042 | CLOSED |
 
 `P0_OPEN=0` `P1_OPEN=0` `BLOCKING_P2_OPEN=0` `P3_OPEN=0`
