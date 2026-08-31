@@ -898,7 +898,7 @@ Phase 3 excluded `FERMENTATION` and `DRY_HOP` from brew-day timing. Phase 4 mate
 
 Negative timing → `422` at materialization. One planned occurrence per source ingredient row. `RUNTIME_REPEAT_ALLOWED` is **denied** for these Phase 4 requirements (`runtime_occurrence_policy=DO_NOT_COPY`).
 
-Unplanned additions: allowed while session is `ACTIVE` or `CONDITIONING` (not PAUSED for new execution; correction still allowed) via `RecordUnplannedFermentationAddition` with `planned=false`. Distinct operation IDs create distinct events.
+Normal unplanned addition execution is allowed while session is `ACTIVE` or `CONDITIONING` (not PAUSED for new execution; correction still allowed) via `RecordUnplannedFermentationAddition` with `planned=false`. Historical entry after a completed stage while the session is nonterminal is §24. The only `CLOSED` exception is historical late recording under the sole §31 `phase4-terminal-addition-v1` policy; it does not authorize an occurrence after `closed_at`. Distinct operation IDs create distinct events.
 
 Execution creates append-only `FermentationAdditionEvent` with **zero inventory effect** (no reservation conversion, no `CONSUMPTION`).
 
@@ -947,13 +947,16 @@ Phase 4 **explicitly inherits** Phase 3 §6.8 windows, mapped onto fermentation 
 
 `recorded_at` server-assigned. Future `observed_at` ≤ 5 minutes. Reason 10–1000 chars. `late_entry=true`. `expected_session_revision` required when nonterminal.
 
+Terminal addition eligibility is governed **only** by `phase4-terminal-addition-v1` in §31. Rows in this section classify late evidence and point to that authority; they do not independently authorize a planned or unplanned addition after `CLOSED`.
+
 | Late-evidence class | Allowed states and fixed boundary | Deterministic effect |
 |---|---|---|
 | Measurement on currently `ACTIVE`/`PAUSED` stage | `observed_at` in §18 current-activation window; not classified late solely because a historical `completed_at` exists | Normal append; `late_entry=false` |
 | Measurement after stage `COMPLETED`, session not CLOSED/ABORTED | Target stage `COMPLETED` (not INVALIDATED); submit ≤ 24 hours after that stage's **first** `completed_at`; `observed_at` in the COMPLETED window of §18 | Append; `late_entry=true`; original first completion unchanged |
 | Addition after stage `COMPLETED`, session not CLOSED/ABORTED | ≤ 24 hours after stage first `completed_at` | Append; reminder/waiver projection |
 | `RecordAction` after stage or session terminal | New actions never use the addition 24-hour window | After `CLOSED`/`ABORTED`: `409 TERMINAL_SESSION` for CREATE. Correction of an **existing** action ≤ 30 days. |
-| Measurement or addition after session `CLOSED` | ≤ 24 hours after `closed_at`; target stage must exist; measurements and planned/unplanned additions allowed; **not** `RecordAction` | Append evidence only; no new stage/timer; no session reopen; may invalidate current handoff; `available_at_original_session_completion=false` |
+| Measurement after session `CLOSED` | Submit ≤ 24 hours after `closed_at`; target stage must exist; **not** `RecordAction` | Append evidence only; no new stage/timer; no session reopen; may invalidate current handoff; `available_at_original_session_completion=false` |
+| Planned or unplanned addition recorded after session `CLOSED` | §31 `phase4-terminal-addition-v1` is the sole authority | Historical late evidence only; `occurred_at <= closed_at`; server receipt boundary, idempotency, OCC, journal and rejection codes are all §31 |
 | New measurement/addition/action after `ABORTED` | Prohibited | `409 TERMINAL_SESSION_EVIDENCE_PROHIBITED` |
 | Correction of existing measurement/addition/action | Nonterminal any time; `CLOSED` or `ABORTED` ≤ 30 calendar days after terminal time | Append correction; current leaf; may invalidate completion if affecting |
 | Note/annotation | Nonterminal any time; `CLOSED`/`ABORTED` ≤ 7 calendar days after terminal | Append; never satisfies requirements |
@@ -976,7 +979,7 @@ Cells: `ALLOW` / `DENY` / `ALLOW_WITH_CONDITIONS`. After `CLOSED` unless a colum
 | Fermentation measurement | ALLOW | DENY normal; LATE_ENTRY ≤24h after close | ALLOW_WITH_CONDITIONS ≤30d | ALLOW_WITH_CONDITIONS ≤24h create | DENY new waiver | DENY overwrite | DENY | via note | DENY | ALLOW | if affecting, invalidate handoff | DENY |
 | Conditioning measurement | ALLOW | same | same | same | DENY | DENY | DENY | via note | DENY | ALLOW | if affecting | DENY |
 | Action | ALLOW | DENY | ALLOW_WITH_CONDITIONS existing action ≤30d (note/`occurred_at` only) | DENY new action | DENY | DENY | DENY | ALLOW_WITH_CONDITIONS ≤7d session note | DENY | ALLOW | DENY | DENY |
-| Addition | ALLOW | DENY normal; ALLOW_WITH_CONDITIONS planned/unplanned execute ≤24h after `closed_at` per §24 | ALLOW_WITH_CONDITIONS ≤30d | ALLOW_WITH_CONDITIONS ≤24h create | DENY | DENY | DENY | ALLOW_WITH_CONDITIONS ≤7d | DENY | ALLOW | if checkpoint satisfaction changes | DENY |
+| Addition | ALLOW | ALLOW_WITH_CONDITIONS only under §31 `phase4-terminal-addition-v1` | ALLOW_WITH_CONDITIONS existing event ≤30d | ALLOW_WITH_CONDITIONS only under §31 | DENY | DENY | DENY | ALLOW_WITH_CONDITIONS ≤7d | DENY | ALLOW | if checkpoint satisfaction changes | DENY |
 | Yeast reference | ALLOW snapshots | DENY | DENY source-pair/lot; ALLOW_WITH_CONDITIONS annotation note ≤7d | DENY | DENY | DENY | DENY | ALLOW_WITH_CONDITIONS ≤7d | DENY | ALLOW | n/a | DENY |
 | Equipment snapshot | ALLOW | DENY | DENY | DENY | DENY | DENY | DENY | DENY | DENY | ALLOW | n/a | DENY |
 | Timer | ALLOW | DENY | DENY new transitions | DENY | DENY | DENY | DENY history | DENY | DENY | ALLOW via session | n/a | DENY |
@@ -1010,6 +1013,8 @@ Closed event types (typed, versioned payloads):
 
 Correction/late display is dual-time: process `occurred_at` and server `recorded_at`. Regeneration is read-only and must show original and current assessments/handoffs. Missing media: `MEDIA_UNAVAILABLE` placeholder; generation succeeds.
 
+For every terminal addition admitted by §31, `FERMENTATION_ADDITION_RECORDED` stores and projects `occurred_at`, server `recorded_at`, `late_entry=true`, `terminal_state_at_recording=CLOSED`, operation ID, and original/correction lineage. The original event is never overwritten. A replay emits no second journal event.
+
 Identical regeneration inputs produce identical order. Concurrent same-timestamp inserts tie-break on `id`.
 
 ## 27. Notes and media
@@ -1041,7 +1046,7 @@ No equipment snapshot → lawful; fermenter identity `UNSPECIFIED`.
 
 ## 30. API contract (normative summary)
 
-Base path: `/api/v1/fermentation-sessions`. Exact URL spelling may vary if semantics, auth, and IDs are complete; capabilities below are required. All mutations: CSRF, owner, `operation_id`, `phase4-operation-v1`. Nonterminal commands require `expected_revision` except start (uses brew session revision).
+Base path: `/api/v1/fermentation-sessions`. Exact URL spelling may vary if semantics, auth, and IDs are complete; capabilities below are required. All mutations: CSRF, owner, `operation_id`, `phase4-operation-v1`. Nonterminal commands require `expected_revision` except start (uses brew session revision). Planned/unplanned addition submission after `CLOSED` also requires `expected_revision` and is governed only by §31.
 
 Common errors: `401`, `403` CSRF, `404` nondisclosure, `409` conflict/stale/terminal/idempotency, `410` archived idempotent result, `413`/`415` media, `422` validation.
 
@@ -1061,8 +1066,8 @@ Every mutation capability:
 | RecordMeasurement | POST | `/{id}/measurements` | owner | type, raw, observed_at, method, stage_instance_id, late flag | measurement | user+RecordMeasurement+session+op | §12/§18 | 409 key | §24 | 422 domain |
 | CorrectMeasurement | POST | `/{id}/measurements/{mid}/corrections` | owner | correction_of_id, fields, reason | correction | user+CorrectMeasurement+mid+op | §23 | 409 superseded | §24 | 422 |
 | RecordAction | POST | `/{id}/actions` | owner | type enum, occurred_at | action | session | §21.1 | 409 | DENY after CLOSED/ABORTED | 422 |
-| RecordPlannedAdditionExecution | POST | `/{id}/additions/{req_id}/execute` | owner | actual fields | event | requirement+op | §21.2 | 409 | §24 late ≤24h CLOSED | 422 |
-| RecordUnplannedAddition | POST | `/{id}/additions/unplanned` | owner | actual fields | event | session+op | ACTIVE/CONDITIONING or CLOSED late §24 | 409 | CLOSED ≤24h; ABORTED deny | 422 |
+| RecordPlannedAdditionExecution | POST | `/{id}/additions/{req_id}/execute` | owner | actual fields including occurred_at; operation_id; expected_revision | event + late_entry | requirement+op | §21.2 normal; §24 nonterminal late; §31 CLOSED late | stale/key/window | §31 sole authority | §31 codes |
+| RecordUnplannedAddition | POST | `/{id}/additions/unplanned` | owner | actual fields including occurred_at; operation_id; expected_revision | event + late_entry | session+op | §21.2 normal; §24 nonterminal late; §31 CLOSED late | stale/key/window | §31 sole authority | §31 codes |
 | Yeast enrich/correct | POST | `/{id}/yeast-reference` | owner | pair/lot/fields | reference | session+op | §11 | 409 cycle | CLOSED: annotation only; source-pair DENY | 422 pair |
 | CorrectAddition | POST | `/{id}/addition-events/{id}/corrections` | owner | phase3-adapted | correction | original event+op | §21.2 | 409 superseded | §24 | 422 |
 | Timer commands | POST | `/{id}/timers...` | owner | inherited Phase 3 set | timer | timer+op | inherited | 409 | deny new after terminal | inherited |
@@ -1083,13 +1088,29 @@ Canonicalization uses UTF-8, schema version, semantic defaults, sorted keys, ord
 
 `expected_revision` is a request precondition. A retry after `409 STALE_REVISION` **must use a new operation_id**. Evidence fingerprints belong on the assessment/result provenance document only.
 
+### 31.1 Canonical terminal addition policy (`phase4-terminal-addition-v1`)
+
+This subsection and the Planned/Unplanned addition `TERMINAL_BEHAVIOR` cells below are the **sole normative authority** for addition submission after `CLOSED`. Sections 24, 25, and 30 are indexes to this rule and must not define a different result. The policy is **BOUNDED_LATE_ENTRY**, meaning recording of a historical event, not permission to perform a new process action after closure.
+
+For a fresh planned or unplanned addition operation when the locked session state is `CLOSED`:
+
+1. Owner, CSRF, `operation_id`, and `expected_revision` are required. The server looks up the operation result first, then locks `FermentationSession` and checks the revision before evaluating the window.
+2. `occurred_at` is the client-supplied historical event time and **must be ≤ `closed_at`**. A later occurrence returns `422 TERMINAL_ADDITION_OCCURRED_AFTER_CLOSE`, creates no addition/journal/success row, and cannot be converted into an Action.
+3. `recorded_at` is server receipt time and **must be ≤ `closed_at + 24 hours`**, inclusive. A fresh request received later returns `409 LATE_ENTRY_WINDOW_CLOSED` and creates no domain or success rows.
+4. The target stage/requirement must belong to the session and all §21.2 validation still applies. Success appends one event with `late_entry=true` and `available_at_original_session_completion=false`; it creates no stage/timer, never reopens the session, and may invalidate the current handoff through the existing evidence rules.
+5. `ABORTED` always returns `409 TERMINAL_SESSION_EVIDENCE_PROHIBITED` for a new addition.
+6. Same key + same canonical payload replays the stored result **before** state, revision, occurrence, or window reevaluation, including after the 24-hour boundary or a later transition. Same key + different payload returns `409 IDEMPOTENCY_KEY_REUSED`. A fresh key is evaluated against the current locked state and server time.
+7. Journal projection is §26. PostgreSQL state and server time are authoritative; frontend receipt time is irrelevant.
+
+At exactly `occurred_at = closed_at` and exactly `recorded_at = closed_at + 24 hours`, the request is inside the boundary. These rules do not change correction of an existing addition under §§23–25.
+
 | MUTATION | KEY_REQUIRED | KEY_SCOPE | CANONICALIZATION | RETENTION | SAME_KEY_SAME_PAYLOAD | SAME_KEY_DIFFERENT_PAYLOAD | RETRY_AFTER_PARTIAL_FAILURE | TERMINAL_BEHAVIOR |
 |---|---|---|---|---|---|---|---|---|
 | Start | yes | brew_session_id | §6 optional yeast/equipment defaults | inherited | replay original session | 409 | rollback no partial start | replay even if later ABORTED |
 | Measurement | yes | session_id | raw+canonical+time+stage+type | inherited | replay | 409 | inherited | §24 |
 | Action | yes | session_id | type+occurred_at+note defaults | inherited | replay | 409 | inherited | §25 |
-| Planned addition execute | yes | requirement_id | actual fields | inherited | replay | 409 | inherited | §24 |
-| Unplanned addition | yes | session_id | actual fields | inherited | replay | 409 | inherited | deny after terminal |
+| Planned addition execute | yes | requirement_id | actual fields including `occurred_at` | inherited | replay before terminal/window checks | 409 | rollback; retry once | §31.1: bounded historical late entry after CLOSED; ABORTED deny |
+| Unplanned addition | yes | session_id | actual fields including `occurred_at` | inherited | replay before terminal/window checks | 409 | rollback; retry once | §31.1: bounded historical late entry after CLOSED; ABORTED deny |
 | State pause/resume/abort/close/complete/skip/start-conditioning | yes | session_id | command name + reason defaults | inherited | replay | 409 | atomic children | abort/close terminal |
 | Timer create/extend/replace/cancel/complete/ack | yes | timer or session | inherited | inherited | replay | 409 | inherited | deny new |
 | Reminder ack/skip | yes | reminder_id | inherited | inherited | replay | 409 | inherited | §25 |
@@ -1127,6 +1148,7 @@ When two nonterminal mutations share the **same initial** `expected_revision`, e
 | R11 | Resume stale tab | concurrent resume | revision | one resume; loser 409 STALE | 409 STALE | origin restored once | one resume |
 | R12 | Yeast A→B vs B→A | concurrent | ordered row locks | one cycle loser 409 | 409 | acyclic | one enrich |
 | R13 | Complete vs new measurement after read without lock | forbidden implementation | must lock session first **and** match expected_revision | specification forbids lock-free read | tests with PostgreSQL interleaving | no stale READY | — |
+| R14 | Close vs planned/unplanned addition late submission | same initial revision while HANDOFF_READY | session lock + OCC | one winner; loser `409 STALE_REVISION`. If Close wins, a later fresh operation is evaluated under §31.1; if addition wins, Close must use fresh revision and re-evaluate readiness | one 2xx; one 409 | only winner's rows; at most one addition for one operation | winner only; replay adds none |
 
 Atomic write vector for successful CompleteFermentation: session state, stage status, assessment row, timer/reminder child effects, journal events, audit, operation result, revision increment. Failed eligibility: assessment row + operation result + journal assess event + revision increment + **no** session-state change, same transaction.
 
@@ -1343,7 +1365,7 @@ Each `P4-FR` is mandatory, atomic, implementation-independent, and testable.
 
 - **P4-FR-052:** Materialize `FERMENTATION`/`DRY_HOP` additions with §21.2 timing (`FROM_PITCH`, minutes from `pitched_at`).
 - **P4-FR-053:** Allow exactly one planned occurrence per source and deny runtime repeat of those requirements.
-- **P4-FR-054:** Allow unplanned additions only while `ACTIVE` or `CONDITIONING`.
+- **P4-FR-054:** Allow normal unplanned addition execution only while `ACTIVE` or `CONDITIONING`; permit historical entry only under §24 for a completed stage in a nonterminal session or under §31 after `CLOSED`; deny PAUSED normal execution, ABORTED creation, and post-close occurrences.
 - **P4-FR-055:** Record addition corrections with Phase 3 leaf semantics adapted to the fermentation session.
 - **P4-FR-056:** Record actions using the closed §21.1 enum.
 - **P4-FR-057:** Keep addition execution at zero inventory-ledger effect.
@@ -1353,7 +1375,7 @@ Each `P4-FR` is mandatory, atomic, implementation-independent, and testable.
 - **P4-FR-058:** Record derived deviations with §22 identity and supersession.
 - **P4-FR-059:** Support waivers with reason/actor/timestamp/effect for the §10.3 waivable catalog only, including readiness-only `ORIGINAL_GRAVITY_KNOWN`.
 - **P4-FR-060:** Reject non-waivable waiver requests with `409 WAIVER_PROHIBITED`.
-- **P4-FR-061:** Enforce late-entry windows in §24.
+- **P4-FR-061:** Enforce late-entry windows in §24 and the sole §31 `phase4-terminal-addition-v1` policy, separating historical `occurred_at <= closed_at` from server recording time and prohibiting new post-close process occurrences.
 
 ### Journal, media, export
 
@@ -1375,7 +1397,7 @@ Each `P4-FR` is mandatory, atomic, implementation-independent, and testable.
 - **P4-FR-071:** Require `operation_id` on all Phase 4 mutation commands.
 - **P4-FR-072:** Implement `phase4-operation-v1` including tombstones, rollback, client-only canonical fingerprints, and lookup-before-evidence-reread.
 - **P4-FR-073:** Enforce optimistic revision conflicts as `409 STALE_REVISION`.
-- **P4-FR-074:** Serialize completion against evidence mutations under the session lock and OCC rule in §32 (same initial revision: one winner; loser `409 STALE_REVISION`).
+- **P4-FR-074:** Serialize completion and lifecycle transitions, including Close, against evidence mutations under the session lock and OCC rule in §32 (same initial revision: one winner; loser `409 STALE_REVISION`).
 - **P4-FR-075:** Enforce owner-only access (`404` cross-owner) including nested source IDs.
 - **P4-FR-076:** Preserve CSRF protections on every new mutating route.
 - **P4-FR-077:** Validate units/domains server-side with closed command schemas; unknown fields return `422 UNKNOWN_FIELD`.
@@ -1469,7 +1491,7 @@ Format: PRECONDITION / ACTION / EXPECTED / EVIDENCE / RELATED_FR.
 - **P4-AC-065:** PRECONDITION: two clients, `expected_revision=10`. ACTION: CompleteFermentation and RecordMeasurement concurrently. EXPECTED: one commit; loser `409 STALE_REVISION`; loser writes zero domain rows. EVIDENCE: PG interleaving. RELATED_FR: 073,074.
 - **P4-AC-066:** PRECONDITION: CompleteFermentation commits; HTTP lost; new gravity commits; client retries same operation_id and body. EXPECTED: replay original assessment/HTTP, not `IDEMPOTENCY_KEY_REUSED`. EVIDENCE: operation table. RELATED_FR: 072.
 - **P4-AC-067:** PRECONDITION: any mutation. ACTION: extra undocumented JSON field (including owner/status). EXPECTED: `422 UNKNOWN_FIELD`, no rows. EVIDENCE: API. RELATED_FR: 077.
-- **P4-AC-068:** PRECONDITION: CLOSED at T. ACTION: RecordAction at T+12h and T+25h; addition execute at T+12h and T+25h; yeast source-pair change; yeast annotation at T+2d. EXPECTED: both actions 409; addition 12h allowed 25h 409; source-pair 409; annotation allowed. EVIDENCE: API. RELATED_FR: 061.
+- **P4-AC-068:** PRECONDITION: CLOSED at T; valid planned and unplanned additions occurred at T−1 minute; separate close/add clients share the pre-close revision. ACTION: submit each addition at server T+24h exactly; submit an unplanned addition with `occurred_at=T+1 minute` at T+12h; submit a valid historical addition just after T+24h; retry an accepted T+24h operation with the same key/body after expiry and then with the same key/different body; interleave Close vs late addition. EXPECTED: exact-boundary historical additions succeed as `late_entry=true`; post-close occurrence is `422 TERMINAL_ADDITION_OCCURRED_AFTER_CLOSE`; fresh post-window request is `409 LATE_ENTRY_WINDOW_CLOSED`; same-key/same-body replays one event and one journal row; changed body is `409 IDEMPOTENCY_KEY_REUSED`; close/add has one winner and one `409 STALE_REVISION`, with a fresh retry evaluated under §31.1. Existing Action/Yeast/Equipment results remain §25. EVIDENCE: API + PostgreSQL interleaving + operation/journal row counts. RELATED_FR: 054,061,072,074.
 
 ## 46. Adversarial scenarios
 
@@ -1514,7 +1536,7 @@ Format: PRECONDITION / ACTION / EXPECTED / EVIDENCE / RELATED_FR.
 - **P4-ADV-039:** PRECONDITION: `details.schedule` present. ACTION: start. EXPECTED: schedule in snapshot hash, not ignored. EVIDENCE: hash. RELATED_FR: 011. RELATED_AC: 064.
 - **P4-ADV-040:** PRECONDITION: shared expected_revision. ACTION: complete vs measure. EXPECTED: one STALE loser. EVIDENCE: PG. RELATED_FR: 074. RELATED_AC: 065.
 - **P4-ADV-041:** PRECONDITION: lost assessment response then new gravity. ACTION: retry same key/body. EXPECTED: replay. EVIDENCE: operation row. RELATED_FR: 072. RELATED_AC: 066.
-- **P4-ADV-042:** PRECONDITION: CLOSED. ACTION: RecordAction at 12h. EXPECTED: 409, not addition window. EVIDENCE: API. RELATED_FR: 016. RELATED_AC: 068.
+- **P4-ADV-042:** PRECONDITION: an unplanned historical addition is accepted at `closed_at+24h`; HTTP response is lost. ACTION: retry the same key/body after the boundary, then submit a fresh key for the same event and separately claim `occurred_at > closed_at`. EXPECTED: original key replays; fresh post-window key is `409 LATE_ENTRY_WINDOW_CLOSED`; post-close occurrence is `422 TERMINAL_ADDITION_OCCURRED_AFTER_CLOSE`; exactly one addition and journal event exist. EVIDENCE: API + operation/addition/journal rows. RELATED_FR: 054,061,072,074. RELATED_AC: 068.
 
 ## 47. Testing strategy
 
@@ -1677,14 +1699,14 @@ The following mapping is normative. Every FR, AC, and ADV appears at least once.
 | P4-FR-051 | 029 | 011 | RECOVERY | one expiry |
 | P4-FR-052 | 031 | — | DOMAIN_UNIT | 2880 mapping |
 | P4-FR-053 | 032 | — | API_INTEGRATION | 409 repeat |
-| P4-FR-054 | 012 | 031 | API_INTEGRATION | paused deny |
+| P4-FR-054 | 012,068 | 031,042 | API_INTEGRATION | normal-state allowlist; sole CLOSED historical exception |
 | P4-FR-055 | 024 | 006 | POSTGRESQL | addition leaf |
 | P4-FR-056 | 056 | — | API_INTEGRATION | enum 422 |
 | P4-FR-057 | 033 | — | POSTGRESQL | ledger zero |
 | P4-FR-058 | 020 | 006 | POSTGRESQL | deviation successor |
 | P4-FR-059 | 051,059 | 008,035 | API_INTEGRATION | waiver catalog including ORIGINAL_GRAVITY_KNOWN |
 | P4-FR-060 | 054 | 008 | API_INTEGRATION | WAIVER_PROHIBITED |
-| P4-FR-061 | 047,048,068 | 012,042 | API_INTEGRATION | windows; Action vs Addition vs yeast vs equipment |
+| P4-FR-061 | 047,048,068 | 012,042 | API_INTEGRATION | windows; §31 bounded historical terminal addition |
 | P4-FR-062 | 046 | 019 | API_INTEGRATION | export order |
 | P4-FR-063 | 046 | 019 | API_INTEGRATION | event types present |
 | P4-FR-064 | 047,052 | 013 | SECURITY | media+notes terminal |
@@ -1695,9 +1717,9 @@ The following mapping is normative. Every FR, AC, and ADV appears at least once.
 | P4-FR-069 | 034 | 018 | POSTGRESQL | cycle race |
 | P4-FR-070 | 033 | 017 | POSTGRESQL | no consumption |
 | P4-FR-071 | 037 | 001 | API_INTEGRATION | missing key |
-| P4-FR-072 | 037,066 | 001,030,041 | API_INTEGRATION | fingerprint/tombstone; lookup before evidence reread |
+| P4-FR-072 | 037,066,068 | 001,030,041,042 | API_INTEGRATION | fingerprint/tombstone; lookup and terminal-boundary replay |
 | P4-FR-073 | 036,065 | 002,024,040 | POSTGRESQL | stale 409 |
-| P4-FR-074 | 036,065 | 002,028,040 | POSTGRESQL | R3–R8,R13 OCC loser always STALE |
+| P4-FR-074 | 036,065,068 | 002,028,040,042 | POSTGRESQL | R3–R8,R13–R14 OCC loser always STALE |
 | P4-FR-075 | 006,038 | 003,015,027 | SECURITY | IDOR |
 | P4-FR-076 | 039 | 014 | SECURITY | CSRF |
 | P4-FR-077 | 020,067 | 026 | API_INTEGRATION | closed schema; 422 UNKNOWN_FIELD |
@@ -1797,3 +1819,9 @@ Historical finding IDs from `docs/evidence/PHASE_4_INDEPENDENT_ARCHITECTURE_AND_
 | P4-RR-010 | P3 | n/a | NEW | §58 RELATED_AC now the full AC range | 001–089 | 001–068 | 001–042 | CLOSED |
 
 `P0_OPEN=0` `P1_OPEN=0` `BLOCKING_P2_OPEN=0` `P3_OPEN=0`
+
+### 58.1 Final surgical closure append
+
+Final independent verification `P4-FINAL-001` reopened the P4-RR-009 / P4-SPEC-016 terminal-addition contract because §31 denied unplanned additions after terminal while §§24, 25, and 30 permitted a 24-hour CLOSED exception. The third surgical remediation selects **BOUNDED_LATE_ENTRY** and makes §31 `phase4-terminal-addition-v1` the sole authority: the addition must have `occurred_at <= closed_at`, must be received by `closed_at+24h` inclusive, and remains historical evidence rather than post-terminal process authority. Sections 24, 25, and 30 now only reference that policy. AC-068 and ADV-042 prove timestamp boundaries, replay, stale/OCC, and one-row journal behavior.
+
+`P4-FINAL-001_STATUS=CLOSED` `PRIOR_BLOCKING_P2_OPEN=0` `READY_FOR_FINAL_CODEX_CLOSURE_CHECK=NO` (pre-existing unrelated untracked files keep the full worktree dirty)
