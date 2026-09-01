@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     Numeric,
@@ -20,7 +21,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from brewing_api.domain.common import UuidTimestampMixin
 from brewing_api.domain.fermentation.constants import (
+    DERIVED_GRAVITY_SCHEMA_VERSION,
     ENTRY_SCHEMA_VERSION,
+    MEASUREMENT_SCHEMA_VERSION,
     PACKAGING_READINESS_SCHEMA_VERSION,
     PLAN_SCHEMA_VERSION,
     SESSION_STATE_SCHEMA_VERSION,
@@ -121,6 +124,7 @@ class FermentationPlanSnapshot(UuidTimestampMixin, Base):
 class FermentationStageInstance(UuidTimestampMixin, Base):
     __tablename__ = "fermentation_stage_instances"
     __table_args__ = (
+        UniqueConstraint("id", "fermentation_session_id", name="uq_fermentation_stage_session"),
         UniqueConstraint(
             "fermentation_session_id",
             "canonical_stage_type",
@@ -137,6 +141,10 @@ class FermentationStageInstance(UuidTimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(24), default="PENDING", nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    first_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    first_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    current_activation_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    current_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     plan_step_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
@@ -215,3 +223,100 @@ class PackagingReadinessHandoff(UuidTimestampMixin, Base):
         String(64), default=PACKAGING_READINESS_SCHEMA_VERSION, nullable=False
     )
     payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+
+class FermentationMeasurement(UuidTimestampMixin, Base):
+    __tablename__ = "fermentation_measurements"
+    __table_args__ = (
+        UniqueConstraint("id", "fermentation_session_id", name="uq_fermentation_measurement_session"),
+        ForeignKeyConstraint(
+            ["stage_instance_id", "fermentation_session_id"],
+            ["fermentation_stage_instances.id", "fermentation_stage_instances.fermentation_session_id"],
+            name="fk_fermentation_measurement_stage_session",
+        ),
+    )
+
+    fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    stage_instance_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_stage_instances.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    measurement_type: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    raw_value: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False)
+    raw_unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    canonical_value: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False)
+    canonical_unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    conversion_model_id: Mapped[str | None] = mapped_column(String(80))
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True, nullable=False)
+    source: Mapped[str] = mapped_column(String(24), nullable=False)
+    instrument_reference: Mapped[str | None] = mapped_column(String(160))
+    confidence: Mapped[str | None] = mapped_column(String(24))
+    note: Mapped[str | None] = mapped_column(Text)
+    method: Mapped[str | None] = mapped_column(String(32))
+    sample_temperature_c: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    validation_status: Mapped[str] = mapped_column(String(24), default="ACCEPTED", nullable=False)
+    late_entry: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    late_entry_reason: Mapped[str | None] = mapped_column(Text)
+    operation_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    schema_version: Mapped[str] = mapped_column(
+        String(64), default=MEASUREMENT_SCHEMA_VERSION, nullable=False
+    )
+    available_at_original_session_completion: Mapped[bool | None] = mapped_column(Boolean)
+
+
+class FermentationMeasurementCorrection(UuidTimestampMixin, Base):
+    __tablename__ = "fermentation_measurement_corrections"
+    __table_args__ = (
+        UniqueConstraint("correction_of_id", name="uq_fermentation_measurement_correction_leaf"),
+        UniqueConstraint("id", "fermentation_session_id", name="uq_fermentation_correction_session"),
+    )
+
+    fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    stage_instance_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_stage_instances.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    correction_of_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True, nullable=False)
+    measurement_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    raw_value: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False)
+    raw_unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    canonical_value: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False)
+    canonical_unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    conversion_model_id: Mapped[str | None] = mapped_column(String(80))
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True, nullable=False)
+    source: Mapped[str] = mapped_column(String(24), nullable=False)
+    instrument_reference: Mapped[str | None] = mapped_column(String(160))
+    confidence: Mapped[str | None] = mapped_column(String(24))
+    note: Mapped[str | None] = mapped_column(Text)
+    method: Mapped[str | None] = mapped_column(String(32))
+    sample_temperature_c: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    operation_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    schema_version: Mapped[str] = mapped_column(
+        String(64), default=MEASUREMENT_SCHEMA_VERSION, nullable=False
+    )
+
+
+class FermentationDerivedGravitySnapshot(UuidTimestampMixin, Base):
+    __tablename__ = "fermentation_derived_gravity_snapshots"
+
+    fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    schema_version: Mapped[str] = mapped_column(
+        String(64), default=DERIVED_GRAVITY_SCHEMA_VERSION, nullable=False
+    )
+    stable_gravity_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    final_gravity_sg: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
+    apparent_attenuation_ratio: Mapped[Decimal | None] = mapped_column(Numeric(8, 6))
+    spread: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
+    window_measurement_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    source_measurement_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    calculation_version: Mapped[str] = mapped_column(String(64), nullable=False)

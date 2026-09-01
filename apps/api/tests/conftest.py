@@ -14,6 +14,8 @@ os.environ.setdefault("MEDIA_ROOT", os.path.join(os.path.dirname(__file__), ".te
 import pytest
 from fastapi.testclient import TestClient
 
+pytest_plugins = ["phase4_fixtures"]
+
 from brewing_api.application.phase3.csrf import reset_rate_limits
 from brewing_api.domain import model_registry  # noqa: F401
 from brewing_api.main import app

@@ -5,8 +5,11 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from brewing_api.application.phase4.derived_gravity import latest_derived_gravity
+from brewing_api.application.phase4.measurements import serialize_measurement
 from brewing_api.application.phase4.sessions import get_fermentation_session
 from brewing_api.domain.fermentation.models import (
+    FermentationMeasurement,
     FermentationOgConsumption,
     FermentationPlanSnapshot,
     FermentationStageInstance,
@@ -39,6 +42,14 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
             FermentationYeastPitchReference.fermentation_session_id == session.id
         )
     )
+    measurements = list(
+        db.scalars(
+            select(FermentationMeasurement)
+            .where(FermentationMeasurement.fermentation_session_id == session.id)
+            .order_by(FermentationMeasurement.observed_at, FermentationMeasurement.created_at)
+        ).all()
+    )
+    derived = latest_derived_gravity(db, session.id)
     return {
         "id": str(session.id),
         "brew_session_id": str(session.brew_session_id),
@@ -87,5 +98,23 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
             if yeast.pitch_temperature_c is None
             else str(yeast.pitch_temperature_c),
             "pitched_at": yeast.pitched_at,
+        },
+        "measurements": [serialize_measurement(db, item) for item in measurements],
+        "derived_gravity": None
+        if derived is None
+        else {
+            "stable_gravity_status": derived.stable_gravity_status,
+            "final_gravity_sg": None
+            if derived.final_gravity_sg is None
+            else str(derived.final_gravity_sg),
+            "apparent_attenuation_ratio": None
+            if derived.apparent_attenuation_ratio is None
+            else str(derived.apparent_attenuation_ratio),
+            "spread": None if derived.spread is None else str(derived.spread),
+            "window_measurement_ids": derived.window_measurement_ids,
+            "source_measurement_ids": derived.source_measurement_ids,
+            "evaluated_at": derived.evaluated_at,
+            "calculation_version": derived.calculation_version,
+            "schema_version": derived.schema_version,
         },
     }

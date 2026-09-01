@@ -153,6 +153,8 @@ def start_fermentation_session(
         if step.canonical_stage_type == "ACTIVE_FERMENTATION":
             stage.status = "ACTIVE"
             stage.started_at = now
+            stage.first_started_at = now
+            stage.current_activation_started_at = now
         db.add(stage)
         db.flush()
         if step.canonical_stage_type == "ACTIVE_FERMENTATION":
