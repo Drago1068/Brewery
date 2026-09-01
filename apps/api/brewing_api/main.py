@@ -20,7 +20,7 @@ from brewing_api.platform.metrics import (
     snapshot,
 )
 from brewing_api.presentation.dependencies import CurrentUser
-from brewing_api.presentation.routes import auth, brew_sessions, brewing_core, health, recipes
+from brewing_api.presentation.routes import auth, brew_sessions, brewing_core, fermentation_sessions, health, recipes
 
 configure_logging()
 log = structlog.get_logger()
@@ -117,3 +117,4 @@ app.include_router(recipes.router, prefix="/api/v1")
 app.include_router(brew_sessions.router, prefix="/api/v1")
 app.include_router(brew_sessions.preview_router, prefix="/api/v1")
 app.include_router(brewing_core.router, prefix="/api/v1")
+app.include_router(fermentation_sessions.router, prefix="/api/v1")
