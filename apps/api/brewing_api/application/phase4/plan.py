@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Any
 
 from brewing_api.domain.fermentation.constants import PLAN_SCHEMA_VERSION, STAGE_TYPES
+from brewing_api.domain.recipes.models import RecipeVersion
 
 MATERIALIZATION_RULE_VERSION = "phase4-materialization-v1"
 PLAN_KIND_DEFAULT = "FERMENTATION_DEFAULT"
@@ -108,8 +109,32 @@ def materialize_default_plan(
     )
 
 
-def plan_snapshot_payload(plan: FermentationLogicalPlan) -> dict[str, Any]:
+def recipe_snapshot_payload(version: RecipeVersion) -> dict[str, Any]:
+    pitch_rate: str | None = None
+    if version.calculation_inputs and isinstance(version.calculation_inputs, dict):
+        raw_rate = version.calculation_inputs.get("pitch_rate_million_per_ml_plato")
+        if raw_rate is not None:
+            pitch_rate = str(raw_rate)
     return {
+        "recipe_version_id": str(version.id),
+        "batch_size_liters": None
+        if version.batch_size_liters is None
+        else str(version.batch_size_liters),
+        "target_og": None if version.target_og is None else str(version.target_og),
+        "target_fg": None if version.target_fg is None else str(version.target_fg),
+        "apparent_attenuation": None
+        if version.apparent_attenuation is None
+        else str(version.apparent_attenuation),
+        "pitch_rate_million_per_ml_plato": pitch_rate,
+    }
+
+
+def plan_snapshot_payload(
+    plan: FermentationLogicalPlan,
+    *,
+    recipe_snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload = {
         "schema_version": PLAN_SCHEMA_VERSION,
         "materialization_rule_version": MATERIALIZATION_RULE_VERSION,
         "plan_kind": plan.plan_kind,
@@ -125,3 +150,6 @@ def plan_snapshot_payload(plan: FermentationLogicalPlan) -> dict[str, Any]:
         ],
         "additions": list(plan.additions),
     }
+    if recipe_snapshot is not None:
+        payload["recipe_snapshot"] = recipe_snapshot
+    return payload

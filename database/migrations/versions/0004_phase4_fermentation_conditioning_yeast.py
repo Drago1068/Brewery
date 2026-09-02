@@ -27,6 +27,7 @@ def common_columns() -> list[sa.Column]:
 
 
 def upgrade() -> None:
+    op.execute("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(128)")
     op.create_table(
         "fermentation_sessions",
         *common_columns(),

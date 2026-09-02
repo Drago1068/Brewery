@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy.orm import Session
 
 from brewing_api.application.events import audit
+from brewing_api.domain.recipes.models import RecipeVersion
 from brewing_api.application.errors import ConflictError, DomainError
 from brewing_api.application.phase4.og_consumption import consume_original_gravity
 from brewing_api.application.phase4.operations import replay_or_conflict, store_success
@@ -14,6 +15,7 @@ from brewing_api.application.phase4.plan import (
     materialize_default_plan,
     plan_preview_hash,
     plan_snapshot_payload,
+    recipe_snapshot_payload,
 )
 from brewing_api.application.phase4.sessions import (
     get_active_fermentation_for_brew,
@@ -110,6 +112,9 @@ def start_fermentation_session(
 
     now = utc_now()
     logical_plan = materialize_default_plan(recipe_version_id=brew_session.recipe_version_id)
+    recipe_version = db.get(RecipeVersion, brew_session.recipe_version_id)
+    if recipe_version is None:
+        raise DomainError("Recipe version is missing for brew session", 409)
     session = FermentationSession(
         user_id=user.id,
         brew_session_id=brew_session.id,
@@ -133,7 +138,10 @@ def start_fermentation_session(
             plan_kind=logical_plan.plan_kind,
             logical_plan_hash=logical_plan_hash(logical_plan),
             preview_hash=plan_preview_hash(logical_plan),
-            payload=plan_snapshot_payload(logical_plan),
+            payload=plan_snapshot_payload(
+                logical_plan,
+                recipe_snapshot=recipe_snapshot_payload(recipe_version),
+            ),
         )
     )
 

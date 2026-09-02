@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from brewing_api.application.phase4.derived_gravity import latest_derived_gravity
 from brewing_api.application.phase4.measurements import serialize_measurement
+from brewing_api.application.phase4.pitch_rate import compute_pitch_rate_estimate
 from brewing_api.application.phase4.sessions import get_fermentation_session
 from brewing_api.domain.fermentation.models import (
     FermentationMeasurement,
@@ -50,6 +51,7 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
         ).all()
     )
     derived = latest_derived_gravity(db, session.id)
+    pitch_rate_estimate = compute_pitch_rate_estimate(db, session, snapshot=snapshot, og=og)
     return {
         "id": str(session.id),
         "brew_session_id": str(session.brew_session_id),
@@ -117,4 +119,5 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
             "calculation_version": derived.calculation_version,
             "schema_version": derived.schema_version,
         },
+        "pitch_rate_estimate": pitch_rate_estimate,
     }
