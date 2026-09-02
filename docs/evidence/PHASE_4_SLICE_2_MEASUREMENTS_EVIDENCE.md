@@ -136,3 +136,36 @@ Note: `test_ac_001_phase3_diff_scope_excludes_forward_domains` asserts migration
 | `TRACEABILITY` | PASS |
 | `READY_FOR_SLICE_3` | YES |
 
+## PRE_SLICE_3_NORMALIZATION
+
+| Field | Value |
+|---|---|
+| Input commit | `b53119e868bcfc5be7214bcc5f4e8f0a4d467b26` |
+| Problem | `test_ac_001_phase3_diff_scope_excludes_forward_domains` required Alembic head `0003` and forbade `0004+`, which is incompatible with authorized Phase 4 descendant migrations |
+
+### Original Phase 3 invariant (P3-AC-001)
+
+Per accepted Phase 3 specification: diff/scope must not introduce unauthorized Phase 4–10 operational domains; accepted predecessor migrations must remain intact. The migration-head-equals-0003 assertion was an implementation-branch gate, not the normative P3-AC-001 contract.
+
+### Correction
+
+- Added `apps/api/tests/phase3_migration_regression.py` — shared helpers proving:
+  - `0001`/`0002`/`0003` migration files unchanged vs `v0.3.0-phase3` (git diff)
+  - single linear Alembic head with `0003_phase3_brew_day_os` in ancestry ending at `0001_phase1a`
+  - forbidden Phase 4–10 domain package dirs still absent
+- Updated `test_ac_001_phase3_diff_scope_excludes_forward_domains` to use ancestry/immunity checks instead of head==0003
+- Updated `test_alembic_version_is_phase3_head` to assert live PostgreSQL head descends from accepted Phase 3 head
+
+### Phase 3 migration immutability proof
+
+`git diff v0.3.0-phase3..HEAD -- database/migrations/versions/000{1,2,3}_*.py` → empty (no changes to accepted Phase 3 migrations).
+
+### Regression results (post-normalization)
+
+| Suite | Result |
+|---|---|
+| Phase 3 (`test_phase3_*`) | PASS |
+| Phase 1A (`test_adv_025`, `test_brew_day_api`) | PASS |
+| Phase 2 (`test_phase2_core`, `test_phase2_calculations`, `test_auth_and_recipe_api`) | PASS |
+| Slice 2 closure (`test_phase4_*` closure suite) | PASS |
+
