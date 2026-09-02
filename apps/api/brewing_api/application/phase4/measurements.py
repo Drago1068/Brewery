@@ -11,7 +11,15 @@ from sqlalchemy.orm import Session
 
 from brewing_api.application.errors import ConflictError, DomainError, NotFoundError
 from brewing_api.application.events import audit
-from brewing_api.application.phase4.derived_gravity import effective_measurement_leaf, recompute_derived_gravity
+from brewing_api.application.phase4.derived_gravity import (
+    effective_measurement_leaf,
+    latest_derived_gravity,
+    recompute_derived_gravity,
+)
+from brewing_api.application.phase4.completion import (
+    gravity_change_affects_completion,
+    invalidate_after_fermentation_affecting_evidence,
+)
 from brewing_api.application.phase4.operations import replay_or_conflict, store_success
 from brewing_api.application.phase4.sessions import get_fermentation_session
 from brewing_api.application.phase4.time_validation import (
@@ -324,7 +332,22 @@ def record_measurement(
     db.add(measurement)
     session.revision += 1
     if command.measurement_type == "FERMENTATION_GRAVITY":
+        prior = latest_derived_gravity(db, session.id)
+        prior_stable = prior.stable_gravity_status if prior else None
+        prior_attenuation = prior.apparent_attenuation_ratio if prior else None
         recompute_derived_gravity(db, session.id)
+        if gravity_change_affects_completion(
+            db,
+            session,
+            prior_stable_status=prior_stable,
+            prior_attenuation=prior_attenuation,
+        ):
+            invalidate_after_fermentation_affecting_evidence(
+                db,
+                session,
+                cause_id=measurement.id,
+                actor_id=user.id,
+            )
     _journal(
         db,
         session.id,
@@ -418,6 +441,16 @@ def correct_measurement(
         if command.sample_temperature_c is not None
         else (leaf.sample_temperature_c if leaf else measurement.sample_temperature_c)
     )
+    note_only = (
+        measurement.measurement_type != "FERMENTATION_GRAVITY"
+        or (
+            command.value is None
+            and command.unit is None
+            and command.observed_at is None
+            and command.method is None
+            and command.sample_temperature_c is None
+        )
+    )
     source = leaf.source if leaf else measurement.source
     instrument_reference = leaf.instrument_reference if leaf else measurement.instrument_reference
     confidence = leaf.confidence if leaf else measurement.confidence
@@ -462,7 +495,31 @@ def correct_measurement(
     )
     db.add(correction)
     session.revision += 1
-    if measurement.measurement_type == "FERMENTATION_GRAVITY":
+    if measurement.measurement_type == "FERMENTATION_GRAVITY" and not note_only:
+        prior = latest_derived_gravity(db, session.id)
+        prior_stable = prior.stable_gravity_status if prior else None
+        prior_attenuation = prior.apparent_attenuation_ratio if prior else None
+        recompute_derived_gravity(db, session.id)
+        if session.status in {
+            "FERMENTATION_COMPLETE",
+            "CONDITIONING",
+            "CONDITIONING_COMPLETE",
+            "COMPLETION_ASSESSED",
+            "HANDOFF_READY",
+            "CLOSED",
+        } or gravity_change_affects_completion(
+            db,
+            session,
+            prior_stable_status=prior_stable,
+            prior_attenuation=prior_attenuation,
+        ):
+            invalidate_after_fermentation_affecting_evidence(
+                db,
+                session,
+                cause_id=correction.id,
+                actor_id=user.id,
+            )
+    elif measurement.measurement_type == "FERMENTATION_GRAVITY":
         recompute_derived_gravity(db, session.id)
     _journal(
         db,

@@ -7,6 +7,33 @@ PACKAGING_READINESS_SCHEMA_VERSION = "phase4-packaging-readiness-v1"
 TERMINAL_ADDITION_SCHEMA_VERSION = "phase4-terminal-addition-v1"
 MEASUREMENT_SCHEMA_VERSION = "phase4-measurement-v1"
 DERIVED_GRAVITY_SCHEMA_VERSION = "phase4-derived-gravity-v1"
+FERMENTATION_ELIGIBILITY_SCHEMA_VERSION = "phase4-fermentation-eligibility-v1"
+
+COMPLETION_OUTCOMES = frozenset(
+    {
+        "COMPLETION_ELIGIBLE",
+        "COMPLETION_CONFIRMED",
+        "COMPLETION_WAIVED",
+        "COMPLETION_OVERRIDDEN",
+        "INSUFFICIENT_EVIDENCE",
+        "COMPLETION_INVALIDATED",
+    }
+)
+
+SESSION_COMMANDS = frozenset(
+    {
+        "PauseFermentationSession",
+        "ResumeFermentationSession",
+        "AbortFermentationSession",
+        "CompleteFermentation",
+        "StartConditioning",
+        "SkipConditioning",
+        "CompleteConditioning",
+        "AssessPackagingReadiness",
+        "RecordPackagingReadinessHandoff",
+        "CloseFermentationSession",
+    }
+)
 
 SESSION_STATUSES = frozenset(
     {

@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brewing_api.application.phase4.derived_gravity import latest_derived_gravity
+from brewing_api.application.phase4.completion import current_fermentation_assessment, serialize_assessment
 from brewing_api.application.phase4.measurements import serialize_measurement
 from brewing_api.application.phase4.pitch_rate import compute_pitch_rate_estimate
 from brewing_api.application.phase4.sessions import get_fermentation_session
@@ -51,6 +52,7 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
         ).all()
     )
     derived = latest_derived_gravity(db, session.id)
+    assessment = current_fermentation_assessment(db, session.id)
     pitch_rate_estimate = compute_pitch_rate_estimate(db, session, snapshot=snapshot, og=og)
     return {
         "id": str(session.id),
@@ -58,6 +60,14 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
         "status": session.status,
         "revision": session.revision,
         "started_at": session.started_at,
+        "paused_at": session.paused_at,
+        "pause_origin_state": session.pause_origin_state,
+        "resumed_at": session.resumed_at,
+        "fermentation_first_completed_at": session.fermentation_first_completed_at,
+        "fermentation_current_completed_at": session.fermentation_current_completed_at,
+        "conditioning_skipped": session.conditioning_skipped,
+        "aborted_at": session.aborted_at,
+        "abort_reason": session.abort_reason,
         "plan_kind": session.plan_kind,
         "logical_plan_hash": session.logical_plan_hash,
         "plan_preview_hash": session.plan_preview_hash,
@@ -71,6 +81,7 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
                 "status": stage.status,
                 "started_at": stage.started_at,
                 "completed_at": stage.completed_at,
+                "activation_ordinal": stage.activation_ordinal,
             }
             for stage in stages
         ],
@@ -120,4 +131,5 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
             "schema_version": derived.schema_version,
         },
         "pitch_rate_estimate": pitch_rate_estimate,
+        "completion_assessment": None if assessment is None else serialize_assessment(assessment),
     }

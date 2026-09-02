@@ -23,6 +23,7 @@ from brewing_api.domain.common import UuidTimestampMixin
 from brewing_api.domain.fermentation.constants import (
     DERIVED_GRAVITY_SCHEMA_VERSION,
     ENTRY_SCHEMA_VERSION,
+    FERMENTATION_ELIGIBILITY_SCHEMA_VERSION,
     MEASUREMENT_SCHEMA_VERSION,
     PACKAGING_READINESS_SCHEMA_VERSION,
     PLAN_SCHEMA_VERSION,
@@ -56,11 +57,27 @@ class FermentationSession(UuidTimestampMixin, Base):
     revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pause_origin_state: Mapped[str | None] = mapped_column(String(32))
+    paused_stage_instance_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("fermentation_stage_instances.id", ondelete="SET NULL")
+    )
+    resumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     fermentation_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fermentation_first_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fermentation_current_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     conditioning_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     conditioning_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    conditioning_skipped: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    conditioning_first_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    conditioning_current_activation_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    conditioning_first_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    conditioning_current_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completion_assessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    assessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     handoff_ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    handoff_recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     aborted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     abort_reason: Mapped[str | None] = mapped_column(Text)
@@ -138,6 +155,7 @@ class FermentationStageInstance(UuidTimestampMixin, Base):
     )
     canonical_stage_type: Mapped[str] = mapped_column(String(40), nullable=False)
     occurrence_number: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    activation_ordinal: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     status: Mapped[str] = mapped_column(String(24), default="PENDING", nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -210,19 +228,64 @@ class FermentationJournalEvent(UuidTimestampMixin, Base):
     causation_id: Mapped[str | None] = mapped_column(String(64))
 
 
+class FermentationCompletionAssessment(UuidTimestampMixin, Base):
+    __tablename__ = "fermentation_completion_assessments"
+    __table_args__ = (
+        Index(
+            "uq_fermentation_completion_assessment_current",
+            "fermentation_session_id",
+            unique=True,
+            sqlite_where=text("is_current = true AND assessment_kind = 'FERMENTATION'"),
+            postgresql_where=text("is_current = true AND assessment_kind = 'FERMENTATION'"),
+        ),
+    )
+
+    fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    assessment_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    is_current: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    schema_version: Mapped[str] = mapped_column(
+        String(64), default=FERMENTATION_ELIGIBILITY_SCHEMA_VERSION, nullable=False
+    )
+    rule_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    predicate_results: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    evidence_summary: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    assessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    operation_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    override_reason: Mapped[str | None] = mapped_column(Text)
+    invalidated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    invalidation_cause_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+
+
 class PackagingReadinessHandoff(UuidTimestampMixin, Base):
     __tablename__ = "packaging_readiness_handoffs"
-    __table_args__ = (UniqueConstraint("fermentation_session_id"),)
+    __table_args__ = (
+        Index(
+            "uq_packaging_handoff_current_per_session",
+            "fermentation_session_id",
+            unique=True,
+            sqlite_where=text("is_current = true"),
+            postgresql_where=text("is_current = true"),
+        ),
+    )
 
     fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), nullable=False
     )
+    handoff_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    is_current: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     readiness_status: Mapped[str] = mapped_column(String(32), nullable=False)
     assessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     schema_version: Mapped[str] = mapped_column(
         String(64), default=PACKAGING_READINESS_SCHEMA_VERSION, nullable=False
     )
     payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    assessment_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    invalidated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    invalidation_cause_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
 
 
 class FermentationMeasurement(UuidTimestampMixin, Base):

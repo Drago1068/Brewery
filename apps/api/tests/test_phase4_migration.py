@@ -19,12 +19,13 @@ from brewing_api.platform.database import engine
 pytestmark = pytest.mark.integration
 
 PHASE4_PREDECESSOR = "0004_phase4_fermentation_conditioning_yeast"
-EXPECTED_REVISION = "0005_phase4_measurements_derived_gravity"
+EXPECTED_REVISION = "0006_phase4_lifecycle_completion"
 PHASE4_SLICE2_TABLES = (
     "fermentation_measurements",
     "fermentation_measurement_corrections",
     "fermentation_derived_gravity_snapshots",
 )
+PHASE4_SLICE3_TABLES = ("fermentation_completion_assessments",)
 DISPOSABLE_DB = "phase4_slice2_mig_validation"
 
 
@@ -87,6 +88,13 @@ def test_phase4_slice2_tables_exist():
     _require_postgres()
     tables = set(inspect(engine).get_table_names())
     missing = [name for name in PHASE4_SLICE2_TABLES if name not in tables]
+    assert missing == []
+
+
+def test_phase4_slice3_tables_exist():
+    _require_postgres()
+    tables = set(inspect(engine).get_table_names())
+    missing = [name for name in PHASE4_SLICE3_TABLES if name not in tables]
     assert missing == []
 
 
@@ -187,6 +195,7 @@ def test_alembic_roundtrip_preserves_phase4_session_on_disposable_database():
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == EXPECTED_REVISION
             tables = set(inspect(disposable).get_table_names())
             assert set(PHASE4_SLICE2_TABLES) <= tables
+            assert set(PHASE4_SLICE3_TABLES) <= tables
         _run_alembic(target, "downgrade", PHASE4_PREDECESSOR)
         with disposable.connect() as connection:
             assert connection.scalar(text("SELECT version_num FROM alembic_version")) == PHASE4_PREDECESSOR

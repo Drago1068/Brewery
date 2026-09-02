@@ -5,8 +5,10 @@ from decimal import Decimal
 from fastapi import APIRouter, status
 from pydantic import BaseModel, Field
 
-from brewing_api.application.phase4 import commands, measurements, read_models
+from brewing_api.application.phase4 import commands, completion, measurements, read_models, transitions
+from brewing_api.application.phase4.completion import CompleteFermentationCommand
 from brewing_api.application.phase4.measurements import CorrectionCommand, MeasurementCommand
+from brewing_api.application.phase4.transitions import SessionCommand
 from brewing_api.domain.fermentation.models import FermentationMeasurement
 from brewing_api.presentation.dependencies import CurrentUser, Db
 
@@ -46,6 +48,20 @@ class CorrectMeasurementCommand(BaseModel):
     sample_temperature_c: str | None = None
     note: str | None = None
     expected_revision: int | None = Field(default=None, ge=0)
+
+
+class RevisionCommand(BaseModel):
+    operation_id: str = Field(min_length=1, max_length=64)
+    expected_revision: int | None = Field(default=None, ge=0)
+
+
+class AbortCommand(RevisionCommand):
+    reason: str
+
+
+class CompleteFermentationRequest(RevisionCommand):
+    override: bool = False
+    override_reason: str | None = None
 
 
 @router.post(
@@ -146,4 +162,85 @@ def correct_measurement(
     payload = measurements.serialize_measurement(db, original)
     payload["correction_id"] = str(correction.id)
     payload["reason"] = correction.reason
+    return payload
+
+
+@router.post("/{fermentation_session_id}/commands/pause")
+def pause_fermentation_session(
+    fermentation_session_id: uuid.UUID,
+    body: RevisionCommand,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    transitions.pause_fermentation_session(
+        db,
+        user,
+        fermentation_session_id,
+        SessionCommand(
+            operation_id=body.operation_id,
+            expected_revision=body.expected_revision,
+        ),
+    )
+    return read_models.serialize_session(db, user, fermentation_session_id)
+
+
+@router.post("/{fermentation_session_id}/commands/resume")
+def resume_fermentation_session(
+    fermentation_session_id: uuid.UUID,
+    body: RevisionCommand,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    transitions.resume_fermentation_session(
+        db,
+        user,
+        fermentation_session_id,
+        SessionCommand(
+            operation_id=body.operation_id,
+            expected_revision=body.expected_revision,
+        ),
+    )
+    return read_models.serialize_session(db, user, fermentation_session_id)
+
+
+@router.post("/{fermentation_session_id}/commands/abort")
+def abort_fermentation_session(
+    fermentation_session_id: uuid.UUID,
+    body: AbortCommand,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    transitions.abort_fermentation_session(
+        db,
+        user,
+        fermentation_session_id,
+        SessionCommand(
+            operation_id=body.operation_id,
+            expected_revision=body.expected_revision,
+            reason=body.reason,
+        ),
+    )
+    return read_models.serialize_session(db, user, fermentation_session_id)
+
+
+@router.post("/{fermentation_session_id}/commands/complete-fermentation")
+def complete_fermentation(
+    fermentation_session_id: uuid.UUID,
+    body: CompleteFermentationRequest,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    session, assessment = completion.complete_fermentation(
+        db,
+        user,
+        fermentation_session_id,
+        CompleteFermentationCommand(
+            operation_id=body.operation_id,
+            expected_revision=body.expected_revision,
+            override=body.override,
+            override_reason=body.override_reason,
+        ),
+    )
+    payload = read_models.serialize_session(db, user, session.id)
+    payload["completion_assessment"] = completion.serialize_assessment(assessment)
     return payload
