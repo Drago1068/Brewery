@@ -215,6 +215,8 @@ def pause_session_timers(db: Session, session: FermentationSession) -> int:
 
 def resume_session_timers(db: Session, session: FermentationSession) -> int:
     """Resume only timers paused by SESSION_ACTION."""
+    from brewing_api.application.phase4.time_validation import _coerce_aware
+
     now = utc_now()
     count = 0
     for timer in db.scalars(
@@ -225,10 +227,10 @@ def resume_session_timers(db: Session, session: FermentationSession) -> int:
         )
     ).all():
         if timer.paused_at is not None:
-            pause_delta = now - timer.paused_at
+            pause_delta = _coerce_aware(now) - _coerce_aware(timer.paused_at)
             timer.accumulated_pause_seconds += int(pause_delta.total_seconds())
             if timer.deadline_at is not None and timer.clock_basis == "ACTIVE_TIME":
-                timer.deadline_at = timer.deadline_at + pause_delta
+                timer.deadline_at = _coerce_aware(timer.deadline_at) + pause_delta
         timer.status = "RUNNING"
         timer.paused_at = None
         timer.paused_by = None

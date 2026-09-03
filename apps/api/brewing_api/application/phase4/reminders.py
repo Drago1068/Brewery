@@ -99,6 +99,8 @@ def serialize_reminder(reminder: FermentationReminder) -> dict[str, Any]:
 
 
 def project_reminders(db: Session, session_id: uuid.UUID) -> list[FermentationReminder]:
+    from brewing_api.application.phase4.time_validation import _coerce_aware
+
     now = utc_now()
     reminders = list(
         db.scalars(
@@ -108,7 +110,7 @@ def project_reminders(db: Session, session_id: uuid.UUID) -> list[FermentationRe
         ).all()
     )
     for reminder in reminders:
-        if reminder.status == "SCHEDULED" and reminder.due_at <= now:
+        if reminder.status == "SCHEDULED" and _coerce_aware(reminder.due_at) <= now:
             prior = reminder.status
             reminder.status = "DUE"
             _history(db, reminder, prior=prior, new="DUE", cause="DUE_PROJECTION")

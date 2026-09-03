@@ -225,7 +225,9 @@ def evaluate_conditioning_eligibility(
             c1 = False
             predicate_results["C1"] = {"passed": False, "reason": "missing_first_started_at"}
         else:
-            elapsed = utc_now() - anchor
+            from brewing_api.application.phase4.time_validation import _coerce_aware
+
+            elapsed = _coerce_aware(utc_now()) - _coerce_aware(anchor)
             required = timedelta(minutes=int(duration_minutes))
             c1 = elapsed >= required
             predicate_results["C1"] = {

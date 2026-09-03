@@ -50,6 +50,8 @@ def effective_measurement_leaf(
 
 
 def effective_gravity_leaves(db: Session, session_id: uuid.UUID) -> list[GravityLeaf]:
+    from brewing_api.application.phase4.time_validation import _coerce_aware
+
     measurements = list(
         db.scalars(
             select(FermentationMeasurement).where(
@@ -69,8 +71,8 @@ def effective_gravity_leaves(db: Session, session_id: uuid.UUID) -> list[Gravity
             GravityLeaf(
                 measurement_id=measurement.id,
                 canonical_sg=canonical,
-                observed_at=observed_at,
-                recorded_at=recorded_at,
+                observed_at=_coerce_aware(observed_at),
+                recorded_at=_coerce_aware(recorded_at),
             )
         )
     return leaves

@@ -78,6 +78,8 @@ def _require_revision(timer: FermentationTimer, expected: int | None) -> None:
 
 def project_timers(db: Session, session_id: uuid.UUID) -> list[FermentationTimer]:
     """Reconstruct expiry from PostgreSQL deadlines; at most one expiry event per timer."""
+    from brewing_api.application.phase4.time_validation import _coerce_aware
+
     now = utc_now()
     timers = list(
         db.scalars(
@@ -89,7 +91,7 @@ def project_timers(db: Session, session_id: uuid.UUID) -> list[FermentationTimer
     for timer in timers:
         if timer.status not in {"RUNNING", "PAUSED"}:
             continue
-        if timer.deadline_at is None or now < timer.deadline_at:
+        if timer.deadline_at is None or now < _coerce_aware(timer.deadline_at):
             continue
         if timer.expired_at is not None:
             if timer.status != "EXPIRED":
@@ -111,10 +113,12 @@ def project_timers(db: Session, session_id: uuid.UUID) -> list[FermentationTimer
 
 
 def serialize_timer(timer: FermentationTimer, *, server_now=None) -> dict[str, Any]:
+    from brewing_api.application.phase4.time_validation import _coerce_aware
+
     now = server_now or utc_now()
     remaining = None
     if timer.deadline_at is not None and timer.status in {"RUNNING", "PAUSED", "EXPIRED"}:
-        remaining = int((timer.deadline_at - now).total_seconds())
+        remaining = int((_coerce_aware(timer.deadline_at) - _coerce_aware(now)).total_seconds())
 
     def _iso(value):
         return None if value is None else value.isoformat()
@@ -316,10 +320,12 @@ def resume_timer(
         raise ConflictError("Only a paused timer can be resumed", code="INVALID_TIMER_STATE")
     now = utc_now()
     if timer.paused_at is not None:
-        pause_delta = now - timer.paused_at
+        from brewing_api.application.phase4.time_validation import _coerce_aware
+
+        pause_delta = _coerce_aware(now) - _coerce_aware(timer.paused_at)
         timer.accumulated_pause_seconds += int(pause_delta.total_seconds())
         if timer.deadline_at is not None and timer.clock_basis == "ACTIVE_TIME":
-            timer.deadline_at = timer.deadline_at + pause_delta
+            timer.deadline_at = _coerce_aware(timer.deadline_at) + pause_delta
     timer.status = "RUNNING"
     timer.paused_at = None
     timer.paused_by = None

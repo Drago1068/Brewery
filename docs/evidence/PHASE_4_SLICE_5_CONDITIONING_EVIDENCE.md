@@ -141,4 +141,6 @@ No packaging execution, finished-product records, packaging inventory, keg/bottl
 
 Falsified and repaired: PENDING CONDITIONING rows at start (violated §8.4); skip blocked by premature stage; temperature unit; correction observed_at before pitch; AC-060 re-complete eligibility after correction noise.
 
+Follow-up (post `b464f97`): SQLite naive/aware datetime mixing broke Slice 5 fixtures and eligibility C1 — coerced via `_coerce_aware` in timer/reminder projection, serialize_timer, pause resume, derived gravity leaves, conditioning C1 elapsed, and lifecycle seed helper. Re-verified SQLite conditioning suite + PostgreSQL conditioning suite (including concurrency) + Phase 1A/2/3 and Phase 4 Slice 2–4 regressions.
+
 No accepted-spec contradiction found.

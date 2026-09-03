@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm.attributes import flag_modified
 
 from brewing_api.application.phase4.derived_gravity import recompute_derived_gravity
+from brewing_api.application.phase4.time_validation import _coerce_aware
 from brewing_api.domain.fermentation.constants import MEASUREMENT_SCHEMA_VERSION
 from brewing_api.domain.fermentation.models import (
     FermentationMeasurement,
@@ -61,7 +62,8 @@ def seed_stable_gravity_measurements(
                 method="HYDROMETER",
                 sample_temperature_c=Decimal("20.00"),
                 validation_status="ACCEPTED",
-                late_entry=observed_at < (session.started_at or now),
+                late_entry=_coerce_aware(observed_at)
+                < _coerce_aware(session.started_at or now),
                 operation_id=f"seed-gravity-{index}-{uuid.uuid4()}",
                 schema_version=MEASUREMENT_SCHEMA_VERSION,
             )
