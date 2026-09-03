@@ -14,6 +14,10 @@ from sqlalchemy.orm import Session
 
 from brewing_api.application.errors import ConflictError, DomainError, ValidationConflictError
 from brewing_api.application.events import audit
+from brewing_api.application.phase4.child_effects import (
+    complete_fermentation_primary_timers,
+    invalidate_and_reactivate_children,
+)
 from brewing_api.application.phase4.derived_gravity import (
     effective_gravity_leaves,
     latest_derived_gravity,
@@ -329,6 +333,13 @@ def invalidate_after_fermentation_affecting_evidence(
     session.conditioning_current_activation_started_at = None
     session.conditioning_current_completed_at = None
     stage = _reactivate_active_fermentation(db, session, cause_id=cause_id)
+    invalidate_and_reactivate_children(
+        db,
+        session,
+        stage,
+        cause="COMPLETION_INVALIDATED",
+        actor_id=actor_id,
+    )
     session.revision += 1
     _journal(
         db,
@@ -542,6 +553,12 @@ def complete_fermentation(
         session.fermentation_first_completed_at = now
     session.fermentation_current_completed_at = now
     session.fermentation_completed_at = now
+    complete_fermentation_primary_timers(
+        db,
+        session,
+        actor_id=user.id,
+        operation_id=command.operation_id,
+    )
     session.revision += 1
 
     _journal(

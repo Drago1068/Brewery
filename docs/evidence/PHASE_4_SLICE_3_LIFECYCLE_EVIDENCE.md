@@ -106,3 +106,20 @@
 - Invalid transition, duplicate operation replay, stale revision race, post-confirmation gravity correction invalidation, and cross-owner denial exercised
 - Stable-gravity completion path tested via seeded leaves + API complete; live 24h-spaced entry remains Slice 2 time-window constraint
 - P4-FR-018 timer child rows deferred until timer slice; journal/audit captures lifecycle decisions
+
+---
+
+## SLICE_4_CROSS_REFERENCE — P4-FR-018 closure
+
+Historical Slice 3 status for `P4-FR-018` remains PARTIAL as recorded above (journal-only at Slice 3 commit).
+
+Closure delivered in Slice 4 (see `docs/evidence/PHASE_4_SLICE_4_TIMERS_REMINDERS_EVIDENCE.md`):
+
+| Field | Value |
+|---|---|
+| Closing slice | Slice 4 — Durable Timers, Reminders & Lifecycle Child Effects |
+| Closing evidence | `PHASE_4_SLICE_4_TIMERS_REMINDERS_EVIDENCE.md` |
+| P4_FR_018_CLOSURE | PASS |
+| SLICE_3_FR_EFFECTIVE_IMPLEMENTATION | 12/12 |
+
+Child-row effects now implemented: start materialization, pause/resume ACTIVE_TIME coupling, abort cancellation, complete primary timers, and §9.8 reactivation with new timer identities.

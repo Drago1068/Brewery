@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from brewing_api.application.events import audit
 from brewing_api.domain.recipes.models import RecipeVersion
 from brewing_api.application.errors import ConflictError, DomainError
+from brewing_api.application.phase4.child_effects import materialize_start_children
 from brewing_api.application.phase4.og_consumption import consume_original_gravity
 from brewing_api.application.phase4.operations import replay_or_conflict, store_success
 from brewing_api.application.phase4.plan import (
@@ -167,6 +168,17 @@ def start_fermentation_session(
         db.flush()
         if step.canonical_stage_type == "ACTIVE_FERMENTATION":
             active_stage_id = stage.id
+
+    assert active_stage_id is not None
+    active_stage = db.get(FermentationStageInstance, active_stage_id)
+    assert active_stage is not None
+    materialize_start_children(
+        db,
+        session,
+        active_stage,
+        actor_id=user.id,
+        operation_id=operation_id,
+    )
 
     db.add(
         FermentationOgConsumption(

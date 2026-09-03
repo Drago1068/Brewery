@@ -9,7 +9,9 @@ from brewing_api.application.phase4.derived_gravity import latest_derived_gravit
 from brewing_api.application.phase4.completion import current_fermentation_assessment, serialize_assessment
 from brewing_api.application.phase4.measurements import serialize_measurement
 from brewing_api.application.phase4.pitch_rate import compute_pitch_rate_estimate
+from brewing_api.application.phase4.reminders import project_reminders, serialize_reminder
 from brewing_api.application.phase4.sessions import get_fermentation_session
+from brewing_api.application.phase4.timers import project_timers, serialize_timer
 from brewing_api.domain.fermentation.models import (
     FermentationMeasurement,
     FermentationOgConsumption,
@@ -53,6 +55,9 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
     )
     derived = latest_derived_gravity(db, session.id)
     assessment = current_fermentation_assessment(db, session.id)
+    timers = project_timers(db, session.id)
+    reminders = project_reminders(db, session.id)
+    db.commit()
     pitch_rate_estimate = compute_pitch_rate_estimate(db, session, snapshot=snapshot, og=og)
     return {
         "id": str(session.id),
@@ -132,4 +137,6 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
         },
         "pitch_rate_estimate": pitch_rate_estimate,
         "completion_assessment": None if assessment is None else serialize_assessment(assessment),
+        "timers": [serialize_timer(timer) for timer in timers],
+        "reminders": [serialize_reminder(reminder) for reminder in reminders],
     }

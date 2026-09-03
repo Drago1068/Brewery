@@ -16,6 +16,7 @@ from brewing_api.application.phase4.derived_gravity import (
     latest_derived_gravity,
     recompute_derived_gravity,
 )
+from brewing_api.application.phase4.reminders import satisfy_gravity_reminders
 from brewing_api.application.phase4.completion import (
     gravity_change_affects_completion,
     invalidate_after_fermentation_affecting_evidence,
@@ -348,6 +349,14 @@ def record_measurement(
                 cause_id=measurement.id,
                 actor_id=user.id,
             )
+        db.flush()
+        satisfy_gravity_reminders(
+            db,
+            session,
+            measurement_id=measurement.id,
+            actor_id=user.id,
+            operation_id=command.operation_id,
+        )
     _journal(
         db,
         session.id,

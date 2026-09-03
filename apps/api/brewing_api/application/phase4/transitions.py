@@ -10,6 +10,11 @@ from sqlalchemy.orm import Session
 
 from brewing_api.application.errors import ConflictError, DomainError
 from brewing_api.application.events import audit
+from brewing_api.application.phase4.child_effects import (
+    abort_session_children,
+    pause_session_timers,
+    resume_session_timers,
+)
 from brewing_api.application.phase4.completion import _invalidate_current_assessments, _invalidate_current_handoff
 from brewing_api.application.phase4.lifecycle import assert_command_allowed
 from brewing_api.application.phase4.operations import replay_or_conflict, store_success
@@ -133,6 +138,7 @@ def pause_fermentation_session(
     session.paused_at = now
     stage.status = "PAUSED"
     stage.paused_at = now
+    pause_session_timers(db, session)
     session.revision += 1
 
     _journal(
@@ -205,6 +211,7 @@ def resume_fermentation_session(
             stage.paused_at = None
     session.pause_origin_state = None
     session.paused_stage_instance_id = None
+    resume_session_timers(db, session)
     session.revision += 1
 
     _journal(
@@ -285,6 +292,7 @@ def abort_fermentation_session(
     session.abort_reason = command.reason
     session.pause_origin_state = None
     session.paused_stage_instance_id = None
+    abort_session_children(db, session, actor_id=user.id, operation_id=command.operation_id)
     session.revision += 1
 
     _journal(

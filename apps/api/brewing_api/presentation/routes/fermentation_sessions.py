@@ -5,7 +5,15 @@ from decimal import Decimal
 from fastapi import APIRouter, status
 from pydantic import BaseModel, Field
 
-from brewing_api.application.phase4 import commands, completion, measurements, read_models, transitions
+from brewing_api.application.phase4 import (
+    commands,
+    completion,
+    measurements,
+    read_models,
+    reminders,
+    timers,
+    transitions,
+)
 from brewing_api.application.phase4.completion import CompleteFermentationCommand
 from brewing_api.application.phase4.measurements import CorrectionCommand, MeasurementCommand
 from brewing_api.application.phase4.transitions import SessionCommand
@@ -62,6 +70,26 @@ class AbortCommand(RevisionCommand):
 class CompleteFermentationRequest(RevisionCommand):
     override: bool = False
     override_reason: str | None = None
+
+
+class StartAuxiliaryTimerCommand(RevisionCommand):
+    stage_instance_id: uuid.UUID
+    name: str = Field(min_length=1, max_length=80)
+    planned_duration_seconds: int = Field(gt=0)
+    clock_basis: str = "WALL_CLOCK"
+
+
+class CancelTimerCommand(RevisionCommand):
+    reason: str
+
+
+class ExtendTimerCommand(RevisionCommand):
+    extra_seconds: int = Field(gt=0)
+    reason: str
+
+
+class OperationOnlyCommand(BaseModel):
+    operation_id: str = Field(min_length=1, max_length=64)
 
 
 @router.post(
@@ -244,3 +272,148 @@ def complete_fermentation(
     payload = read_models.serialize_session(db, user, session.id)
     payload["completion_assessment"] = completion.serialize_assessment(assessment)
     return payload
+
+
+@router.post(
+    "/{fermentation_session_id}/timers",
+    status_code=status.HTTP_201_CREATED,
+)
+def start_auxiliary_timer(
+    fermentation_session_id: uuid.UUID,
+    body: StartAuxiliaryTimerCommand,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    timer = timers.start_auxiliary_timer(
+        db,
+        user,
+        fermentation_session_id,
+        stage_instance_id=body.stage_instance_id,
+        name=body.name,
+        planned_duration_seconds=body.planned_duration_seconds,
+        operation_id=body.operation_id,
+        clock_basis=body.clock_basis,
+        expected_revision=body.expected_revision,
+    )
+    return timers.serialize_timer(timer)
+
+
+@router.post("/timers/{timer_id}/pause")
+def pause_timer(
+    timer_id: uuid.UUID,
+    body: RevisionCommand,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    timer = timers.pause_timer(
+        db,
+        user,
+        timer_id,
+        operation_id=body.operation_id,
+        expected_revision=body.expected_revision,
+    )
+    return timers.serialize_timer(timer)
+
+
+@router.post("/timers/{timer_id}/resume")
+def resume_timer(
+    timer_id: uuid.UUID,
+    body: RevisionCommand,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    timer = timers.resume_timer(
+        db,
+        user,
+        timer_id,
+        operation_id=body.operation_id,
+        expected_revision=body.expected_revision,
+    )
+    return timers.serialize_timer(timer)
+
+
+@router.post("/timers/{timer_id}/complete")
+def complete_timer(
+    timer_id: uuid.UUID,
+    body: RevisionCommand,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    timer = timers.complete_timer(
+        db,
+        user,
+        timer_id,
+        operation_id=body.operation_id,
+        expected_revision=body.expected_revision,
+    )
+    return timers.serialize_timer(timer)
+
+
+@router.post("/timers/{timer_id}/cancel")
+def cancel_timer(
+    timer_id: uuid.UUID,
+    body: CancelTimerCommand,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    timer = timers.cancel_timer(
+        db,
+        user,
+        timer_id,
+        operation_id=body.operation_id,
+        reason=body.reason,
+        expected_revision=body.expected_revision,
+    )
+    return timers.serialize_timer(timer)
+
+
+@router.post("/timers/{timer_id}/acknowledge")
+def acknowledge_timer(
+    timer_id: uuid.UUID,
+    body: OperationOnlyCommand,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    timer = timers.acknowledge_timer(
+        db,
+        user,
+        timer_id,
+        operation_id=body.operation_id,
+    )
+    return timers.serialize_timer(timer)
+
+
+@router.post("/timers/{timer_id}/extend")
+def extend_timer(
+    timer_id: uuid.UUID,
+    body: ExtendTimerCommand,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    timer = timers.extend_timer(
+        db,
+        user,
+        timer_id,
+        operation_id=body.operation_id,
+        extra_seconds=body.extra_seconds,
+        reason=body.reason,
+        expected_revision=body.expected_revision,
+    )
+    return timers.serialize_timer(timer)
+
+
+@router.post("/reminders/{reminder_id}/acknowledge")
+def acknowledge_reminder(
+    reminder_id: uuid.UUID,
+    body: RevisionCommand,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    reminder = reminders.acknowledge_reminder(
+        db,
+        user,
+        reminder_id,
+        operation_id=body.operation_id,
+        expected_revision=body.expected_revision,
+    )
+    return reminders.serialize_reminder(reminder)

@@ -8,6 +8,11 @@ TERMINAL_ADDITION_SCHEMA_VERSION = "phase4-terminal-addition-v1"
 MEASUREMENT_SCHEMA_VERSION = "phase4-measurement-v1"
 DERIVED_GRAVITY_SCHEMA_VERSION = "phase4-derived-gravity-v1"
 FERMENTATION_ELIGIBILITY_SCHEMA_VERSION = "phase4-fermentation-eligibility-v1"
+TIMER_SCHEMA_VERSION = "phase4-timer-v1"
+REMINDER_SCHEMA_VERSION = "phase4-reminder-v1"
+
+TIMER_NONTERMINAL = frozenset({"PENDING", "RUNNING", "PAUSED", "EXPIRED"})
+REMINDER_UNRESOLVED = frozenset({"SCHEDULED", "DUE", "ACKNOWLEDGED", "EXPIRED"})
 
 COMPLETION_OUTCOMES = frozenset(
     {

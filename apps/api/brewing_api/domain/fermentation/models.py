@@ -27,7 +27,9 @@ from brewing_api.domain.fermentation.constants import (
     MEASUREMENT_SCHEMA_VERSION,
     PACKAGING_READINESS_SCHEMA_VERSION,
     PLAN_SCHEMA_VERSION,
+    REMINDER_SCHEMA_VERSION,
     SESSION_STATE_SCHEMA_VERSION,
+    TIMER_SCHEMA_VERSION,
 )
 from brewing_api.platform.database import Base
 
@@ -383,3 +385,130 @@ class FermentationDerivedGravitySnapshot(UuidTimestampMixin, Base):
     source_measurement_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     calculation_version: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class FermentationTimer(UuidTimestampMixin, Base):
+    __tablename__ = "fermentation_timers"
+    __table_args__ = (
+        UniqueConstraint("id", "fermentation_session_id", name="uq_fermentation_timer_session"),
+        UniqueConstraint(
+            "stage_instance_id",
+            "name",
+            "activation_ordinal",
+            name="uq_fermentation_timer_stage_name_ordinal",
+        ),
+        ForeignKeyConstraint(
+            ["stage_instance_id", "fermentation_session_id"],
+            ["fermentation_stage_instances.id", "fermentation_stage_instances.fermentation_session_id"],
+            name="fk_fermentation_timer_stage_session",
+        ),
+    )
+
+    fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    stage_instance_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_stage_instances.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="RUNNING", nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    planned_duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    accumulated_pause_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    clock_basis: Mapped[str] = mapped_column(String(24), default="WALL_CLOCK", nullable=False)
+    deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    timer_type: Mapped[str] = mapped_column(String(40), default="STAGE_PRIMARY", nullable=False)
+    paused_by: Mapped[str | None] = mapped_column(String(32))
+    continues_after_stage: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    replaces_timer_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("fermentation_timers.id", ondelete="SET NULL")
+    )
+    activation_ordinal: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    cancel_reason: Mapped[str | None] = mapped_column(Text)
+    schema_version: Mapped[str] = mapped_column(
+        String(64), default=TIMER_SCHEMA_VERSION, nullable=False
+    )
+
+
+class FermentationTimerRevision(UuidTimestampMixin, Base):
+    __tablename__ = "fermentation_timer_revisions"
+
+    timer_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_timers.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    former_deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    former_duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    new_deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    new_duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    operation_id: Mapped[str | None] = mapped_column(String(64))
+
+
+class FermentationReminder(UuidTimestampMixin, Base):
+    __tablename__ = "fermentation_reminders"
+    __table_args__ = (
+        UniqueConstraint("id", "fermentation_session_id", name="uq_fermentation_reminder_session"),
+        UniqueConstraint(
+            "fermentation_session_id",
+            "reminder_type",
+            "activation_ordinal",
+            name="uq_fermentation_reminder_type_ordinal",
+        ),
+        ForeignKeyConstraint(
+            ["stage_instance_id", "fermentation_session_id"],
+            ["fermentation_stage_instances.id", "fermentation_stage_instances.fermentation_session_id"],
+            name="fk_fermentation_reminder_stage_session",
+        ),
+    )
+
+    fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    stage_instance_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_stage_instances.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    reminder_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="DUE", nullable=False)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    requirement_class: Mapped[str | None] = mapped_column(String(64))
+    requirement_template_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    activation_ordinal: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    satisfaction_source_type: Mapped[str | None] = mapped_column(String(40))
+    satisfaction_source_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    resolution_source_type: Mapped[str | None] = mapped_column(String(40))
+    resolution_source_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    priority: Mapped[str] = mapped_column(String(24), default="REQUIRED", nullable=False)
+    skip_reason: Mapped[str | None] = mapped_column(Text)
+    schema_version: Mapped[str] = mapped_column(
+        String(64), default=REMINDER_SCHEMA_VERSION, nullable=False
+    )
+
+
+class FermentationReminderHistory(UuidTimestampMixin, Base):
+    __tablename__ = "fermentation_reminder_history"
+
+    reminder_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_reminders.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    prior_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    new_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    cause: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    operation_id: Mapped[str | None] = mapped_column(String(64))
