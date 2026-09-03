@@ -288,3 +288,55 @@ def satisfy_gravity_reminders(
         )
         satisfied.append(reminder)
     return satisfied
+
+
+def satisfy_conditioning_temperature_reminders(
+    db: Session,
+    session: FermentationSession,
+    *,
+    measurement_id: uuid.UUID,
+    actor_id: uuid.UUID | None = None,
+    operation_id: str | None = None,
+) -> list[FermentationReminder]:
+    """Satisfy conditioning_temperature_check reminders from CONDITIONING_TEMPERATURE evidence."""
+    satisfied: list[FermentationReminder] = []
+    reminders = list(
+        db.scalars(
+            select(FermentationReminder).where(
+                FermentationReminder.fermentation_session_id == session.id,
+                FermentationReminder.reminder_type == "conditioning_temperature_check",
+                FermentationReminder.status.in_({"DUE", "ACKNOWLEDGED", "EXPIRED"}),
+            )
+        ).all()
+    )
+    now = utc_now()
+    for reminder in reminders:
+        prior = reminder.status
+        reminder.status = "COMPLETED"
+        reminder.completed_at = now
+        reminder.satisfaction_source_type = "FermentationMeasurement"
+        reminder.satisfaction_source_id = measurement_id
+        _history(
+            db,
+            reminder,
+            prior=prior,
+            new="COMPLETED",
+            cause="AUTHORITATIVE_MEASUREMENT",
+            actor_id=actor_id,
+            operation_id=operation_id,
+        )
+        _journal(
+            db,
+            session.id,
+            "FERMENTATION_REMINDER_COMPLETED",
+            f"{reminder.reminder_type} satisfied by measurement",
+            stage_id=reminder.stage_instance_id,
+            actor_id=actor_id,
+            operation_id=operation_id,
+            event_data={
+                "reminder_id": str(reminder.id),
+                "satisfaction_source_id": str(measurement_id),
+            },
+        )
+        satisfied.append(reminder)
+    return satisfied

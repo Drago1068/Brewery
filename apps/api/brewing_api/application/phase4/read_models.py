@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from brewing_api.application.phase4.derived_gravity import latest_derived_gravity
 from brewing_api.application.phase4.completion import current_fermentation_assessment, serialize_assessment
+from brewing_api.application.phase4.conditioning import current_conditioning_assessment
 from brewing_api.application.phase4.measurements import serialize_measurement
 from brewing_api.application.phase4.pitch_rate import compute_pitch_rate_estimate
 from brewing_api.application.phase4.reminders import project_reminders, serialize_reminder
@@ -55,6 +56,7 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
     )
     derived = latest_derived_gravity(db, session.id)
     assessment = current_fermentation_assessment(db, session.id)
+    conditioning_assessment = current_conditioning_assessment(db, session.id)
     timers = project_timers(db, session.id)
     reminders = project_reminders(db, session.id)
     db.commit()
@@ -70,6 +72,13 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
         "resumed_at": session.resumed_at,
         "fermentation_first_completed_at": session.fermentation_first_completed_at,
         "fermentation_current_completed_at": session.fermentation_current_completed_at,
+        "conditioning_first_started_at": session.conditioning_first_started_at,
+        "conditioning_started_at": session.conditioning_started_at,
+        "conditioning_current_activation_started_at": session.conditioning_current_activation_started_at,
+        "conditioning_first_completed_at": session.conditioning_first_completed_at,
+        "conditioning_current_completed_at": session.conditioning_current_completed_at,
+        "conditioning_completed_at": session.conditioning_completed_at,
+        "conditioning_mode": session.conditioning_mode,
         "conditioning_skipped": session.conditioning_skipped,
         "aborted_at": session.aborted_at,
         "abort_reason": session.abort_reason,
@@ -137,6 +146,9 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
         },
         "pitch_rate_estimate": pitch_rate_estimate,
         "completion_assessment": None if assessment is None else serialize_assessment(assessment),
+        "conditioning_assessment": None
+        if conditioning_assessment is None
+        else serialize_assessment(conditioning_assessment),
         "timers": [serialize_timer(timer) for timer in timers],
         "reminders": [serialize_reminder(reminder) for reminder in reminders],
     }

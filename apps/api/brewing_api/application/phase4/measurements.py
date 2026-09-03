@@ -16,7 +16,10 @@ from brewing_api.application.phase4.derived_gravity import (
     latest_derived_gravity,
     recompute_derived_gravity,
 )
-from brewing_api.application.phase4.reminders import satisfy_gravity_reminders
+from brewing_api.application.phase4.reminders import (
+    satisfy_conditioning_temperature_reminders,
+    satisfy_gravity_reminders,
+)
 from brewing_api.application.phase4.completion import (
     gravity_change_affects_completion,
     invalidate_after_fermentation_affecting_evidence,
@@ -357,6 +360,14 @@ def record_measurement(
             actor_id=user.id,
             operation_id=command.operation_id,
         )
+    if command.measurement_type == "CONDITIONING_TEMPERATURE":
+        satisfy_conditioning_temperature_reminders(
+            db,
+            session,
+            measurement_id=measurement.id,
+            actor_id=user.id,
+            operation_id=command.operation_id,
+        )
     _journal(
         db,
         session.id,
@@ -523,6 +534,22 @@ def correct_measurement(
             prior_attenuation=prior_attenuation,
         ):
             invalidate_after_fermentation_affecting_evidence(
+                db,
+                session,
+                cause_id=correction.id,
+                actor_id=user.id,
+            )
+    elif measurement.measurement_type == "CONDITIONING_TEMPERATURE":
+        from brewing_api.application.phase4.conditioning import (
+            invalidate_after_conditioning_affecting_evidence,
+        )
+
+        if session.status in {
+            "CONDITIONING_COMPLETE",
+            "COMPLETION_ASSESSED",
+            "HANDOFF_READY",
+        }:
+            invalidate_after_conditioning_affecting_evidence(
                 db,
                 session,
                 cause_id=correction.id,

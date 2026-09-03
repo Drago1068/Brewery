@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from brewing_api.application.phase4 import (
     commands,
     completion,
+    conditioning,
     measurements,
     read_models,
     reminders,
@@ -15,6 +16,7 @@ from brewing_api.application.phase4 import (
     transitions,
 )
 from brewing_api.application.phase4.completion import CompleteFermentationCommand
+from brewing_api.application.phase4.conditioning import ConditioningCommand
 from brewing_api.application.phase4.measurements import CorrectionCommand, MeasurementCommand
 from brewing_api.application.phase4.transitions import SessionCommand
 from brewing_api.domain.fermentation.models import FermentationMeasurement
@@ -68,6 +70,11 @@ class AbortCommand(RevisionCommand):
 
 
 class CompleteFermentationRequest(RevisionCommand):
+    override: bool = False
+    override_reason: str | None = None
+
+
+class CompleteConditioningRequest(RevisionCommand):
     override: bool = False
     override_reason: str | None = None
 
@@ -271,6 +278,69 @@ def complete_fermentation(
     )
     payload = read_models.serialize_session(db, user, session.id)
     payload["completion_assessment"] = completion.serialize_assessment(assessment)
+    return payload
+
+
+@router.post("/{fermentation_session_id}/commands/start-conditioning")
+def start_conditioning(
+    fermentation_session_id: uuid.UUID,
+    body: RevisionCommand,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    session = conditioning.start_conditioning(
+        db,
+        user,
+        fermentation_session_id,
+        ConditioningCommand(
+            operation_id=body.operation_id,
+            expected_revision=body.expected_revision,
+        ),
+    )
+    return read_models.serialize_session(db, user, session.id)
+
+
+@router.post("/{fermentation_session_id}/commands/skip-conditioning")
+def skip_conditioning(
+    fermentation_session_id: uuid.UUID,
+    body: RevisionCommand,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    session, assessment = conditioning.skip_conditioning(
+        db,
+        user,
+        fermentation_session_id,
+        ConditioningCommand(
+            operation_id=body.operation_id,
+            expected_revision=body.expected_revision,
+        ),
+    )
+    payload = read_models.serialize_session(db, user, session.id)
+    payload["conditioning_assessment"] = completion.serialize_assessment(assessment)
+    return payload
+
+
+@router.post("/{fermentation_session_id}/commands/complete-conditioning")
+def complete_conditioning(
+    fermentation_session_id: uuid.UUID,
+    body: CompleteConditioningRequest,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    session, assessment = conditioning.complete_conditioning(
+        db,
+        user,
+        fermentation_session_id,
+        ConditioningCommand(
+            operation_id=body.operation_id,
+            expected_revision=body.expected_revision,
+            override=body.override,
+            override_reason=body.override_reason,
+        ),
+    )
+    payload = read_models.serialize_session(db, user, session.id)
+    payload["conditioning_assessment"] = completion.serialize_assessment(assessment)
     return payload
 
 

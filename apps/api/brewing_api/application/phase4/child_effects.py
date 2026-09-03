@@ -334,6 +334,208 @@ def complete_fermentation_primary_timers(
         )
 
 
+def create_conditioning_activation_children(
+    db: Session,
+    session: FermentationSession,
+    stage: FermentationStageInstance,
+    *,
+    actor_id: uuid.UUID | None = None,
+    operation_id: str | None = None,
+    duration_seconds: int = 7 * 24 * 60 * 60,
+) -> tuple[list[FermentationTimer], FermentationReminder | None]:
+    """Materialize conditioning timers/reminders for StartConditioning (§9.4 / P4-FR-018)."""
+    now = utc_now()
+    ordinal = stage.activation_ordinal or 1
+    timers: list[FermentationTimer] = []
+    for name, clock_basis, timer_type in (
+        ("Conditioning wall-clock checkpoint", "WALL_CLOCK", "AUXILIARY"),
+        ("Active conditioning elapsed", "ACTIVE_TIME", "STAGE_PRIMARY"),
+    ):
+        timer = FermentationTimer(
+            fermentation_session_id=session.id,
+            stage_instance_id=stage.id,
+            name=name,
+            status="RUNNING",
+            started_at=now,
+            planned_duration_seconds=duration_seconds,
+            deadline_at=now + timedelta(seconds=duration_seconds),
+            clock_basis=clock_basis,
+            timer_type=timer_type,
+            activation_ordinal=ordinal,
+            schema_version=TIMER_SCHEMA_VERSION,
+        )
+        db.add(timer)
+        db.flush()
+        _journal(
+            db,
+            session.id,
+            "FERMENTATION_TIMER_STARTED",
+            f"{timer.name} started",
+            stage_id=stage.id,
+            actor_id=actor_id,
+            operation_id=operation_id,
+            event_data={
+                "timer_id": str(timer.id),
+                "clock_basis": clock_basis,
+                "activation_ordinal": ordinal,
+            },
+        )
+        timers.append(timer)
+
+    existing_reminder = db.scalar(
+        select(FermentationReminder).where(
+            FermentationReminder.fermentation_session_id == session.id,
+            FermentationReminder.reminder_type == "conditioning_temperature_check",
+            FermentationReminder.activation_ordinal == ordinal,
+        )
+    )
+    reminder = existing_reminder
+    if reminder is None:
+        reminder = FermentationReminder(
+            fermentation_session_id=session.id,
+            stage_instance_id=stage.id,
+            reminder_type="conditioning_temperature_check",
+            message="Record conditioning temperature until complete",
+            status="DUE",
+            due_at=now,
+            requirement_class="CONDITIONING_TEMPERATURE",
+            requirement_template_id=uuid.uuid5(
+                uuid.UUID("c4e21b8a-7d0e-5f33-9a14-8b6c2d91e0aa"),
+                f"phase4-plan-v1:{session.brew_session_id}:CONDITIONING_TEMPERATURE:default",
+            ),
+            activation_ordinal=ordinal,
+            priority="REQUIRED",
+            schema_version=REMINDER_SCHEMA_VERSION,
+        )
+        db.add(reminder)
+        db.flush()
+        _reminder_history(
+            db,
+            reminder,
+            prior="SCHEDULED",
+            new="DUE",
+            cause="CONDITIONING_STARTED",
+            actor_id=actor_id,
+            operation_id=operation_id,
+        )
+        _journal(
+            db,
+            session.id,
+            "FERMENTATION_REMINDER_DUE",
+            "Conditioning temperature reminder due",
+            stage_id=stage.id,
+            actor_id=actor_id,
+            operation_id=operation_id,
+            event_data={"reminder_id": str(reminder.id), "activation_ordinal": ordinal},
+        )
+    return timers, reminder
+
+
+def complete_conditioning_primary_timers(
+    db: Session,
+    session: FermentationSession,
+    *,
+    actor_id: uuid.UUID | None = None,
+    operation_id: str | None = None,
+) -> None:
+    now = utc_now()
+    conditioning = db.scalar(
+        select(FermentationStageInstance).where(
+            FermentationStageInstance.fermentation_session_id == session.id,
+            FermentationStageInstance.canonical_stage_type == "CONDITIONING",
+        )
+    )
+    if conditioning is None:
+        return
+    for timer in db.scalars(
+        select(FermentationTimer).where(
+            FermentationTimer.fermentation_session_id == session.id,
+            FermentationTimer.stage_instance_id == conditioning.id,
+            FermentationTimer.timer_type == "STAGE_PRIMARY",
+            FermentationTimer.status.in_(TIMER_NONTERMINAL),
+        )
+    ).all():
+        timer.status = "COMPLETED"
+        timer.completed_at = now
+        timer.revision += 1
+        _journal(
+            db,
+            session.id,
+            "FERMENTATION_TIMER_COMPLETED",
+            f"{timer.name} completed with conditioning",
+            stage_id=timer.stage_instance_id,
+            actor_id=actor_id,
+            operation_id=operation_id,
+            event_data={"timer_id": str(timer.id)},
+        )
+
+
+def cancel_conditioning_stage_children(
+    db: Session,
+    session: FermentationSession,
+    *,
+    cause: str,
+    actor_id: uuid.UUID | None = None,
+) -> None:
+    """Cancel nonterminal conditioning timers/reminders when stage is INVALIDATED (§9.8 / §14.6)."""
+    conditioning = db.scalar(
+        select(FermentationStageInstance).where(
+            FermentationStageInstance.fermentation_session_id == session.id,
+            FermentationStageInstance.canonical_stage_type == "CONDITIONING",
+        )
+    )
+    if conditioning is None:
+        return
+    now = utc_now()
+    for timer in db.scalars(
+        select(FermentationTimer).where(
+            FermentationTimer.fermentation_session_id == session.id,
+            FermentationTimer.stage_instance_id == conditioning.id,
+            FermentationTimer.status.in_(TIMER_NONTERMINAL),
+        )
+    ).all():
+        timer.status = "CANCELLED"
+        timer.cancelled_at = now
+        timer.cancel_reason = cause
+        timer.revision += 1
+        _journal(
+            db,
+            session.id,
+            "FERMENTATION_TIMER_CANCELLED",
+            f"{timer.name} cancelled with conditioning invalidation",
+            stage_id=conditioning.id,
+            actor_id=actor_id,
+            event_data={"timer_id": str(timer.id), "cause": cause},
+        )
+    for reminder in db.scalars(
+        select(FermentationReminder).where(
+            FermentationReminder.fermentation_session_id == session.id,
+            FermentationReminder.stage_instance_id == conditioning.id,
+            FermentationReminder.status.in_(REMINDER_UNRESOLVED),
+        )
+    ).all():
+        prior = reminder.status
+        reminder.status = "CANCELLED"
+        reminder.skip_reason = cause
+        _reminder_history(
+            db,
+            reminder,
+            prior=prior,
+            new="CANCELLED",
+            cause=cause,
+            actor_id=actor_id,
+        )
+        _journal(
+            db,
+            session.id,
+            "FERMENTATION_REMINDER_CANCELLED",
+            f"{reminder.reminder_type} cancelled with conditioning invalidation",
+            stage_id=conditioning.id,
+            actor_id=actor_id,
+            event_data={"reminder_id": str(reminder.id), "cause": cause},
+        )
+
+
 def invalidate_and_reactivate_children(
     db: Session,
     session: FermentationSession,

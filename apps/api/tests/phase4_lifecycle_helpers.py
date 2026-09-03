@@ -8,11 +8,13 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 
 from brewing_api.application.phase4.derived_gravity import recompute_derived_gravity
 from brewing_api.domain.fermentation.constants import MEASUREMENT_SCHEMA_VERSION
 from brewing_api.domain.fermentation.models import (
     FermentationMeasurement,
+    FermentationPlanSnapshot,
     FermentationSession,
     FermentationYeastPitchReference,
 )
@@ -109,3 +111,107 @@ def complete_fermentation(
         f"/api/v1/fermentation-sessions/{session_id}/commands/complete-fermentation",
         json=payload,
     )
+
+
+def set_plan_conditioning(
+    *,
+    session_id: str,
+    conditioning_required: bool = True,
+    conditioning_mode: str | None = "COLD_CONDITIONING",
+    conditioning_duration_minutes: int | None = 1,
+    conditioning_temperature_c: str | None = "2.0",
+    temperature_tolerance_c: str = "1.0",
+) -> None:
+    with SessionLocal() as db:
+        snapshot = db.scalar(
+            select(FermentationPlanSnapshot).where(
+                FermentationPlanSnapshot.fermentation_session_id == uuid.UUID(session_id)
+            )
+        )
+        assert snapshot is not None
+        payload = dict(snapshot.payload or {})
+        payload["conditioning_required"] = conditioning_required
+        payload["conditioning_mode"] = conditioning_mode
+        payload["conditioning_duration_minutes"] = conditioning_duration_minutes
+        payload["conditioning_temperature_c"] = conditioning_temperature_c
+        payload["temperature_tolerance_c"] = temperature_tolerance_c
+        snapshot.payload = payload
+        flag_modified(snapshot, "payload")
+        db.commit()
+
+
+def reach_fermentation_complete(client: TestClient, started: dict) -> dict:
+    session_id = started["fermentation_session_id"]
+    record_stable_gravities(
+        client,
+        session_id=session_id,
+        stage_id=started["active_stage_id"],
+    )
+    with SessionLocal() as db:
+        revision = db.get(FermentationSession, uuid.UUID(session_id)).revision
+    response = complete_fermentation(client, session_id=session_id, revision=revision)
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "FERMENTATION_COMPLETE"
+    return response.json()
+
+
+def start_conditioning(
+    client: TestClient,
+    *,
+    session_id: str,
+    revision: int,
+    operation_id: str | None = None,
+):
+    return client.post(
+        f"/api/v1/fermentation-sessions/{session_id}/commands/start-conditioning",
+        json={
+            "operation_id": operation_id or str(uuid.uuid4()),
+            "expected_revision": revision,
+        },
+    )
+
+
+def skip_conditioning(
+    client: TestClient,
+    *,
+    session_id: str,
+    revision: int,
+    operation_id: str | None = None,
+):
+    return client.post(
+        f"/api/v1/fermentation-sessions/{session_id}/commands/skip-conditioning",
+        json={
+            "operation_id": operation_id or str(uuid.uuid4()),
+            "expected_revision": revision,
+        },
+    )
+
+
+def complete_conditioning(
+    client: TestClient,
+    *,
+    session_id: str,
+    revision: int,
+    operation_id: str | None = None,
+    override: bool = False,
+    override_reason: str | None = None,
+):
+    payload = {
+        "operation_id": operation_id or str(uuid.uuid4()),
+        "expected_revision": revision,
+        "override": override,
+    }
+    if override_reason is not None:
+        payload["override_reason"] = override_reason
+    return client.post(
+        f"/api/v1/fermentation-sessions/{session_id}/commands/complete-conditioning",
+        json=payload,
+    )
+
+
+def backdate_conditioning_first_started(*, session_id: str, minutes_ago: int) -> None:
+    with SessionLocal() as db:
+        session = db.get(FermentationSession, uuid.UUID(session_id))
+        assert session is not None
+        session.conditioning_first_started_at = utc_now() - timedelta(minutes=minutes_ago)
+        db.commit()

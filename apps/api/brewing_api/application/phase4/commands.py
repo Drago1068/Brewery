@@ -148,6 +148,9 @@ def start_fermentation_session(
 
     active_stage_id: uuid.UUID | None = None
     for step in logical_plan.steps:
+        # §8.4: CONDITIONING and HANDOFF_READY rows are created by their commands, not at start.
+        if step.canonical_stage_type not in {"PITCH_CONFIRMED", "ACTIVE_FERMENTATION"}:
+            continue
         stage = FermentationStageInstance(
             fermentation_session_id=session.id,
             canonical_stage_type=step.canonical_stage_type,

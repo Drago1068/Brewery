@@ -115,28 +115,25 @@ def test_fermentation_gravity_bounds(started_fermentation, value, unit, expected
 
 
 def test_conditioning_temperature_bounds_on_conditioning_stage(started_fermentation):
-    import uuid as _uuid
-
-    from brewing_api.domain.fermentation.models import FermentationStageInstance
-    from brewing_api.platform.database import SessionLocal
-    from brewing_api.platform.time import utc_now
+    from phase4_lifecycle_helpers import (
+        reach_fermentation_complete,
+        set_plan_conditioning,
+        start_conditioning,
+    )
 
     client = started_fermentation["client"]
     session_id = started_fermentation["fermentation_session_id"]
+    set_plan_conditioning(session_id=session_id)
+    payload = reach_fermentation_complete(client, started_fermentation)
+    started = start_conditioning(
+        client, session_id=session_id, revision=payload["revision"]
+    )
+    assert started.status_code == 200, started.text
     conditioning_stage = next(
         stage
-        for stage in started_fermentation["fermentation"]["stages"]
+        for stage in started.json()["stages"]
         if stage["canonical_stage_type"] == "CONDITIONING"
     )["id"]
-    now = utc_now()
-    with SessionLocal() as db:
-        stage = db.get(FermentationStageInstance, _uuid.UUID(conditioning_stage))
-        assert stage is not None
-        stage.status = "ACTIVE"
-        stage.started_at = now
-        stage.first_started_at = now
-        stage.current_activation_started_at = now
-        db.commit()
 
     for value, expected in [("-5", 201), ("30", 201), ("18", 201), ("30.1", 422)]:
         response = client.post(

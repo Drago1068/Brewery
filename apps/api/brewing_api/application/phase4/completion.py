@@ -220,7 +220,9 @@ def _invalidate_current_assessments(
             select(FermentationCompletionAssessment).where(
                 FermentationCompletionAssessment.fermentation_session_id == session.id,
                 FermentationCompletionAssessment.is_current.is_(True),
-                FermentationCompletionAssessment.assessment_kind == "FERMENTATION",
+                FermentationCompletionAssessment.assessment_kind.in_(
+                    ("FERMENTATION", "CONDITIONING")
+                ),
             )
         ).all()
     )
@@ -325,6 +327,14 @@ def invalidate_after_fermentation_affecting_evidence(
     )
     if conditioning_stage is not None and conditioning_stage.status not in {"ABORTED", "PENDING"}:
         conditioning_stage.status = "INVALIDATED"
+        from brewing_api.application.phase4.child_effects import cancel_conditioning_stage_children
+
+        cancel_conditioning_stage_children(
+            db,
+            session,
+            cause="COMPLETION_INVALIDATED",
+            actor_id=actor_id,
+        )
 
     session.status = "ACTIVE"
     session.fermentation_current_completed_at = None
@@ -332,6 +342,7 @@ def invalidate_after_fermentation_affecting_evidence(
     session.conditioning_started_at = None
     session.conditioning_current_activation_started_at = None
     session.conditioning_current_completed_at = None
+    session.conditioning_completed_at = None
     stage = _reactivate_active_fermentation(db, session, cause_id=cause_id)
     invalidate_and_reactivate_children(
         db,

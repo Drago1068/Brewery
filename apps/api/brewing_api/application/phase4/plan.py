@@ -133,11 +133,21 @@ def plan_snapshot_payload(
     plan: FermentationLogicalPlan,
     *,
     recipe_snapshot: dict[str, Any] | None = None,
+    conditioning_required: bool = False,
+    conditioning_mode: str | None = None,
+    conditioning_duration_minutes: int | None = None,
+    conditioning_temperature_c: str | None = None,
+    temperature_tolerance_c: str = "1.0",
 ) -> dict[str, Any]:
     payload = {
         "schema_version": PLAN_SCHEMA_VERSION,
         "materialization_rule_version": MATERIALIZATION_RULE_VERSION,
         "plan_kind": plan.plan_kind,
+        "conditioning_required": conditioning_required,
+        "conditioning_mode": conditioning_mode,
+        "conditioning_duration_minutes": conditioning_duration_minutes,
+        "conditioning_temperature_c": conditioning_temperature_c,
+        "temperature_tolerance_c": temperature_tolerance_c,
         "steps": [
             {
                 "plan_step_id": str(step.plan_step_id),
@@ -153,3 +163,17 @@ def plan_snapshot_payload(
     if recipe_snapshot is not None:
         payload["recipe_snapshot"] = recipe_snapshot
     return payload
+
+
+def plan_conditioning_required(snapshot_payload: dict[str, Any] | None) -> bool:
+    if not snapshot_payload:
+        return False
+    if "conditioning_required" in snapshot_payload:
+        return bool(snapshot_payload["conditioning_required"])
+    if snapshot_payload.get("conditioning_mode") is not None:
+        return True
+    if snapshot_payload.get("conditioning_duration_minutes") is not None:
+        return True
+    if snapshot_payload.get("conditioning_temperature_c") is not None:
+        return True
+    return False
