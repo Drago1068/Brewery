@@ -5,14 +5,18 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from brewing_api.application.phase4.derived_gravity import latest_derived_gravity
-from brewing_api.application.phase4.completion import current_fermentation_assessment, serialize_assessment
+from brewing_api.application.phase4.completion import (
+    current_fermentation_assessment,
+    serialize_assessment,
+)
 from brewing_api.application.phase4.conditioning import current_conditioning_assessment
+from brewing_api.application.phase4.derived_gravity import latest_derived_gravity
 from brewing_api.application.phase4.measurements import serialize_measurement
 from brewing_api.application.phase4.pitch_rate import compute_pitch_rate_estimate
 from brewing_api.application.phase4.reminders import project_reminders, serialize_reminder
 from brewing_api.application.phase4.sessions import get_fermentation_session
 from brewing_api.application.phase4.timers import project_timers, serialize_timer
+from brewing_api.application.phase4.yeast import serialize_yeast_reference
 from brewing_api.domain.fermentation.models import (
     FermentationMeasurement,
     FermentationOgConsumption,
@@ -116,16 +120,7 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
             "consumed_at": og.consumed_at,
             "schema_version": og.schema_version,
         },
-        "yeast_pitch_reference": None
-        if yeast is None
-        else {
-            "brew_pitch_handoff_id": str(yeast.brew_pitch_handoff_id),
-            "yeast_note": yeast.yeast_note,
-            "pitch_temperature_c": None
-            if yeast.pitch_temperature_c is None
-            else str(yeast.pitch_temperature_c),
-            "pitched_at": yeast.pitched_at,
-        },
+        "yeast_pitch_reference": serialize_yeast_reference(yeast),
         "measurements": [serialize_measurement(db, item) for item in measurements],
         "derived_gravity": None
         if derived is None

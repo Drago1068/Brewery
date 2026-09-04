@@ -14,11 +14,13 @@ from brewing_api.application.phase4 import (
     reminders,
     timers,
     transitions,
+    yeast,
 )
 from brewing_api.application.phase4.completion import CompleteFermentationCommand
 from brewing_api.application.phase4.conditioning import ConditioningCommand
 from brewing_api.application.phase4.measurements import CorrectionCommand, MeasurementCommand
 from brewing_api.application.phase4.transitions import SessionCommand
+from brewing_api.application.phase4.yeast import YeastEnrichCommand
 from brewing_api.domain.fermentation.models import FermentationMeasurement
 from brewing_api.presentation.dependencies import CurrentUser, Db
 
@@ -99,6 +101,19 @@ class OperationOnlyCommand(BaseModel):
     operation_id: str = Field(min_length=1, max_length=64)
 
 
+class EnrichYeastReferenceCommand(BaseModel):
+    operation_id: str = Field(min_length=1, max_length=64)
+    expected_revision: int | None = Field(default=None, ge=0)
+    ingredient_lot_id: uuid.UUID | None = None
+    preparation_method_note: str | None = None
+    pitch_inputs: dict | None = None
+    field_provenance: dict | None = None
+    declaration_note: str | None = None
+    source_fermentation_session_id: uuid.UUID | None = None
+    source_yeast_reference_id: uuid.UUID | None = None
+    reason: str | None = None
+
+
 @router.post(
     "/brew-sessions/{brew_session_id}/start",
     status_code=status.HTTP_201_CREATED,
@@ -117,6 +132,45 @@ def start_fermentation_session(
         expected_brew_revision=body.expected_brew_revision,
     )
     return read_models.serialize_session(db, user, session.id)
+
+
+@router.get("/pitch-history")
+def get_pitch_history(
+    user: CurrentUser,
+    db: Db,
+    session_id: uuid.UUID | None = None,
+    lot_id: uuid.UUID | None = None,
+) -> list[dict]:
+    return yeast.pitch_history(db, user, session_id=session_id, lot_id=lot_id)
+
+
+@router.post("/{fermentation_session_id}/yeast-reference", status_code=status.HTTP_200_OK)
+def enrich_yeast_reference(
+    fermentation_session_id: uuid.UUID,
+    body: EnrichYeastReferenceCommand,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    reference = yeast.enrich_yeast_reference(
+        db,
+        user,
+        fermentation_session_id,
+        YeastEnrichCommand(
+            operation_id=body.operation_id,
+            expected_revision=body.expected_revision,
+            ingredient_lot_id=body.ingredient_lot_id,
+            preparation_method_note=body.preparation_method_note,
+            pitch_inputs=body.pitch_inputs,
+            field_provenance=body.field_provenance,
+            declaration_note=body.declaration_note,
+            source_fermentation_session_id=body.source_fermentation_session_id,
+            source_yeast_reference_id=body.source_yeast_reference_id,
+            reason=body.reason,
+        ),
+    )
+    serialized = yeast.serialize_yeast_reference(reference)
+    assert serialized is not None
+    return serialized
 
 
 @router.get("/{fermentation_session_id}")

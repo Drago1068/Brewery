@@ -65,8 +65,12 @@ class FermentationSession(UuidTimestampMixin, Base):
     )
     resumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     fermentation_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    fermentation_first_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    fermentation_current_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fermentation_first_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    fermentation_current_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     conditioning_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     conditioning_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     conditioning_skipped: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -74,8 +78,12 @@ class FermentationSession(UuidTimestampMixin, Base):
     conditioning_current_activation_started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
-    conditioning_first_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    conditioning_current_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    conditioning_first_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    conditioning_current_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     completion_assessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     assessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     handoff_ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -131,9 +139,14 @@ class FermentationPlanSnapshot(UuidTimestampMixin, Base):
     __tablename__ = "fermentation_plan_snapshots"
 
     fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), unique=True, nullable=False
+        Uuid,
+        ForeignKey("fermentation_sessions.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
     )
-    schema_version: Mapped[str] = mapped_column(String(64), default=PLAN_SCHEMA_VERSION, nullable=False)
+    schema_version: Mapped[str] = mapped_column(
+        String(64), default=PLAN_SCHEMA_VERSION, nullable=False
+    )
     plan_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     logical_plan_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     preview_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -205,6 +218,46 @@ class FermentationYeastPitchReference(UuidTimestampMixin, Base):
     schema_version: Mapped[str] = mapped_column(
         String(64), default="phase4-yeast-pitch-reference-v1", nullable=False
     )
+    ingredient_lot_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("ingredient_lots.id", ondelete="SET NULL"), index=True
+    )
+    lot_snapshot: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    preparation_method_note: Mapped[str | None] = mapped_column(Text)
+    pitch_inputs: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    field_provenance: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    source_fermentation_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="SET NULL"), index=True
+    )
+    source_yeast_reference_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("fermentation_yeast_pitch_references.id", ondelete="SET NULL"),
+        index=True,
+    )
+    declaration_note: Mapped[str | None] = mapped_column(Text)
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class FermentationYeastReferenceHistory(UuidTimestampMixin, Base):
+    __tablename__ = "fermentation_yeast_reference_history"
+
+    fermentation_yeast_reference_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("fermentation_yeast_pitch_references.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    prior_snapshot: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    new_snapshot: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    operation_id: Mapped[str | None] = mapped_column(String(64))
+    reason: Mapped[str | None] = mapped_column(Text)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class FermentationJournalEvent(UuidTimestampMixin, Base):
@@ -293,10 +346,15 @@ class PackagingReadinessHandoff(UuidTimestampMixin, Base):
 class FermentationMeasurement(UuidTimestampMixin, Base):
     __tablename__ = "fermentation_measurements"
     __table_args__ = (
-        UniqueConstraint("id", "fermentation_session_id", name="uq_fermentation_measurement_session"),
+        UniqueConstraint(
+            "id", "fermentation_session_id", name="uq_fermentation_measurement_session"
+        ),
         ForeignKeyConstraint(
             ["stage_instance_id", "fermentation_session_id"],
-            ["fermentation_stage_instances.id", "fermentation_stage_instances.fermentation_session_id"],
+            [
+                "fermentation_stage_instances.id",
+                "fermentation_stage_instances.fermentation_session_id",
+            ],
             name="fk_fermentation_measurement_stage_session",
         ),
     )
@@ -305,7 +363,10 @@ class FermentationMeasurement(UuidTimestampMixin, Base):
         Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
     )
     stage_instance_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("fermentation_stage_instances.id", ondelete="CASCADE"), index=True, nullable=False
+        Uuid,
+        ForeignKey("fermentation_stage_instances.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
     )
     measurement_type: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
     raw_value: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False)
@@ -336,14 +397,19 @@ class FermentationMeasurementCorrection(UuidTimestampMixin, Base):
     __tablename__ = "fermentation_measurement_corrections"
     __table_args__ = (
         UniqueConstraint("correction_of_id", name="uq_fermentation_measurement_correction_leaf"),
-        UniqueConstraint("id", "fermentation_session_id", name="uq_fermentation_correction_session"),
+        UniqueConstraint(
+            "id", "fermentation_session_id", name="uq_fermentation_correction_session"
+        ),
     )
 
     fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
     )
     stage_instance_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("fermentation_stage_instances.id", ondelete="CASCADE"), index=True, nullable=False
+        Uuid,
+        ForeignKey("fermentation_stage_instances.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
     )
     correction_of_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True, nullable=False)
     measurement_type: Mapped[str] = mapped_column(String(40), nullable=False)
@@ -399,7 +465,10 @@ class FermentationTimer(UuidTimestampMixin, Base):
         ),
         ForeignKeyConstraint(
             ["stage_instance_id", "fermentation_session_id"],
-            ["fermentation_stage_instances.id", "fermentation_stage_instances.fermentation_session_id"],
+            [
+                "fermentation_stage_instances.id",
+                "fermentation_stage_instances.fermentation_session_id",
+            ],
             name="fk_fermentation_timer_stage_session",
         ),
     )
@@ -408,7 +477,10 @@ class FermentationTimer(UuidTimestampMixin, Base):
         Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
     )
     stage_instance_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("fermentation_stage_instances.id", ondelete="CASCADE"), index=True, nullable=False
+        Uuid,
+        ForeignKey("fermentation_stage_instances.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
     )
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     status: Mapped[str] = mapped_column(String(24), default="RUNNING", nullable=False)
@@ -466,7 +538,10 @@ class FermentationReminder(UuidTimestampMixin, Base):
         ),
         ForeignKeyConstraint(
             ["stage_instance_id", "fermentation_session_id"],
-            ["fermentation_stage_instances.id", "fermentation_stage_instances.fermentation_session_id"],
+            [
+                "fermentation_stage_instances.id",
+                "fermentation_stage_instances.fermentation_session_id",
+            ],
             name="fk_fermentation_reminder_stage_session",
         ),
     )
@@ -475,7 +550,10 @@ class FermentationReminder(UuidTimestampMixin, Base):
         Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
     )
     stage_instance_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("fermentation_stage_instances.id", ondelete="CASCADE"), index=True, nullable=False
+        Uuid,
+        ForeignKey("fermentation_stage_instances.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
     )
     reminder_type: Mapped[str] = mapped_column(String(80), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
@@ -502,7 +580,10 @@ class FermentationReminderHistory(UuidTimestampMixin, Base):
     __tablename__ = "fermentation_reminder_history"
 
     reminder_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("fermentation_reminders.id", ondelete="CASCADE"), index=True, nullable=False
+        Uuid,
+        ForeignKey("fermentation_reminders.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
     )
     fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
