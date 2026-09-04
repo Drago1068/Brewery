@@ -463,6 +463,7 @@ class FermentationDerivedGravitySnapshot(UuidTimestampMixin, Base):
     stable_gravity_status: Mapped[str] = mapped_column(String(32), nullable=False)
     final_gravity_sg: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
     apparent_attenuation_ratio: Mapped[Decimal | None] = mapped_column(Numeric(8, 6))
+    abv_percent: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
     spread: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
     window_measurement_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     source_measurement_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)

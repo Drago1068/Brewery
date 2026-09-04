@@ -9,6 +9,7 @@ from calculations.fermentation import (
     STABLE_GRAVITY_SCHEMA_VERSION,
     final_gravity_from_leaves,
     stable_gravity_evaluator,
+    try_abv_percent,
     try_apparent_attenuation_ratio,
 )
 from sqlalchemy import select
@@ -95,6 +96,11 @@ def recompute_derived_gravity(db: Session, session_id: uuid.UUID) -> Fermentatio
         if final_fg is not None
         else CALCULATION_UNDEFINED
     )
+    abv = (
+        try_abv_percent(og, final_fg)
+        if final_fg is not None
+        else CALCULATION_UNDEFINED
+    )
     snapshot = FermentationDerivedGravitySnapshot(
         fermentation_session_id=session_id,
         stable_gravity_status=evaluation.status.value,
@@ -102,6 +108,7 @@ def recompute_derived_gravity(db: Session, session_id: uuid.UUID) -> Fermentatio
         apparent_attenuation_ratio=None
         if attenuation == CALCULATION_UNDEFINED
         else attenuation,
+        abv_percent=None if abv == CALCULATION_UNDEFINED else abv,
         spread=evaluation.spread,
         window_measurement_ids=[str(item) for item in evaluation.window_measurement_ids],
         source_measurement_ids=[str(item.measurement_id) for item in leaves],

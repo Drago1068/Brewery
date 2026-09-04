@@ -123,6 +123,7 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
             "apparent_attenuation_ratio": None
             if derived.apparent_attenuation_ratio is None
             else str(derived.apparent_attenuation_ratio),
+            "abv_percent": None if derived.abv_percent is None else str(derived.abv_percent),
             "spread": None if derived.spread is None else str(derived.spread),
             "window_measurement_ids": derived.window_measurement_ids,
             "source_measurement_ids": derived.source_measurement_ids,

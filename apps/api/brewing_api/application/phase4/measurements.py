@@ -336,6 +336,7 @@ def record_measurement(
     db.add(measurement)
     session.revision += 1
     if command.measurement_type == "FERMENTATION_GRAVITY":
+        db.flush()
         prior = latest_derived_gravity(db, session.id)
         prior_stable = prior.stable_gravity_status if prior else None
         prior_attenuation = prior.apparent_attenuation_ratio if prior else None
@@ -352,7 +353,6 @@ def record_measurement(
                 cause_id=measurement.id,
                 actor_id=user.id,
             )
-        db.flush()
         satisfy_gravity_reminders(
             db,
             session,
@@ -516,6 +516,7 @@ def correct_measurement(
     db.add(correction)
     session.revision += 1
     if measurement.measurement_type == "FERMENTATION_GRAVITY" and not note_only:
+        db.flush()
         prior = latest_derived_gravity(db, session.id)
         prior_stable = prior.stable_gravity_status if prior else None
         prior_attenuation = prior.apparent_attenuation_ratio if prior else None
@@ -556,6 +557,7 @@ def correct_measurement(
                 actor_id=user.id,
             )
     elif measurement.measurement_type == "FERMENTATION_GRAVITY":
+        db.flush()
         recompute_derived_gravity(db, session.id)
     _journal(
         db,
