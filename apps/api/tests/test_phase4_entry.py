@@ -123,6 +123,8 @@ def test_start_fermentation_session_from_completed_brew(completed_brew_with_pitc
     assert body["og_consumption"]["brew_measurement_id"] == completed_brew_with_pitch[
         "og_measurement_id"
     ]
+    assert body["og_consumption"]["og_availability"] == "KNOWN"
+    assert body["og_consumption"]["is_current"] is True
     assert body["yeast_pitch_reference"]["brew_pitch_handoff_id"] == completed_brew_with_pitch[
         "pitch_handoff_id"
     ]

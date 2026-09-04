@@ -69,8 +69,11 @@ def compute_pitch_rate_estimate(
         volume = current_knockout_volume_liters(db, session.brew_session_id)
 
     rate_raw = recipe_snapshot.get("pitch_rate_million_per_ml_plato")
-    og_value = og.consumed_value if og is not None else None
-
+    og_value = (
+        og.consumed_value
+        if og is not None and og.og_availability == "KNOWN"
+        else None
+    )
     if volume is None or og_value is None or rate_raw is None:
         return {"status": NOT_COMPUTED}
 

@@ -8,7 +8,10 @@ from brewing_api.application.events import audit
 from brewing_api.domain.recipes.models import RecipeVersion
 from brewing_api.application.errors import ConflictError, DomainError
 from brewing_api.application.phase4.child_effects import materialize_start_children
-from brewing_api.application.phase4.og_consumption import consume_original_gravity
+from brewing_api.application.phase4.og_consumption import (
+    consume_original_gravity,
+    pin_og_at_start,
+)
 from brewing_api.application.phase4.operations import replay_or_conflict, store_success
 from brewing_api.application.phase4.plan import (
     MATERIALIZATION_RULE_VERSION,
@@ -25,7 +28,6 @@ from brewing_api.application.phase4.sessions import (
 )
 from brewing_api.domain.fermentation.models import (
     FermentationJournalEvent,
-    FermentationOgConsumption,
     FermentationPlanSnapshot,
     FermentationSession,
     FermentationStageInstance,
@@ -108,9 +110,7 @@ def start_fermentation_session(
         )
 
     handoff = require_pitch_handoff(db, brew_session_id)
-    og_leaf = consume_original_gravity(db, brew_session_id, required=True)
-    assert og_leaf is not None
-
+    og_leaf = consume_original_gravity(db, brew_session_id, required=False)
     now = utc_now()
     logical_plan = materialize_default_plan(recipe_version_id=brew_session.recipe_version_id)
     recipe_version = db.get(RecipeVersion, brew_session.recipe_version_id)
@@ -183,14 +183,12 @@ def start_fermentation_session(
         operation_id=operation_id,
     )
 
-    db.add(
-        FermentationOgConsumption(
-            fermentation_session_id=session.id,
-            brew_measurement_id=og_leaf.id,
-            consumed_value=og_leaf.value,
-            consumed_unit=og_leaf.unit,
-            consumed_at=now,
-        )
+    og_pin = pin_og_at_start(
+        db,
+        fermentation_session_id=session.id,
+        leaf=og_leaf,
+        actor_id=user.id,
+        operation_id=operation_id,
     )
     db.add(
         FermentationYeastPitchReference(
@@ -212,7 +210,8 @@ def start_fermentation_session(
         stage_id=active_stage_id,
         event_data={
             "brew_session_id": str(brew_session.id),
-            "og_measurement_id": str(og_leaf.id),
+            "og_availability": og_pin.og_availability,
+            "og_measurement_id": None if og_leaf is None else str(og_leaf.id),
             "pitch_handoff_id": str(handoff.id),
         },
     )

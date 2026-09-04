@@ -186,16 +186,33 @@ class FermentationStageInstance(UuidTimestampMixin, Base):
 
 class FermentationOgConsumption(UuidTimestampMixin, Base):
     __tablename__ = "fermentation_og_consumptions"
-    __table_args__ = (UniqueConstraint("fermentation_session_id"),)
+    __table_args__ = (
+        Index(
+            "uq_fermentation_og_consumption_current",
+            "fermentation_session_id",
+            unique=True,
+            postgresql_where=text("is_current = true"),
+            sqlite_where=text("is_current = true"),
+        ),
+    )
 
     fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), nullable=False
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    brew_measurement_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("measurements.id", ondelete="RESTRICT"), nullable=False
+    brew_measurement_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("measurements.id", ondelete="RESTRICT")
     )
-    consumed_value: Mapped[Decimal] = mapped_column(Numeric(8, 3), nullable=False)
-    consumed_unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    brew_correction_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("measurements.id", ondelete="SET NULL")
+    )
+    consumed_value: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+    consumed_unit: Mapped[str | None] = mapped_column(String(16))
+    og_availability: Mapped[str] = mapped_column(String(16), default="UNKNOWN", nullable=False)
+    is_current: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    pin_ordinal: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    og_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    operation_id: Mapped[str | None] = mapped_column(String(64))
     schema_version: Mapped[str] = mapped_column(
         String(64), default="phase4-og-consumption-v1", nullable=False
     )

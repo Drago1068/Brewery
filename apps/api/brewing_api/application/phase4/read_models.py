@@ -12,6 +12,10 @@ from brewing_api.application.phase4.completion import (
 from brewing_api.application.phase4.conditioning import current_conditioning_assessment
 from brewing_api.application.phase4.derived_gravity import latest_derived_gravity
 from brewing_api.application.phase4.measurements import serialize_measurement
+from brewing_api.application.phase4.og_consumption import (
+    current_og_consumption,
+    serialize_og_consumption,
+)
 from brewing_api.application.phase4.pitch_rate import compute_pitch_rate_estimate
 from brewing_api.application.phase4.reminders import project_reminders, serialize_reminder
 from brewing_api.application.phase4.sessions import get_fermentation_session
@@ -19,7 +23,6 @@ from brewing_api.application.phase4.timers import project_timers, serialize_time
 from brewing_api.application.phase4.yeast import serialize_yeast_reference
 from brewing_api.domain.fermentation.models import (
     FermentationMeasurement,
-    FermentationOgConsumption,
     FermentationPlanSnapshot,
     FermentationStageInstance,
     FermentationYeastPitchReference,
@@ -41,11 +44,7 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
             FermentationPlanSnapshot.fermentation_session_id == session.id
         )
     )
-    og = db.scalar(
-        select(FermentationOgConsumption).where(
-            FermentationOgConsumption.fermentation_session_id == session.id
-        )
-    )
+    og = current_og_consumption(db, session.id)
     yeast = db.scalar(
         select(FermentationYeastPitchReference).where(
             FermentationYeastPitchReference.fermentation_session_id == session.id
@@ -111,15 +110,7 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
             "preview_hash": snapshot.preview_hash,
             "payload": snapshot.payload,
         },
-        "og_consumption": None
-        if og is None
-        else {
-            "brew_measurement_id": str(og.brew_measurement_id),
-            "consumed_value": str(og.consumed_value),
-            "consumed_unit": og.consumed_unit,
-            "consumed_at": og.consumed_at,
-            "schema_version": og.schema_version,
-        },
+        "og_consumption": serialize_og_consumption(og),
         "yeast_pitch_reference": serialize_yeast_reference(yeast),
         "measurements": [serialize_measurement(db, item) for item in measurements],
         "derived_gravity": None

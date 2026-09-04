@@ -83,7 +83,9 @@ def recompute_derived_gravity(db: Session, session_id: uuid.UUID) -> Fermentatio
     evaluation = stable_gravity_evaluator(leaves)
     og_row = db.scalar(
         select(FermentationOgConsumption).where(
-            FermentationOgConsumption.fermentation_session_id == session_id
+            FermentationOgConsumption.fermentation_session_id == session_id,
+            FermentationOgConsumption.is_current.is_(True),
+            FermentationOgConsumption.og_availability == "KNOWN",
         )
     )
     og = og_row.consumed_value if og_row is not None else None

@@ -3,13 +3,14 @@ from datetime import datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from brewing_api.application.phase4 import (
     commands,
     completion,
     conditioning,
     measurements,
+    og_consumption,
     read_models,
     reminders,
     timers,
@@ -21,6 +22,7 @@ from brewing_api.application.phase4.conditioning import ConditioningCommand
 from brewing_api.application.phase4.measurements import CorrectionCommand, MeasurementCommand
 from brewing_api.application.phase4.transitions import SessionCommand
 from brewing_api.application.phase4.yeast import YeastEnrichCommand
+from brewing_api.application.phase4.og_consumption import ReconcileOgCommand
 from brewing_api.domain.fermentation.models import FermentationMeasurement
 from brewing_api.presentation.dependencies import CurrentUser, Db
 
@@ -114,6 +116,14 @@ class EnrichYeastReferenceCommand(BaseModel):
     reason: str | None = None
 
 
+class ReconcileOgCommandBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation_id: str = Field(min_length=1, max_length=64)
+    brew_measurement_id: uuid.UUID
+    expected_revision: int | None = Field(default=None, ge=0)
+
+
 @router.post(
     "/brew-sessions/{brew_session_id}/start",
     status_code=status.HTTP_201_CREATED,
@@ -171,6 +181,29 @@ def enrich_yeast_reference(
     serialized = yeast.serialize_yeast_reference(reference)
     assert serialized is not None
     return serialized
+
+
+@router.post("/{fermentation_session_id}/og-consumption", status_code=status.HTTP_200_OK)
+def reconcile_upstream_original_gravity(
+    fermentation_session_id: uuid.UUID,
+    body: ReconcileOgCommandBody,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    row = og_consumption.reconcile_upstream_original_gravity(
+        db,
+        user,
+        fermentation_session_id,
+        ReconcileOgCommand(
+            operation_id=body.operation_id,
+            brew_measurement_id=body.brew_measurement_id,
+            expected_revision=body.expected_revision,
+        ),
+    )
+    return {
+        "session": read_models.serialize_session(db, user, fermentation_session_id),
+        "og_consumption": og_consumption.serialize_og_consumption(row),
+    }
 
 
 @router.get("/{fermentation_session_id}")
