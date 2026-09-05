@@ -411,6 +411,23 @@ def materialize_phase4_plan(db: Session, recipe_version: RecipeVersion) -> Ferme
     ingredient_rows = _ordered_fermentation_additions(db, recipe_version.id)
     additions: list[dict[str, Any]] = []
     for row in ingredient_rows:
+        if row.timing_minutes is not None and row.timing_minutes < 0:
+            raise PlanMaterializationError(
+                "Plan materialization failed",
+                [
+                    {
+                        "reason": "NEGATIVE_TIMING_MINUTES",
+                        "source_recipe_ingredient_id": str(row.id),
+                        "timing_minutes": row.timing_minutes,
+                    }
+                ],
+            )
+        if row.timing_minutes is None or row.timing_minutes == 0:
+            timing_basis = "AT_FERMENTATION_START"
+            timing_offset_seconds = 0
+        else:
+            timing_basis = "FROM_PITCH"
+            timing_offset_seconds = int(row.timing_minutes) * 60
         stable_source = f"recipe_ingredient:{row.id}"
         template_id = phase4_requirement_template_id(
             recipe_version.id, "PLANNED_ADDITION", stable_source
@@ -426,6 +443,9 @@ def materialize_phase4_plan(db: Session, recipe_version: RecipeVersion) -> Ferme
                 "unit": row.unit,
                 "use_stage": row.use_stage,
                 "timing_minutes": row.timing_minutes,
+                "timing_basis": timing_basis,
+                "timing_offset_seconds": timing_offset_seconds,
+                "runtime_occurrence_policy": "DO_NOT_COPY",
                 "stable_source": stable_source,
                 "requirement_template_id": str(template_id),
             }

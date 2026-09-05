@@ -6,6 +6,8 @@ from fastapi import APIRouter, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from brewing_api.application.phase4 import (
+    actions,
+    additions,
     commands,
     completion,
     conditioning,
@@ -19,6 +21,12 @@ from brewing_api.application.phase4 import (
     transitions,
     waivers,
     yeast,
+)
+from brewing_api.application.phase4.actions import RecordActionCommand
+from brewing_api.application.phase4.additions import (
+    CorrectAdditionCommand,
+    ExecutePlannedAdditionCommand,
+    RecordUnplannedAdditionCommand,
 )
 from brewing_api.application.phase4.completion import CompleteFermentationCommand
 from brewing_api.application.phase4.conditioning import ConditioningCommand
@@ -143,6 +151,58 @@ class ReconcileOgCommandBody(BaseModel):
 
     operation_id: str = Field(min_length=1, max_length=64)
     brew_measurement_id: uuid.UUID
+    expected_revision: int | None = Field(default=None, ge=0)
+
+
+class RecordActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation_id: str = Field(min_length=1, max_length=64)
+    action_type: str
+    occurred_at: datetime
+    note: str | None = None
+    stage_instance_id: uuid.UUID | None = None
+    expected_revision: int | None = Field(default=None, ge=0)
+
+
+class ExecutePlannedAdditionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation_id: str = Field(min_length=1, max_length=64)
+    quantity: str
+    unit: str
+    occurred_at: datetime
+    note: str | None = None
+    late_entry_reason: str | None = None
+    expected_revision: int | None = Field(default=None, ge=0)
+
+
+class RecordUnplannedAdditionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation_id: str = Field(min_length=1, max_length=64)
+    quantity: str
+    unit: str
+    occurred_at: datetime
+    stage_instance_id: uuid.UUID | None = None
+    ingredient_id: uuid.UUID | None = None
+    lot_id: uuid.UUID | None = None
+    note: str | None = None
+    late_entry_reason: str | None = None
+    expected_revision: int | None = Field(default=None, ge=0)
+
+
+class CorrectAdditionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation_id: str = Field(min_length=1, max_length=64)
+    correction_of_id: uuid.UUID
+    reason: str
+    execution_status: str | None = None
+    quantity: str | None = None
+    unit: str | None = None
+    occurred_at: datetime | None = None
+    note: str | None = None
     expected_revision: int | None = Field(default=None, ge=0)
 
 
@@ -315,6 +375,119 @@ def correct_measurement(
     payload["correction_id"] = str(correction.id)
     payload["reason"] = correction.reason
     return payload
+
+
+@router.post("/{fermentation_session_id}/actions", status_code=status.HTTP_201_CREATED)
+def record_action(
+    fermentation_session_id: uuid.UUID,
+    body: RecordActionRequest,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    action = actions.record_action(
+        db,
+        user,
+        fermentation_session_id,
+        RecordActionCommand(
+            operation_id=body.operation_id,
+            action_type=body.action_type,
+            occurred_at=body.occurred_at,
+            note=body.note,
+            stage_instance_id=body.stage_instance_id,
+            expected_revision=body.expected_revision,
+        ),
+    )
+    return actions.serialize_action(action)
+
+
+@router.post(
+    "/{fermentation_session_id}/additions/{requirement_id}/execute",
+    status_code=status.HTTP_201_CREATED,
+)
+def execute_planned_addition(
+    fermentation_session_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+    body: ExecutePlannedAdditionRequest,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    event = additions.execute_planned_addition(
+        db,
+        user,
+        fermentation_session_id,
+        requirement_id,
+        ExecutePlannedAdditionCommand(
+            operation_id=body.operation_id,
+            quantity=Decimal(body.quantity),
+            unit=body.unit,
+            occurred_at=body.occurred_at,
+            note=body.note,
+            late_entry_reason=body.late_entry_reason,
+            expected_revision=body.expected_revision,
+        ),
+    )
+    return additions.serialize_addition_event(db, event)
+
+
+@router.post(
+    "/{fermentation_session_id}/additions/unplanned",
+    status_code=status.HTTP_201_CREATED,
+)
+def record_unplanned_addition(
+    fermentation_session_id: uuid.UUID,
+    body: RecordUnplannedAdditionRequest,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    event = additions.record_unplanned_addition(
+        db,
+        user,
+        fermentation_session_id,
+        RecordUnplannedAdditionCommand(
+            operation_id=body.operation_id,
+            quantity=Decimal(body.quantity),
+            unit=body.unit,
+            occurred_at=body.occurred_at,
+            stage_instance_id=body.stage_instance_id,
+            ingredient_id=body.ingredient_id,
+            lot_id=body.lot_id,
+            note=body.note,
+            late_entry_reason=body.late_entry_reason,
+            expected_revision=body.expected_revision,
+        ),
+    )
+    return additions.serialize_addition_event(db, event)
+
+
+@router.post(
+    "/{fermentation_session_id}/addition-events/{addition_event_id}/corrections",
+    status_code=status.HTTP_201_CREATED,
+)
+def correct_addition(
+    fermentation_session_id: uuid.UUID,
+    addition_event_id: uuid.UUID,
+    body: CorrectAdditionRequest,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    correction = additions.correct_addition(
+        db,
+        user,
+        fermentation_session_id,
+        addition_event_id,
+        CorrectAdditionCommand(
+            operation_id=body.operation_id,
+            correction_of_id=body.correction_of_id,
+            reason=body.reason,
+            execution_status=body.execution_status,
+            quantity=None if body.quantity is None else Decimal(body.quantity),
+            unit=body.unit,
+            occurred_at=body.occurred_at,
+            note=body.note,
+            expected_revision=body.expected_revision,
+        ),
+    )
+    return additions.serialize_correction(correction)
 
 
 @router.post("/{fermentation_session_id}/commands/pause")

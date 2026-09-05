@@ -136,9 +136,18 @@ def materialize_start_children(
     actor_id: uuid.UUID | None = None,
     operation_id: str | None = None,
     duration_seconds: int = DEFAULT_FERMENTATION_DURATION_SECONDS,
+    pitched_at=None,
+    additions: list[dict] | None = None,
 ) -> tuple[list[FermentationTimer], list[FermentationReminder]]:
     """Create start-transaction timers/reminders for ACTIVE_FERMENTATION."""
     from brewing_api.application.phase4.plan import phase4_requirement_template_id
+    from brewing_api.domain.fermentation.constants import (
+        ADDITION_RUNTIME_OCCURRENCE_POLICY,
+        ADDITION_SCHEDULE_SCHEMA_VERSION,
+    )
+    from brewing_api.domain.fermentation.models import FermentationAdditionRequirement
+    from brewing_api.application.phase4.time_validation import _coerce_aware
+    from decimal import Decimal
 
     now = utc_now()
     timers = create_activation_timers(
@@ -188,7 +197,88 @@ def materialize_start_children(
         operation_id=operation_id,
         event_data={"reminder_id": str(reminder.id)},
     )
-    return timers, [reminder]
+    reminders: list[FermentationReminder] = [reminder]
+
+    pitch_time = _coerce_aware(pitched_at) if pitched_at is not None else now
+    for addition in additions or []:
+        timing_basis = addition.get("timing_basis") or "AT_FERMENTATION_START"
+        offset_seconds = int(addition.get("timing_offset_seconds") or 0)
+        if timing_basis == "FROM_PITCH":
+            due_at = pitch_time + timedelta(seconds=offset_seconds)
+        else:
+            due_at = now
+        template_id = uuid.UUID(str(addition["requirement_template_id"]))
+        source_id = uuid.UUID(str(addition["source_recipe_ingredient_id"]))
+        addition_reminder = FermentationReminder(
+            fermentation_session_id=session.id,
+            stage_instance_id=stage.id,
+            reminder_type=f"planned_addition:{source_id}",
+            message=f"Execute planned {addition.get('use_stage', 'FERMENTATION')} addition",
+            status="DUE",
+            due_at=due_at,
+            requirement_class="PLANNED_ADDITION",
+            requirement_template_id=template_id,
+            activation_ordinal=stage.activation_ordinal or 1,
+            priority="REQUIRED",
+            waivable=True,
+            schema_version=REMINDER_SCHEMA_VERSION,
+        )
+        db.add(addition_reminder)
+        db.flush()
+        _reminder_history(
+            db,
+            addition_reminder,
+            prior="SCHEDULED",
+            new="DUE",
+            cause="SESSION_STARTED",
+            actor_id=actor_id,
+            operation_id=operation_id,
+        )
+        _journal(
+            db,
+            session.id,
+            "FERMENTATION_REMINDER_SCHEDULED",
+            addition_reminder.message,
+            stage_id=stage.id,
+            actor_id=actor_id,
+            operation_id=operation_id,
+            event_data={
+                "reminder_id": str(addition_reminder.id),
+                "due_at": due_at.isoformat(),
+                "timing_basis": timing_basis,
+            },
+        )
+        requirement = FermentationAdditionRequirement(
+            fermentation_session_id=session.id,
+            stage_instance_id=stage.id,
+            requirement_id=uuid.uuid4(),
+            requirement_template_id=template_id,
+            requirement_class="PLANNED_ADDITION",
+            status="PENDING",
+            required=True,
+            waivable=True,
+            source_recipe_ingredient_id=source_id,
+            ingredient_id=uuid.UUID(str(addition["ingredient_id"])),
+            ingredient_lot_id=(
+                None
+                if addition.get("ingredient_lot_id") is None
+                else uuid.UUID(str(addition["ingredient_lot_id"]))
+            ),
+            planned_amount=Decimal(str(addition["amount"])),
+            planned_unit=str(addition["unit"]),
+            use_stage=str(addition["use_stage"]),
+            timing_basis=timing_basis,
+            timing_offset_seconds=offset_seconds,
+            planned_due_at=due_at,
+            runtime_occurrence_policy=ADDITION_RUNTIME_OCCURRENCE_POLICY,
+            reminder_id=addition_reminder.id,
+            schema_version=ADDITION_SCHEDULE_SCHEMA_VERSION,
+        )
+        db.add(requirement)
+        reminders.append(addition_reminder)
+
+    db.flush()
+    return timers, reminders
 
 
 def pause_session_timers(db: Session, session: FermentationSession) -> int:

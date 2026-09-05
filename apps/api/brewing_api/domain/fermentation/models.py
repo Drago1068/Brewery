@@ -21,6 +21,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from brewing_api.domain.common import UuidTimestampMixin
 from brewing_api.domain.fermentation.constants import (
+    ACTION_SCHEMA_VERSION,
+    ADDITION_CORRECTION_SCHEMA_VERSION,
+    ADDITION_SCHEDULE_SCHEMA_VERSION,
     DERIVED_GRAVITY_SCHEMA_VERSION,
     DEVIATION_SCHEMA_VERSION,
     WAIVER_SCHEMA_VERSION,
@@ -702,4 +705,187 @@ class FermentationDeviation(UuidTimestampMixin, Base):
     operation_id: Mapped[str | None] = mapped_column(String(64), index=True)
     schema_version: Mapped[str] = mapped_column(
         String(64), default=DEVIATION_SCHEMA_VERSION, nullable=False
+    )
+
+
+class FermentationAction(UuidTimestampMixin, Base):
+    """§21.1 user-recorded fermentation action note."""
+
+    __tablename__ = "fermentation_actions"
+
+    fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    stage_instance_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("fermentation_stage_instances.id", ondelete="SET NULL"),
+        index=True,
+    )
+    action_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    context: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    planned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True, nullable=False)
+    operation_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    late_entry: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    schema_version: Mapped[str] = mapped_column(
+        String(64), default=ACTION_SCHEMA_VERSION, nullable=False
+    )
+
+
+class FermentationAdditionRequirement(UuidTimestampMixin, Base):
+    """§21.2 planned post-pitch addition requirement materialized at start."""
+
+    __tablename__ = "fermentation_addition_requirements"
+    __table_args__ = (
+        UniqueConstraint(
+            "fermentation_session_id",
+            "source_recipe_ingredient_id",
+            name="uq_fermentation_addition_requirement_source",
+        ),
+        UniqueConstraint("requirement_id", name="uq_fermentation_addition_requirement_id"),
+        ForeignKeyConstraint(
+            ["stage_instance_id", "fermentation_session_id"],
+            [
+                "fermentation_stage_instances.id",
+                "fermentation_stage_instances.fermentation_session_id",
+            ],
+            name="fk_fermentation_addition_requirement_stage_session",
+        ),
+    )
+
+    fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    stage_instance_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("fermentation_stage_instances.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    requirement_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    requirement_template_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True, nullable=False)
+    requirement_class: Mapped[str] = mapped_column(String(64), default="PLANNED_ADDITION", nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="PENDING", nullable=False)
+    required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    waivable: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    source_recipe_ingredient_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True, nullable=False)
+    ingredient_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True, nullable=False)
+    ingredient_lot_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    planned_amount: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
+    planned_unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    use_stage: Mapped[str] = mapped_column(String(40), nullable=False)
+    timing_basis: Mapped[str] = mapped_column(String(32), nullable=False)
+    timing_offset_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    planned_due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    runtime_occurrence_policy: Mapped[str] = mapped_column(
+        String(32), default="DO_NOT_COPY", nullable=False
+    )
+    reminder_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("fermentation_reminders.id", ondelete="SET NULL"), index=True
+    )
+    satisfaction_source_type: Mapped[str | None] = mapped_column(String(40))
+    satisfaction_source_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    schema_version: Mapped[str] = mapped_column(
+        String(64), default=ADDITION_SCHEDULE_SCHEMA_VERSION, nullable=False
+    )
+
+
+class FermentationAdditionEvent(UuidTimestampMixin, Base):
+    """§21.2 planned/unplanned addition execution evidence (zero inventory effect)."""
+
+    __tablename__ = "fermentation_addition_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "id", "fermentation_session_id", name="uq_fermentation_addition_event_session"
+        ),
+        ForeignKeyConstraint(
+            ["stage_instance_id", "fermentation_session_id"],
+            [
+                "fermentation_stage_instances.id",
+                "fermentation_stage_instances.fermentation_session_id",
+            ],
+            name="fk_fermentation_addition_event_stage_session",
+        ),
+    )
+
+    fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    stage_instance_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("fermentation_stage_instances.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    requirement_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    planned: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    execution_status: Mapped[str] = mapped_column(String(24), default="EXECUTED", nullable=False)
+    planned_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    planned_unit: Mapped[str | None] = mapped_column(String(16))
+    actual_quantity: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
+    actual_unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    timing_basis: Mapped[str | None] = mapped_column(String(32))
+    timing_offset_seconds: Mapped[int | None] = mapped_column(Integer)
+    actual_ingredient_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    actual_lot_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    note: Mapped[str | None] = mapped_column(Text)
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True, nullable=False)
+    operation_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    late_entry: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    late_entry_reason: Mapped[str | None] = mapped_column(Text)
+    available_at_original_session_completion: Mapped[bool | None] = mapped_column(Boolean)
+    terminal_state_at_recording: Mapped[str | None] = mapped_column(String(32))
+    inventory_effect: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    schema_version: Mapped[str] = mapped_column(
+        String(64), default=ADDITION_SCHEDULE_SCHEMA_VERSION, nullable=False
+    )
+
+
+class FermentationAdditionCorrection(UuidTimestampMixin, Base):
+    """§21.2 / §23 append-only addition correction (current-leaf only)."""
+
+    __tablename__ = "fermentation_addition_corrections"
+    __table_args__ = (
+        UniqueConstraint("correction_of_id", name="uq_fermentation_addition_correction_leaf"),
+        UniqueConstraint(
+            "id", "fermentation_session_id", name="uq_fermentation_addition_correction_session"
+        ),
+    )
+
+    fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    stage_instance_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("fermentation_stage_instances.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    original_addition_event_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("fermentation_addition_events.id", ondelete="RESTRICT"),
+        index=True,
+        nullable=False,
+    )
+    correction_of_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True, nullable=False)
+    execution_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    actual_quantity: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    actual_unit: Mapped[str | None] = mapped_column(String(16))
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    actual_ingredient_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    actual_lot_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    note: Mapped[str | None] = mapped_column(Text)
+    changed_fields: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    operation_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    late_entry: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    schema_version: Mapped[str] = mapped_column(
+        String(64), default=ADDITION_CORRECTION_SCHEMA_VERSION, nullable=False
     )

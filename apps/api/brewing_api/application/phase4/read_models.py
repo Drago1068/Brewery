@@ -5,6 +5,13 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from brewing_api.application.phase4.actions import list_session_actions, serialize_action
+from brewing_api.application.phase4.additions import (
+    list_session_addition_events,
+    list_session_requirements,
+    serialize_addition_event,
+    serialize_requirement,
+)
 from brewing_api.application.phase4.completion import (
     current_fermentation_assessment,
     serialize_assessment,
@@ -71,6 +78,9 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
     reminders = project_reminders(db, session.id)
     deviations = list_session_deviations(db, session.id)
     waivers = list_session_waivers(db, session.id)
+    action_rows = list_session_actions(db, session.id)
+    addition_requirements = list_session_requirements(db, session.id)
+    addition_events = list_session_addition_events(db, session.id)
     packaging_assessment = current_packaging_assessment(db, session.id)
     handoff = current_handoff(db, session.id)
     db.commit()
@@ -164,6 +174,9 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
         "reminders": [serialize_reminder(reminder) for reminder in reminders],
         "deviations": [serialize_deviation(item) for item in deviations],
         "waivers": [serialize_waiver(item) for item in waivers],
+        "actions": [serialize_action(item) for item in action_rows],
+        "addition_requirements": [serialize_requirement(item) for item in addition_requirements],
+        "addition_events": [serialize_addition_event(db, item) for item in addition_events],
         "packaging_readiness_assessment": None
         if packaging_assessment is None
         else serialize_assessment(packaging_assessment),

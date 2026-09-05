@@ -218,6 +218,8 @@ def start_fermentation_session(
         recipe_version_id=recipe_version.id,
         actor_id=user.id,
         operation_id=operation_id,
+        pitched_at=handoff.pitched_at,
+        additions=list(logical_plan.additions),
     )
 
     og_pin = pin_og_at_start(
