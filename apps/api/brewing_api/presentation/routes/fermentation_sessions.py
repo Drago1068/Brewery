@@ -367,6 +367,25 @@ def abort_fermentation_session(
     return read_models.serialize_session(db, user, fermentation_session_id)
 
 
+@router.post("/{fermentation_session_id}/commands/close")
+def close_fermentation_session(
+    fermentation_session_id: uuid.UUID,
+    body: RevisionCommand,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    transitions.close_fermentation_session(
+        db,
+        user,
+        fermentation_session_id,
+        SessionCommand(
+            operation_id=body.operation_id,
+            expected_revision=body.expected_revision,
+        ),
+    )
+    return read_models.serialize_session(db, user, fermentation_session_id)
+
+
 @router.post("/{fermentation_session_id}/commands/complete-fermentation")
 def complete_fermentation(
     fermentation_session_id: uuid.UUID,

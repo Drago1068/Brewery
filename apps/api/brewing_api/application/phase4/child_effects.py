@@ -311,6 +311,37 @@ def abort_session_children(
         )
 
 
+def close_session_children(
+    db: Session,
+    session: FermentationSession,
+    *,
+    actor_id: uuid.UUID | None = None,
+    operation_id: str | None = None,
+) -> None:
+    """Cancel remaining optional nonterminal timers with cause SESSION_CLOSED (§9.4)."""
+    now = utc_now()
+    for timer in db.scalars(
+        select(FermentationTimer).where(
+            FermentationTimer.fermentation_session_id == session.id,
+            FermentationTimer.status.in_(TIMER_NONTERMINAL),
+        )
+    ).all():
+        timer.status = "CANCELLED"
+        timer.cancelled_at = now
+        timer.cancel_reason = "SESSION_CLOSED"
+        timer.revision += 1
+        _journal(
+            db,
+            session.id,
+            "FERMENTATION_TIMER_CANCELLED",
+            f"{timer.name} cancelled on session close",
+            stage_id=timer.stage_instance_id,
+            actor_id=actor_id,
+            operation_id=operation_id,
+            event_data={"timer_id": str(timer.id), "cause": "SESSION_CLOSED"},
+        )
+
+
 def complete_fermentation_primary_timers(
     db: Session,
     session: FermentationSession,

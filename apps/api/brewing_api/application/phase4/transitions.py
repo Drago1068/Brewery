@@ -12,12 +12,14 @@ from brewing_api.application.errors import ConflictError, DomainError
 from brewing_api.application.events import audit
 from brewing_api.application.phase4.child_effects import (
     abort_session_children,
+    close_session_children,
     pause_session_timers,
     resume_session_timers,
 )
 from brewing_api.application.phase4.completion import _invalidate_current_assessments, _invalidate_current_handoff
 from brewing_api.application.phase4.lifecycle import assert_command_allowed
 from brewing_api.application.phase4.operations import replay_or_conflict, store_success
+from brewing_api.application.phase4.readiness import current_handoff
 from brewing_api.application.phase4.sessions import get_fermentation_session
 from brewing_api.domain.fermentation.models import (
     FermentationJournalEvent,
@@ -314,6 +316,93 @@ def abort_fermentation_session(
         command.operation_id,
         document,
         {"id": str(session.id), "status": session.status},
+        "FermentationSession",
+        session.id,
+        terminal=True,
+    )
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+def close_fermentation_session(
+    db: Session,
+    user: User,
+    session_id: uuid.UUID,
+    command: SessionCommand,
+) -> FermentationSession:
+    """CloseFermentationSession — require current READY/READY_WITH_WAIVERS handoff (§9.4 / FR-022)."""
+    get_fermentation_session(db, user, session_id)
+    document = {
+        "command_name": "CloseFermentationSession",
+        "expected_revision": command.expected_revision,
+    }
+    replay = replay_or_conflict(
+        db,
+        user.id,
+        "CloseFermentationSession",
+        "FermentationSession",
+        session_id,
+        command.operation_id,
+        document,
+    )
+    if replay and replay.result_resource_id:
+        found = db.get(FermentationSession, replay.result_resource_id)
+        assert found is not None
+        return found
+
+    session = _lock_session(db, user, session_id)
+    if command.expected_revision is not None and session.revision != command.expected_revision:
+        raise ConflictError("Stale session revision", code="STALE_REVISION")
+    assert_command_allowed("CloseFermentationSession", session.status)
+
+    handoff = current_handoff(db, session.id)
+    if (
+        handoff is None
+        or handoff.invalidated_at is not None
+        or handoff.readiness_status not in {"READY", "READY_WITH_WAIVERS"}
+    ):
+        raise ConflictError(
+            "Close requires a current READY or READY_WITH_WAIVERS handoff",
+            code="HANDOFF_NOT_READY",
+        )
+
+    now = utc_now()
+    session.status = "CLOSED"
+    session.closed_at = now
+    session.pause_origin_state = None
+    session.paused_stage_instance_id = None
+    close_session_children(db, session, actor_id=user.id, operation_id=command.operation_id)
+    session.revision += 1
+
+    _journal(
+        db,
+        session.id,
+        "FERMENTATION_SESSION_CLOSED",
+        "Fermentation session closed",
+        actor_id=user.id,
+        operation_id=command.operation_id,
+        event_data={
+            "handoff_id": str(handoff.id),
+            "handoff_version": handoff.handoff_version,
+            "readiness_status": handoff.readiness_status,
+        },
+    )
+    audit(db, user.id, "FERMENTATION_SESSION_CLOSED", "FermentationSession", session.id)
+    store_success(
+        db,
+        user.id,
+        "CloseFermentationSession",
+        "FermentationSession",
+        session.id,
+        command.operation_id,
+        document,
+        {
+            "id": str(session.id),
+            "status": session.status,
+            "closed_at": session.closed_at.isoformat(),
+            "handoff_id": str(handoff.id),
+        },
         "FermentationSession",
         session.id,
         terminal=True,

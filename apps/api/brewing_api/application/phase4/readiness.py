@@ -1,7 +1,7 @@
-"""Phase 4 packaging readiness eligibility, assessment, and handoff (§14.4–14.5).
+"""Phase 4 packaging readiness eligibility, assessment, handoff, and close (§14.4–14.6).
 
-Slice 11 implements the waiver↔readiness interaction required by P4-FR-059/060
-and AC-059/ADV-035. CloseFermentationSession remains outside this slice.
+Slice 11 established waiver↔readiness. Slice 12 adds CloseFermentationSession and
+§14.6 CLOSED requalification without Phase 5 packaging operations.
 """
 
 from __future__ import annotations
@@ -17,9 +17,13 @@ from brewing_api.application.errors import ConflictError, DomainError
 from brewing_api.application.events import audit
 from brewing_api.application.phase4.completion import (
     current_fermentation_assessment,
+    evaluate_fermentation_confirmation_predicates,
     serialize_assessment,
 )
-from brewing_api.application.phase4.conditioning import current_conditioning_assessment
+from brewing_api.application.phase4.conditioning import (
+    current_conditioning_assessment,
+    evaluate_conditioning_confirmation_predicates,
+)
 from brewing_api.application.phase4.lifecycle import assert_command_allowed
 from brewing_api.application.phase4.og_consumption import current_og_consumption
 from brewing_api.application.phase4.operations import replay_or_conflict, store_success
@@ -33,6 +37,7 @@ from brewing_api.domain.fermentation.constants import (
 from brewing_api.domain.fermentation.models import (
     FermentationCompletionAssessment,
     FermentationJournalEvent,
+    FermentationPlanSnapshot,
     FermentationSession,
     PackagingReadinessHandoff,
 )
@@ -170,42 +175,102 @@ def evaluate_packaging_readiness(
     og = current_og_consumption(db, session.id)
     og_waiver = active_waiver_for_class(db, session.id, ORIGINAL_GRAVITY_KNOWN)
 
-    r1 = (
-        fermentation is not None
-        and fermentation.invalidated_at is None
-        and fermentation.outcome in _CONFIRMED_OUTCOMES
-    )
-    r2 = bool(session.conditioning_skipped) or (
-        conditioning is not None
-        and conditioning.invalidated_at is None
-        and conditioning.outcome in _CONDITIONING_OK_OUTCOMES
-    )
+    closed_path = session.status == "CLOSED"
+    if closed_path:
+        # §14.6 CLOSED requalify: R1/R2 from current evidence, not Complete* rows.
+        ferm_evidence = evaluate_fermentation_confirmation_predicates(db, session)
+        r1 = ferm_evidence.passed
+        if bool(session.conditioning_skipped):
+            r2 = True
+            cond_predicates: dict[str, Any] = {"conditioning_skipped": True}
+            cond_evidence: dict[str, Any] = {}
+        else:
+            snapshot = db.scalar(
+                select(FermentationPlanSnapshot).where(
+                    FermentationPlanSnapshot.fermentation_session_id == session.id
+                )
+            )
+            cond_evidence_result = evaluate_conditioning_confirmation_predicates(
+                db, session, snapshot
+            )
+            r2 = cond_evidence_result.passed
+            cond_predicates = cond_evidence_result.predicate_results
+            cond_evidence = cond_evidence_result.evidence_summary
+        predicate_results: dict[str, Any] = {
+            "R1": {
+                "passed": r1,
+                "evaluation_mode": "CURRENT_EVIDENCE",
+                "fermentation_predicates": ferm_evidence.predicate_results,
+            },
+            "R2": {
+                "passed": r2,
+                "evaluation_mode": "CURRENT_EVIDENCE",
+                "conditioning_skipped": bool(session.conditioning_skipped),
+                "conditioning_predicates": cond_predicates,
+            },
+            "R3": {
+                "og_known": False,
+                "readiness_waiver_active": False,
+                "overridden": False,
+            },
+        }
+        evidence = {
+            "fermentation_evidence": ferm_evidence.evidence_summary,
+            "conditioning_evidence": cond_evidence,
+            "fermentation_current_completed_at": None
+            if session.fermentation_current_completed_at is None
+            else session.fermentation_current_completed_at.isoformat(),
+            "conditioning_current_completed_at": None
+            if session.conditioning_current_completed_at is None
+            else session.conditioning_current_completed_at.isoformat(),
+        }
+    else:
+        r1 = (
+            fermentation is not None
+            and fermentation.invalidated_at is None
+            and fermentation.outcome in _CONFIRMED_OUTCOMES
+        )
+        r2 = bool(session.conditioning_skipped) or (
+            conditioning is not None
+            and conditioning.invalidated_at is None
+            and conditioning.outcome in _CONDITIONING_OK_OUTCOMES
+        )
+        predicate_results = {
+            "R1": {
+                "passed": r1,
+                "evaluation_mode": "ASSESSMENT_ROW",
+                "fermentation_assessment_id": None if fermentation is None else str(fermentation.id),
+                "fermentation_outcome": None if fermentation is None else fermentation.outcome,
+            },
+            "R2": {
+                "passed": r2,
+                "evaluation_mode": "ASSESSMENT_ROW",
+                "conditioning_skipped": bool(session.conditioning_skipped),
+                "conditioning_assessment_id": None if conditioning is None else str(conditioning.id),
+                "conditioning_outcome": None if conditioning is None else conditioning.outcome,
+            },
+            "R3": {
+                "og_known": False,
+                "readiness_waiver_active": False,
+                "overridden": False,
+            },
+        }
+        evidence = {}
+
     og_known = og is not None and og.og_availability == "KNOWN"
     readiness_waiver_active = og_waiver is not None
-
-    predicate_results: dict[str, Any] = {
-        "R1": {
-            "passed": r1,
-            "fermentation_assessment_id": None if fermentation is None else str(fermentation.id),
-            "fermentation_outcome": None if fermentation is None else fermentation.outcome,
-        },
-        "R2": {
-            "passed": r2,
-            "conditioning_skipped": bool(session.conditioning_skipped),
-            "conditioning_assessment_id": None if conditioning is None else str(conditioning.id),
-            "conditioning_outcome": None if conditioning is None else conditioning.outcome,
-        },
-        "R3": {
-            "og_known": og_known,
-            "readiness_waiver_active": readiness_waiver_active,
-            "overridden": False,
-        },
+    predicate_results["R3"] = {
+        "og_known": og_known,
+        "readiness_waiver_active": readiness_waiver_active,
+        "overridden": False,
     }
-    evidence = {
-        "og_consumption_id": None if og is None else str(og.id),
-        "og_availability": None if og is None else og.og_availability,
-        "original_gravity_known_waiver_id": None if og_waiver is None else str(og_waiver.id),
-    }
+    evidence.update(
+        {
+            "og_consumption_id": None if og is None else str(og.id),
+            "og_availability": None if og is None else og.og_availability,
+            "original_gravity_known_waiver_id": None if og_waiver is None else str(og_waiver.id),
+        }
+    )
 
     if override:
         if not override_reason or not (10 <= len(override_reason) <= 1000):
@@ -383,9 +448,9 @@ def assess_packaging_readiness(
             session.status = "COMPLETION_ASSESSED"
             session.completion_assessed_at = now
             session.assessed_at = now
-    # unsuccessful → remain CONDITIONING_COMPLETE (or existing status)
+    # unsuccessful → remain CONDITIONING_COMPLETE / CLOSED (or existing status)
 
-    # On R1/R2 failure from HANDOFF_READY path, invalidate current handoff.
+    # On R1/R2 failure from HANDOFF_READY path, invalidate current handoff (§9.4).
     if (
         session.status == "HANDOFF_READY"
         and result.readiness_status == "NOT_READY"
@@ -395,6 +460,18 @@ def assess_packaging_readiness(
             handoff.readiness_status = "INVALIDATED"
             handoff.invalidated_at = now
             handoff.invalidation_cause_id = assessment.id
+            _journal(
+                db,
+                session.id,
+                "PACKAGING_READINESS_HANDOFF_INVALIDATED",
+                "Current packaging readiness handoff invalidated after R1/R2 failure",
+                actor_id=user.id,
+                operation_id=command.operation_id,
+                event_data={
+                    "handoff_id": str(handoff.id),
+                    "assessment_id": str(assessment.id),
+                },
+            )
         session.status = "COMPLETION_ASSESSED"
 
     session.revision += 1
@@ -496,7 +573,14 @@ def record_packaging_readiness_handoff(
             readiness_status = "NOT_READY"
 
     now = utc_now()
-    version = 1 if current is None else current.handoff_version + 1
+    # Version from highest prior handoff so INVALIDATED rows (is_current=false) still advance.
+    latest = db.scalar(
+        select(PackagingReadinessHandoff)
+        .where(PackagingReadinessHandoff.fermentation_session_id == session.id)
+        .order_by(PackagingReadinessHandoff.handoff_version.desc())
+        .limit(1)
+    )
+    version = 1 if latest is None else latest.handoff_version + 1
     if current is not None:
         current.is_current = False
 
@@ -518,11 +602,15 @@ def record_packaging_readiness_handoff(
     db.flush()
 
     if readiness_status in {"READY", "READY_WITH_WAIVERS"}:
-        session.status = "HANDOFF_READY"
-        session.handoff_ready_at = now
-        session.handoff_recorded_at = now
+        if session.status != "CLOSED":
+            session.status = "HANDOFF_READY"
+            session.handoff_ready_at = now
+            session.handoff_recorded_at = now
+        else:
+            # §14.6 CLOSED requalify: remain CLOSED; provenance timestamps unchanged.
+            session.handoff_recorded_at = now
     else:
-        # NOT_READY keeps COMPLETION_ASSESSED
+        # NOT_READY keeps COMPLETION_ASSESSED (or CLOSED)
         if session.status not in {"COMPLETION_ASSESSED", "CLOSED"}:
             session.status = "COMPLETION_ASSESSED"
 

@@ -122,7 +122,7 @@ def assert_correction_window(session: FermentationSession, *, server_now: dateti
     now = server_now or utc_now()
     if session.status in {"CLOSED", "ABORTED"}:
         terminal = session.closed_at or session.aborted_at
-        if terminal and now > terminal + timedelta(days=CORRECTION_WINDOW_DAYS):
+        if terminal and now > _coerce_aware(terminal) + timedelta(days=CORRECTION_WINDOW_DAYS):
             raise ConflictError("Late entry window has closed", code="LATE_ENTRY_WINDOW_CLOSED")
 
 

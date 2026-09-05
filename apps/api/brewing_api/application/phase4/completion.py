@@ -120,26 +120,20 @@ def _attenuation_target(snapshot: FermentationPlanSnapshot | None) -> Decimal | 
     return Decimal(str(raw))
 
 
-def evaluate_fermentation_eligibility(
+def evaluate_fermentation_confirmation_predicates(
     db: Session,
     session: FermentationSession,
     *,
     override: bool = False,
     override_reason: str | None = None,
 ) -> EligibilityResult:
+    """Evaluate F1–F3 against current effective evidence (no F4 / session-state gate).
+
+    Used by §14.6 CLOSED packaging requalification and shared with CompleteFermentation
+    after the ACTIVE (F4) gate passes.
+    """
     predicate_results: dict[str, Any] = {}
     evidence: dict[str, Any] = {}
-
-    # F4 — session must be ACTIVE for CompleteFermentation (cannot override)
-    f4_pass = session.status == "ACTIVE"
-    predicate_results["F4"] = {"passed": f4_pass, "session_status": session.status}
-    if not f4_pass:
-        return EligibilityResult(
-            passed=False,
-            outcome="INSUFFICIENT_EVIDENCE",
-            predicate_results=predicate_results,
-            evidence_summary=evidence,
-        )
 
     leaves = effective_gravity_leaves(db, session.id)
     derived = latest_derived_gravity(db, session.id)
@@ -176,7 +170,9 @@ def evaluate_fermentation_eligibility(
         )
 
     # F1 — stable gravity
-    stable_status = derived.stable_gravity_status if derived else StableGravityStatus.INSUFFICIENT_EVIDENCE.value
+    stable_status = (
+        derived.stable_gravity_status if derived else StableGravityStatus.INSUFFICIENT_EVIDENCE.value
+    )
     f1_pass = stable_status == StableGravityStatus.STABLE.value
     predicate_results["F1"] = {"passed": f1_pass, "stable_gravity_status": stable_status}
 
@@ -205,6 +201,42 @@ def evaluate_fermentation_eligibility(
         outcome="COMPLETION_ELIGIBLE" if passed else "INSUFFICIENT_EVIDENCE",
         predicate_results=predicate_results,
         evidence_summary=evidence,
+    )
+
+
+def evaluate_fermentation_eligibility(
+    db: Session,
+    session: FermentationSession,
+    *,
+    override: bool = False,
+    override_reason: str | None = None,
+) -> EligibilityResult:
+    predicate_results: dict[str, Any] = {}
+    evidence: dict[str, Any] = {}
+
+    # F4 — session must be ACTIVE for CompleteFermentation (cannot override)
+    f4_pass = session.status == "ACTIVE"
+    predicate_results["F4"] = {"passed": f4_pass, "session_status": session.status}
+    if not f4_pass:
+        return EligibilityResult(
+            passed=False,
+            outcome="INSUFFICIENT_EVIDENCE",
+            predicate_results=predicate_results,
+            evidence_summary=evidence,
+        )
+
+    result = evaluate_fermentation_confirmation_predicates(
+        db,
+        session,
+        override=override,
+        override_reason=override_reason,
+    )
+    merged_predicates = {**predicate_results, **result.predicate_results}
+    return EligibilityResult(
+        passed=result.passed,
+        outcome=result.outcome,
+        predicate_results=merged_predicates,
+        evidence_summary=result.evidence_summary,
     )
 
 
@@ -252,6 +284,18 @@ def _invalidate_current_handoff(
     handoff.readiness_status = "INVALIDATED"
     handoff.invalidated_at = now
     handoff.invalidation_cause_id = cause_id
+    _journal(
+        db,
+        session.id,
+        "PACKAGING_READINESS_HANDOFF_INVALIDATED",
+        "Packaging readiness handoff invalidated",
+        actor_id=None,
+        event_data={
+            "handoff_id": str(handoff.id),
+            "cause_id": str(cause_id),
+            "session_status": session.status,
+        },
+    )
 
 
 def _reactivate_active_fermentation(

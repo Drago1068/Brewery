@@ -179,7 +179,7 @@ def _persist_conditioning_assessment(
     return assessment
 
 
-def evaluate_conditioning_eligibility(
+def evaluate_conditioning_confirmation_predicates(
     db: Session,
     session: FermentationSession,
     snapshot: FermentationPlanSnapshot | None,
@@ -187,19 +187,13 @@ def evaluate_conditioning_eligibility(
     override: bool = False,
     override_reason: str | None = None,
 ) -> EligibilityResult:
+    """Evaluate C1–C4 against current evidence (no C0 / CONDITIONING-state gate).
+
+    Used by §14.6 CLOSED packaging requalification.
+    """
     predicate_results: dict[str, Any] = {}
     evidence: dict[str, Any] = {}
     payload = snapshot.payload if snapshot else {}
-
-    c0 = session.status == "CONDITIONING"
-    predicate_results["C0"] = {"passed": c0, "session_status": session.status}
-    if not c0:
-        return EligibilityResult(
-            passed=False,
-            outcome="INSUFFICIENT_EVIDENCE",
-            predicate_results=predicate_results,
-            evidence_summary=evidence,
-        )
 
     if override:
         if not override_reason or not (10 <= len(override_reason) <= 1000):
@@ -283,6 +277,43 @@ def evaluate_conditioning_eligibility(
         outcome="COMPLETION_ELIGIBLE" if passed else "INSUFFICIENT_EVIDENCE",
         predicate_results=predicate_results,
         evidence_summary=evidence,
+    )
+
+
+def evaluate_conditioning_eligibility(
+    db: Session,
+    session: FermentationSession,
+    snapshot: FermentationPlanSnapshot | None,
+    *,
+    override: bool = False,
+    override_reason: str | None = None,
+) -> EligibilityResult:
+    predicate_results: dict[str, Any] = {}
+    evidence: dict[str, Any] = {}
+
+    c0 = session.status == "CONDITIONING"
+    predicate_results["C0"] = {"passed": c0, "session_status": session.status}
+    if not c0:
+        return EligibilityResult(
+            passed=False,
+            outcome="INSUFFICIENT_EVIDENCE",
+            predicate_results=predicate_results,
+            evidence_summary=evidence,
+        )
+
+    result = evaluate_conditioning_confirmation_predicates(
+        db,
+        session,
+        snapshot,
+        override=override,
+        override_reason=override_reason,
+    )
+    merged_predicates = {**predicate_results, **result.predicate_results}
+    return EligibilityResult(
+        passed=result.passed,
+        outcome=result.outcome,
+        predicate_results=merged_predicates,
+        evidence_summary=result.evidence_summary,
     )
 
 

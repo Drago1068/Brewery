@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brewing_api.application.errors import ConflictError, DomainError
+from brewing_api.application.phase4.time_validation import _coerce_aware
 from brewing_api.domain.brew_day.canonical import canonical_json, sha256_hex
 from brewing_api.domain.fermentation.constants import OPERATION_SCHEMA_VERSION
 from brewing_api.domain.fermentation.models import FermentationOperation
@@ -100,7 +101,7 @@ def replay_or_conflict(
         )
     if (
         existing.retained_until
-        and existing.retained_until < utc_now()
+        and _coerce_aware(existing.retained_until) < utc_now()
         and existing.tombstone
         and not existing.result_payload
     ):
