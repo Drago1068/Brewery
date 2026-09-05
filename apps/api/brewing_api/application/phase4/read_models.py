@@ -10,6 +10,7 @@ from brewing_api.application.phase4.completion import (
     serialize_assessment,
 )
 from brewing_api.application.phase4.conditioning import current_conditioning_assessment
+from brewing_api.application.phase4.deviations import list_session_deviations, serialize_deviation
 from brewing_api.application.phase4.derived_gravity import latest_derived_gravity
 from brewing_api.application.phase4.measurements import serialize_measurement
 from brewing_api.application.phase4.og_consumption import (
@@ -62,6 +63,7 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
     conditioning_assessment = current_conditioning_assessment(db, session.id)
     timers = project_timers(db, session.id)
     reminders = project_reminders(db, session.id)
+    deviations = list_session_deviations(db, session.id)
     db.commit()
     pitch_rate_estimate = compute_pitch_rate_estimate(db, session, snapshot=snapshot, og=og)
     return {
@@ -147,4 +149,5 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
         else serialize_assessment(conditioning_assessment),
         "timers": [serialize_timer(timer) for timer in timers],
         "reminders": [serialize_reminder(reminder) for reminder in reminders],
+        "deviations": [serialize_deviation(item) for item in deviations],
     }

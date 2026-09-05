@@ -19,6 +19,7 @@ from brewing_api.domain.brew_sessions.models import BrewSession, BrewStage, Brew
 from brewing_api.domain.equipment.models import EquipmentProfile
 from brewing_api.domain.fermentation.models import (
     FermentationDerivedGravitySnapshot,
+    FermentationDeviation,
     FermentationJournalEvent,
     FermentationMeasurement,
     FermentationMeasurementCorrection,
@@ -71,6 +72,7 @@ __all__ = [
     "Deviation",
     "EquipmentProfile",
     "FermentationDerivedGravitySnapshot",
+    "FermentationDeviation",
     "FermentationJournalEvent",
     "FermentationMeasurement",
     "FermentationMeasurementCorrection",

@@ -335,12 +335,37 @@ def record_measurement(
     )
     db.add(measurement)
     session.revision += 1
+    if command.measurement_type in {"FERMENTATION_TEMPERATURE", "CONDITIONING_TEMPERATURE"}:
+        from brewing_api.application.phase4.deviations import evaluate_temperature_excursion
+
+        db.flush()
+        evaluate_temperature_excursion(
+            db,
+            session,
+            measurement,
+            measured_value=canonical_value,
+            observed_at=observed_at,
+            actor_id=user.id,
+            operation_id=command.operation_id,
+        )
     if command.measurement_type == "FERMENTATION_GRAVITY":
         db.flush()
         prior = latest_derived_gravity(db, session.id)
         prior_stable = prior.stable_gravity_status if prior else None
         prior_attenuation = prior.apparent_attenuation_ratio if prior else None
-        recompute_derived_gravity(db, session.id)
+        derived = recompute_derived_gravity(db, session.id)
+        from brewing_api.application.phase4.deviations import evaluate_stable_gravity_broken
+
+        evaluate_stable_gravity_broken(
+            db,
+            session,
+            source_measurement_id=measurement.id,
+            prior_status=prior_stable,
+            new_status=derived.stable_gravity_status,
+            occurred_at=observed_at,
+            actor_id=user.id,
+            operation_id=command.operation_id,
+        )
         if gravity_change_affects_completion(
             db,
             session,
@@ -515,12 +540,37 @@ def correct_measurement(
     )
     db.add(correction)
     session.revision += 1
+    if measurement.measurement_type in {"FERMENTATION_TEMPERATURE", "CONDITIONING_TEMPERATURE"}:
+        from brewing_api.application.phase4.deviations import evaluate_temperature_excursion
+
+        db.flush()
+        evaluate_temperature_excursion(
+            db,
+            session,
+            measurement,
+            measured_value=canonical_value,
+            observed_at=observed_at,
+            actor_id=user.id,
+            operation_id=command.operation_id,
+        )
     if measurement.measurement_type == "FERMENTATION_GRAVITY" and not note_only:
         db.flush()
         prior = latest_derived_gravity(db, session.id)
         prior_stable = prior.stable_gravity_status if prior else None
         prior_attenuation = prior.apparent_attenuation_ratio if prior else None
-        recompute_derived_gravity(db, session.id)
+        derived = recompute_derived_gravity(db, session.id)
+        from brewing_api.application.phase4.deviations import evaluate_stable_gravity_broken
+
+        evaluate_stable_gravity_broken(
+            db,
+            session,
+            source_measurement_id=measurement.id,
+            prior_status=prior_stable,
+            new_status=derived.stable_gravity_status,
+            occurred_at=observed_at,
+            actor_id=user.id,
+            operation_id=command.operation_id,
+        )
         if session.status in {
             "FERMENTATION_COMPLETE",
             "CONDITIONING",

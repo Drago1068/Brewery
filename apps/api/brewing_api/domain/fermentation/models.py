@@ -22,6 +22,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from brewing_api.domain.common import UuidTimestampMixin
 from brewing_api.domain.fermentation.constants import (
     DERIVED_GRAVITY_SCHEMA_VERSION,
+    DEVIATION_SCHEMA_VERSION,
     ENTRY_SCHEMA_VERSION,
     FERMENTATION_ELIGIBILITY_SCHEMA_VERSION,
     MEASUREMENT_SCHEMA_VERSION,
@@ -617,3 +618,48 @@ class FermentationReminderHistory(UuidTimestampMixin, Base):
     cause: Mapped[str] = mapped_column(String(64), nullable=False)
     actor_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     operation_id: Mapped[str | None] = mapped_column(String(64))
+
+
+class FermentationDeviation(UuidTimestampMixin, Base):
+    """§22 derived/user deviation evidence with append-only supersession."""
+
+    __tablename__ = "fermentation_deviations"
+    __table_args__ = (
+        Index(
+            "uq_fermentation_deviation_current_leaf",
+            "fermentation_session_id",
+            "deviation_class",
+            "source_evidence_id",
+            unique=True,
+            sqlite_where=text("status = 'CURRENT'"),
+            postgresql_where=text("status = 'CURRENT'"),
+        ),
+    )
+
+    fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    deviation_class: Mapped[str] = mapped_column(String(40), nullable=False)
+    origin: Mapped[str] = mapped_column(String(24), nullable=False)
+    derived_identity: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    source_evidence_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    plan_hash: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(24), default="CURRENT", nullable=False)
+    exceeded: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    measured_value: Mapped[Decimal | None] = mapped_column(Numeric(14, 6))
+    target_value: Mapped[Decimal | None] = mapped_column(Numeric(14, 6))
+    tolerance_value: Mapped[Decimal | None] = mapped_column(Numeric(14, 6))
+    variance: Mapped[Decimal | None] = mapped_column(Numeric(14, 6))
+    unit: Mapped[str | None] = mapped_column(String(16))
+    comparison_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    resolution_note: Mapped[str | None] = mapped_column(Text)
+    supersedes_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("fermentation_deviations.id", ondelete="SET NULL")
+    )
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    operation_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    schema_version: Mapped[str] = mapped_column(
+        String(64), default=DEVIATION_SCHEMA_VERSION, nullable=False
+    )
