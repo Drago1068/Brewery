@@ -12,15 +12,19 @@ from brewing_api.application.phase4 import (
     measurements,
     og_consumption,
     read_models,
+    readiness,
     reminders,
     timers,
     transitions,
+    waivers,
     yeast,
 )
 from brewing_api.application.phase4.completion import CompleteFermentationCommand
 from brewing_api.application.phase4.conditioning import ConditioningCommand
 from brewing_api.application.phase4.measurements import CorrectionCommand, MeasurementCommand
+from brewing_api.application.phase4.readiness import AssessReadinessCommand, RecordHandoffCommand
 from brewing_api.application.phase4.transitions import SessionCommand
+from brewing_api.application.phase4.waivers import RecordWaiverCommand
 from brewing_api.application.phase4.yeast import YeastEnrichCommand
 from brewing_api.application.phase4.og_consumption import ReconcileOgCommand
 from brewing_api.domain.fermentation.models import FermentationMeasurement
@@ -82,6 +86,22 @@ class CompleteFermentationRequest(RevisionCommand):
 class CompleteConditioningRequest(RevisionCommand):
     override: bool = False
     override_reason: str | None = None
+
+
+class RecordWaiverRequest(RevisionCommand):
+    reason: str
+    requirement_id: uuid.UUID | None = None
+    requirement_class: str | None = None
+    supplemental_note: str | None = None
+
+
+class AssessPackagingReadinessRequest(RevisionCommand):
+    override: bool = False
+    override_reason: str | None = None
+
+
+class RecordPackagingHandoffRequest(RevisionCommand):
+    assessment_id: uuid.UUID
 
 
 class StartAuxiliaryTimerCommand(RevisionCommand):
@@ -430,6 +450,74 @@ def complete_conditioning(
     )
     payload = read_models.serialize_session(db, user, session.id)
     payload["conditioning_assessment"] = completion.serialize_assessment(assessment)
+    return payload
+
+
+@router.post("/{fermentation_session_id}/waivers", status_code=status.HTTP_201_CREATED)
+def record_waiver(
+    fermentation_session_id: uuid.UUID,
+    body: RecordWaiverRequest,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    waiver = waivers.record_waiver(
+        db,
+        user,
+        fermentation_session_id,
+        RecordWaiverCommand(
+            operation_id=body.operation_id,
+            reason=body.reason,
+            requirement_id=body.requirement_id,
+            requirement_class=body.requirement_class,
+            expected_revision=body.expected_revision,
+            supplemental_note=body.supplemental_note,
+        ),
+    )
+    return waivers.serialize_waiver(waiver)
+
+
+@router.post("/{fermentation_session_id}/commands/assess-packaging-readiness")
+def assess_packaging_readiness(
+    fermentation_session_id: uuid.UUID,
+    body: AssessPackagingReadinessRequest,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    session, assessment = readiness.assess_packaging_readiness(
+        db,
+        user,
+        fermentation_session_id,
+        AssessReadinessCommand(
+            operation_id=body.operation_id,
+            expected_revision=body.expected_revision,
+            override=body.override,
+            override_reason=body.override_reason,
+        ),
+    )
+    payload = read_models.serialize_session(db, user, session.id)
+    payload["packaging_readiness_assessment"] = completion.serialize_assessment(assessment)
+    return payload
+
+
+@router.post("/{fermentation_session_id}/commands/record-packaging-readiness-handoff")
+def record_packaging_readiness_handoff(
+    fermentation_session_id: uuid.UUID,
+    body: RecordPackagingHandoffRequest,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    session, handoff = readiness.record_packaging_readiness_handoff(
+        db,
+        user,
+        fermentation_session_id,
+        RecordHandoffCommand(
+            operation_id=body.operation_id,
+            assessment_id=body.assessment_id,
+            expected_revision=body.expected_revision,
+        ),
+    )
+    payload = read_models.serialize_session(db, user, session.id)
+    payload["packaging_readiness_handoff"] = readiness.serialize_handoff(handoff)
     return payload
 
 

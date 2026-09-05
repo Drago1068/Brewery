@@ -248,20 +248,33 @@ def satisfy_gravity_reminders(
     """Mark gravity_reading reminders COMPLETED with measurement as satisfaction source.
 
     Acknowledgement alone never reaches here — only authoritative measurement evidence.
+    Waived (SKIPPED) reminders are completed and their waiver marked SUPERSEDED_BY_EVIDENCE.
     """
+    from brewing_api.application.phase4.waivers import supersede_waiver_by_evidence
+
     satisfied: list[FermentationReminder] = []
     reminders = list(
         db.scalars(
             select(FermentationReminder).where(
                 FermentationReminder.fermentation_session_id == session.id,
                 FermentationReminder.reminder_type == "gravity_reading",
-                FermentationReminder.status.in_({"DUE", "ACKNOWLEDGED", "EXPIRED"}),
+                FermentationReminder.status.in_({"DUE", "ACKNOWLEDGED", "EXPIRED", "SKIPPED"}),
             )
         ).all()
     )
     now = utc_now()
     for reminder in reminders:
         prior = reminder.status
+        if prior == "SKIPPED":
+            supersede_waiver_by_evidence(
+                db,
+                session,
+                reminder=reminder,
+                evidence_type="FermentationMeasurement",
+                evidence_id=measurement_id,
+                actor_id=actor_id,
+                operation_id=operation_id,
+            )
         reminder.status = "COMPLETED"
         reminder.completed_at = now
         reminder.satisfaction_source_type = "FermentationMeasurement"
@@ -301,19 +314,31 @@ def satisfy_conditioning_temperature_reminders(
     operation_id: str | None = None,
 ) -> list[FermentationReminder]:
     """Satisfy conditioning_temperature_check reminders from CONDITIONING_TEMPERATURE evidence."""
+    from brewing_api.application.phase4.waivers import supersede_waiver_by_evidence
+
     satisfied: list[FermentationReminder] = []
     reminders = list(
         db.scalars(
             select(FermentationReminder).where(
                 FermentationReminder.fermentation_session_id == session.id,
                 FermentationReminder.reminder_type == "conditioning_temperature_check",
-                FermentationReminder.status.in_({"DUE", "ACKNOWLEDGED", "EXPIRED"}),
+                FermentationReminder.status.in_({"DUE", "ACKNOWLEDGED", "EXPIRED", "SKIPPED"}),
             )
         ).all()
     )
     now = utc_now()
     for reminder in reminders:
         prior = reminder.status
+        if prior == "SKIPPED":
+            supersede_waiver_by_evidence(
+                db,
+                session,
+                reminder=reminder,
+                evidence_type="FermentationMeasurement",
+                evidence_id=measurement_id,
+                actor_id=actor_id,
+                operation_id=operation_id,
+            )
         reminder.status = "COMPLETED"
         reminder.completed_at = now
         reminder.satisfaction_source_type = "FermentationMeasurement"

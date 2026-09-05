@@ -28,6 +28,7 @@ from brewing_api.domain.fermentation.models import (
     FermentationPlanSnapshot,
     FermentationSession,
     FermentationStageInstance,
+    FermentationWaiver,
     FermentationYeastPitchReference,
     PackagingReadinessHandoff,
 )
@@ -73,6 +74,7 @@ __all__ = [
     "EquipmentProfile",
     "FermentationDerivedGravitySnapshot",
     "FermentationDeviation",
+    "FermentationWaiver",
     "FermentationJournalEvent",
     "FermentationMeasurement",
     "FermentationMeasurementCorrection",

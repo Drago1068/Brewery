@@ -23,6 +23,7 @@ from brewing_api.domain.common import UuidTimestampMixin
 from brewing_api.domain.fermentation.constants import (
     DERIVED_GRAVITY_SCHEMA_VERSION,
     DEVIATION_SCHEMA_VERSION,
+    WAIVER_SCHEMA_VERSION,
     ENTRY_SCHEMA_VERSION,
     FERMENTATION_ELIGIBILITY_SCHEMA_VERSION,
     MEASUREMENT_SCHEMA_VERSION,
@@ -595,6 +596,7 @@ class FermentationReminder(UuidTimestampMixin, Base):
     resolution_source_type: Mapped[str | None] = mapped_column(String(40))
     resolution_source_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     priority: Mapped[str] = mapped_column(String(24), default="REQUIRED", nullable=False)
+    waivable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     skip_reason: Mapped[str | None] = mapped_column(Text)
     schema_version: Mapped[str] = mapped_column(
         String(64), default=REMINDER_SCHEMA_VERSION, nullable=False
@@ -618,6 +620,44 @@ class FermentationReminderHistory(UuidTimestampMixin, Base):
     cause: Mapped[str] = mapped_column(String(64), nullable=False)
     actor_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     operation_id: Mapped[str | None] = mapped_column(String(64))
+
+
+class FermentationWaiver(UuidTimestampMixin, Base):
+    """§10.3 / §23 append-only waiver evidence with supersession by later evidence."""
+
+    __tablename__ = "fermentation_waivers"
+    __table_args__ = (
+        Index(
+            "uq_fermentation_waiver_active_requirement",
+            "fermentation_session_id",
+            "requirement_template_id",
+            unique=True,
+            sqlite_where=text("status = 'ACTIVE'"),
+            postgresql_where=text("status = 'ACTIVE'"),
+        ),
+    )
+
+    fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    requirement_class: Mapped[str] = mapped_column(String(64), nullable=False)
+    requirement_template_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True, nullable=False)
+    reminder_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("fermentation_reminders.id", ondelete="SET NULL"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(32), default="ACTIVE", nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    effect: Mapped[str] = mapped_column(String(64), nullable=False)
+    supplemental_note: Mapped[str | None] = mapped_column(Text)
+    superseded_by_evidence_type: Mapped[str | None] = mapped_column(String(40))
+    superseded_by_evidence_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True, nullable=False)
+    operation_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    schema_version: Mapped[str] = mapped_column(
+        String(64), default=WAIVER_SCHEMA_VERSION, nullable=False
+    )
 
 
 class FermentationDeviation(UuidTimestampMixin, Base):

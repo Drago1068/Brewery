@@ -19,7 +19,7 @@ from brewing_api.platform.database import engine
 pytestmark = pytest.mark.integration
 
 PHASE4_PREDECESSOR = "0006_phase4_lifecycle_completion"
-EXPECTED_REVISION = "0012_phase4_deviations"
+EXPECTED_REVISION = "0013_phase4_waivers"
 PHASE4_SLICE2_TABLES = (
     "fermentation_measurements",
     "fermentation_measurement_corrections",
@@ -34,6 +34,7 @@ PHASE4_SLICE4_TABLES = (
 )
 PHASE4_SLICE6_TABLES = ("fermentation_yeast_reference_history",)
 PHASE4_SLICE10_TABLES = ("fermentation_deviations",)
+PHASE4_SLICE11_TABLES = ("fermentation_waivers",)
 DISPOSABLE_DB = "phase4_slice4_mig_validation"
 
 
@@ -124,6 +125,13 @@ def test_phase4_slice10_tables_exist():
     _require_postgres()
     tables = set(inspect(engine).get_table_names())
     missing = [name for name in PHASE4_SLICE10_TABLES if name not in tables]
+    assert missing == []
+
+
+def test_phase4_slice11_tables_exist():
+    _require_postgres()
+    tables = set(inspect(engine).get_table_names())
+    missing = [name for name in PHASE4_SLICE11_TABLES if name not in tables]
     assert missing == []
 
 

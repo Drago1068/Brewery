@@ -18,9 +18,15 @@ from brewing_api.application.phase4.og_consumption import (
     serialize_og_consumption,
 )
 from brewing_api.application.phase4.pitch_rate import compute_pitch_rate_estimate
+from brewing_api.application.phase4.readiness import (
+    current_handoff,
+    current_packaging_assessment,
+    serialize_handoff,
+)
 from brewing_api.application.phase4.reminders import project_reminders, serialize_reminder
 from brewing_api.application.phase4.sessions import get_fermentation_session
 from brewing_api.application.phase4.timers import project_timers, serialize_timer
+from brewing_api.application.phase4.waivers import list_session_waivers, serialize_waiver
 from brewing_api.application.phase4.yeast import serialize_yeast_reference
 from brewing_api.domain.fermentation.models import (
     FermentationMeasurement,
@@ -64,6 +70,9 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
     timers = project_timers(db, session.id)
     reminders = project_reminders(db, session.id)
     deviations = list_session_deviations(db, session.id)
+    waivers = list_session_waivers(db, session.id)
+    packaging_assessment = current_packaging_assessment(db, session.id)
+    handoff = current_handoff(db, session.id)
     db.commit()
     pitch_rate_estimate = compute_pitch_rate_estimate(db, session, snapshot=snapshot, og=og)
     return {
@@ -150,4 +159,9 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
         "timers": [serialize_timer(timer) for timer in timers],
         "reminders": [serialize_reminder(reminder) for reminder in reminders],
         "deviations": [serialize_deviation(item) for item in deviations],
+        "waivers": [serialize_waiver(item) for item in waivers],
+        "packaging_readiness_assessment": None
+        if packaging_assessment is None
+        else serialize_assessment(packaging_assessment),
+        "packaging_readiness_handoff": serialize_handoff(handoff),
     }

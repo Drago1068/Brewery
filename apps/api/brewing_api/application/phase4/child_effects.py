@@ -164,6 +164,7 @@ def materialize_start_children(
         ),
         activation_ordinal=stage.activation_ordinal or 1,
         priority="REQUIRED",
+        waivable=False,
         schema_version=REMINDER_SCHEMA_VERSION,
     )
     db.add(reminder)
@@ -417,6 +418,7 @@ def create_conditioning_activation_children(
             ),
             activation_ordinal=ordinal,
             priority="REQUIRED",
+            waivable=True,
             schema_version=REMINDER_SCHEMA_VERSION,
         )
         db.add(reminder)
