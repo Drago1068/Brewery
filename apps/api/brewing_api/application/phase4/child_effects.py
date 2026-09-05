@@ -132,11 +132,14 @@ def materialize_start_children(
     session: FermentationSession,
     stage: FermentationStageInstance,
     *,
+    recipe_version_id: uuid.UUID,
     actor_id: uuid.UUID | None = None,
     operation_id: str | None = None,
     duration_seconds: int = DEFAULT_FERMENTATION_DURATION_SECONDS,
 ) -> tuple[list[FermentationTimer], list[FermentationReminder]]:
     """Create start-transaction timers/reminders for ACTIVE_FERMENTATION."""
+    from brewing_api.application.phase4.plan import phase4_requirement_template_id
+
     now = utc_now()
     timers = create_activation_timers(
         db,
@@ -154,9 +157,10 @@ def materialize_start_children(
         status="DUE",
         due_at=now,
         requirement_class="FERMENTATION_GRAVITY_STABILITY",
-        requirement_template_id=uuid.uuid5(
-            uuid.UUID("c4e21b8a-7d0e-5f33-9a14-8b6c2d91e0aa"),
-            f"phase4-plan-v1:{session.brew_session_id}:FERMENTATION_GRAVITY_STABILITY:default",
+        requirement_template_id=phase4_requirement_template_id(
+            recipe_version_id,
+            "FERMENTATION_GRAVITY_STABILITY",
+            "default",
         ),
         activation_ordinal=stage.activation_ordinal or 1,
         priority="REQUIRED",
@@ -393,6 +397,11 @@ def create_conditioning_activation_children(
     )
     reminder = existing_reminder
     if reminder is None:
+        from brewing_api.application.phase4.plan import phase4_requirement_template_id
+        from brewing_api.domain.brew_sessions.models import BrewSession
+
+        brew = db.get(BrewSession, session.brew_session_id)
+        recipe_version_id = brew.recipe_version_id if brew is not None else session.brew_session_id
         reminder = FermentationReminder(
             fermentation_session_id=session.id,
             stage_instance_id=stage.id,
@@ -401,9 +410,10 @@ def create_conditioning_activation_children(
             status="DUE",
             due_at=now,
             requirement_class="CONDITIONING_TEMPERATURE",
-            requirement_template_id=uuid.uuid5(
-                uuid.UUID("c4e21b8a-7d0e-5f33-9a14-8b6c2d91e0aa"),
-                f"phase4-plan-v1:{session.brew_session_id}:CONDITIONING_TEMPERATURE:default",
+            requirement_template_id=phase4_requirement_template_id(
+                recipe_version_id,
+                "CONDITIONING_TEMPERATURE",
+                "default",
             ),
             activation_ordinal=ordinal,
             priority="REQUIRED",

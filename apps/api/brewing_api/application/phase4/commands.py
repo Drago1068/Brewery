@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import uuid
 
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from brewing_api.application.events import audit
-from brewing_api.domain.recipes.models import RecipeVersion
 from brewing_api.application.errors import ConflictError, DomainError
 from brewing_api.application.phase4.child_effects import materialize_start_children
+from brewing_api.application.phase4.equipment import resolve_start_equipment
 from brewing_api.application.phase4.og_consumption import (
     consume_original_gravity,
     pin_og_at_start,
@@ -16,7 +18,7 @@ from brewing_api.application.phase4.operations import replay_or_conflict, store_
 from brewing_api.application.phase4.plan import (
     MATERIALIZATION_RULE_VERSION,
     logical_plan_hash,
-    materialize_default_plan,
+    materialize_phase4_plan,
     plan_preview_hash,
     plan_snapshot_payload,
     recipe_snapshot_payload,
@@ -26,6 +28,7 @@ from brewing_api.application.phase4.sessions import (
     get_owned_brew_session,
     require_pitch_handoff,
 )
+from brewing_api.domain.brew_sessions.models import BrewSession
 from brewing_api.domain.fermentation.models import (
     FermentationJournalEvent,
     FermentationPlanSnapshot,
@@ -34,6 +37,7 @@ from brewing_api.domain.fermentation.models import (
     FermentationYeastPitchReference,
 )
 from brewing_api.domain.identity.models import User
+from brewing_api.domain.recipes.models import RecipeVersion
 from brewing_api.platform.time import utc_now
 
 
@@ -71,12 +75,16 @@ def start_fermentation_session(
     *,
     operation_id: str | None = None,
     expected_brew_revision: int | None = None,
+    equipment_profile_id: uuid.UUID | None = None,
 ) -> FermentationSession:
     brew_session = get_owned_brew_session(db, user, brew_session_id)
     document = {
         "command_name": "StartFermentationSession",
         "brew_session_id": str(brew_session_id),
         "expected_brew_revision": expected_brew_revision,
+        "equipment_profile_id": None
+        if equipment_profile_id is None
+        else str(equipment_profile_id),
     }
     replay = replay_or_conflict(
         db,
@@ -101,6 +109,13 @@ def start_fermentation_session(
     if expected_brew_revision is not None and brew_session.revision != expected_brew_revision:
         raise ConflictError("Brew session revision is stale", code="STALE_REVISION")
 
+    # Serialize concurrent starts against the same brew session (PostgreSQL FOR UPDATE).
+    locked_brew = db.scalar(
+        select(BrewSession).where(BrewSession.id == brew_session.id).with_for_update()
+    )
+    assert locked_brew is not None
+    brew_session = locked_brew
+
     existing = get_active_fermentation_for_brew(db, brew_session_id)
     if existing is not None:
         raise ConflictError(
@@ -112,10 +127,21 @@ def start_fermentation_session(
     handoff = require_pitch_handoff(db, brew_session_id)
     og_leaf = consume_original_gravity(db, brew_session_id, required=False)
     now = utc_now()
-    logical_plan = materialize_default_plan(recipe_version_id=brew_session.recipe_version_id)
     recipe_version = db.get(RecipeVersion, brew_session.recipe_version_id)
     if recipe_version is None:
         raise DomainError("Recipe version is missing for brew session", 409)
+
+    logical_plan = materialize_phase4_plan(db, recipe_version)
+    source_equipment_id, equipment_snapshot = resolve_start_equipment(
+        db,
+        user,
+        recipe_version=recipe_version,
+        equipment_profile_id=equipment_profile_id,
+        snapshotted_at=now,
+    )
+    plan_hash = logical_plan_hash(logical_plan)
+    preview_hash = plan_preview_hash(logical_plan)
+
     session = FermentationSession(
         user_id=user.id,
         brew_session_id=brew_session.id,
@@ -126,19 +152,29 @@ def start_fermentation_session(
         expected_brew_revision=expected_brew_revision or brew_session.revision,
         plan_kind=logical_plan.plan_kind,
         materialization_rule_version=MATERIALIZATION_RULE_VERSION,
-        logical_plan_hash=logical_plan_hash(logical_plan),
-        plan_preview_hash=plan_preview_hash(logical_plan),
+        logical_plan_hash=plan_hash,
+        plan_preview_hash=preview_hash,
         materialized_at=now,
+        source_equipment_profile_id=source_equipment_id,
+        equipment_snapshot=equipment_snapshot,
+        conditioning_mode=logical_plan.conditioning_mode,
     )
     db.add(session)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise ConflictError(
+            "An active fermentation session already exists for this brew session",
+            code="FERMENTATION_SESSION_EXISTS",
+        ) from exc
 
     db.add(
         FermentationPlanSnapshot(
             fermentation_session_id=session.id,
             plan_kind=logical_plan.plan_kind,
-            logical_plan_hash=logical_plan_hash(logical_plan),
-            preview_hash=plan_preview_hash(logical_plan),
+            logical_plan_hash=plan_hash,
+            preview_hash=preview_hash,
             payload=plan_snapshot_payload(
                 logical_plan,
                 recipe_snapshot=recipe_snapshot_payload(recipe_version),
@@ -179,6 +215,7 @@ def start_fermentation_session(
         db,
         session,
         active_stage,
+        recipe_version_id=recipe_version.id,
         actor_id=user.id,
         operation_id=operation_id,
     )
@@ -213,6 +250,11 @@ def start_fermentation_session(
             "og_availability": og_pin.og_availability,
             "og_measurement_id": None if og_leaf is None else str(og_leaf.id),
             "pitch_handoff_id": str(handoff.id),
+            "logical_plan_hash": plan_hash,
+            "source_equipment_profile_id": None
+            if source_equipment_id is None
+            else str(source_equipment_id),
+            "equipment_snapshotted": equipment_snapshot is not None,
         },
     )
     audit(db, user.id, "FERMENTATION_SESSION_STARTED", "FermentationSession", session.id)

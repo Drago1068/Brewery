@@ -98,6 +98,12 @@ class FermentationSession(UuidTimestampMixin, Base):
     plan_preview_hash: Mapped[str | None] = mapped_column(String(64))
     materialized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expected_brew_revision: Mapped[int | None] = mapped_column(Integer)
+    source_equipment_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("equipment_profiles.id", ondelete="SET NULL"),
+        index=True,
+    )
+    equipment_snapshot: Mapped[dict | None] = mapped_column(JSON)
     entry_schema_version: Mapped[str] = mapped_column(
         String(64), default=ENTRY_SCHEMA_VERSION, nullable=False
     )

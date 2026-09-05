@@ -19,7 +19,7 @@ from brewing_api.platform.database import engine
 pytestmark = pytest.mark.integration
 
 PHASE4_PREDECESSOR = "0006_phase4_lifecycle_completion"
-EXPECTED_REVISION = "0010_phase4_calc_read_model_abv"
+EXPECTED_REVISION = "0011_phase4_plan_equipment"
 PHASE4_SLICE2_TABLES = (
     "fermentation_measurements",
     "fermentation_measurement_corrections",

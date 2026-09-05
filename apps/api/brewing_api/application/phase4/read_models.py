@@ -90,6 +90,15 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
         "plan_preview_hash": session.plan_preview_hash,
         "materialized_at": session.materialized_at,
         "expected_brew_revision": session.expected_brew_revision,
+        "source_equipment_profile_id": None
+        if session.source_equipment_profile_id is None
+        else str(session.source_equipment_profile_id),
+        "equipment_snapshot": session.equipment_snapshot,
+        "fermenter_identity": (
+            "UNSPECIFIED"
+            if session.equipment_snapshot is None
+            else session.equipment_snapshot.get("fermenter_identity", "SPECIFIED")
+        ),
         "stages": [
             {
                 "id": str(stage.id),

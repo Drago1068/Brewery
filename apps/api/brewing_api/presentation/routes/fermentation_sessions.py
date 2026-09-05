@@ -32,6 +32,7 @@ router = APIRouter(prefix="/fermentation-sessions", tags=["fermentation"])
 class StartFermentationCommand(BaseModel):
     operation_id: str = Field(min_length=1, max_length=64)
     expected_brew_revision: int | None = Field(default=None, ge=0)
+    equipment_profile_id: uuid.UUID | None = None
 
 
 class RecordMeasurementCommand(BaseModel):
@@ -140,6 +141,7 @@ def start_fermentation_session(
         brew_session_id,
         operation_id=body.operation_id,
         expected_brew_revision=body.expected_brew_revision,
+        equipment_profile_id=body.equipment_profile_id,
     )
     return read_models.serialize_session(db, user, session.id)
 
