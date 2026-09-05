@@ -14,6 +14,7 @@ from brewing_api.application.phase4 import (
     read_models,
     readiness,
     reminders,
+    sessions as phase4_sessions,
     timers,
     transitions,
     waivers,
@@ -143,6 +144,13 @@ class ReconcileOgCommandBody(BaseModel):
     operation_id: str = Field(min_length=1, max_length=64)
     brew_measurement_id: uuid.UUID
     expected_revision: int | None = Field(default=None, ge=0)
+
+
+@router.get("")
+def list_fermentation_sessions(user: CurrentUser, db: Db) -> list[dict]:
+    """P4 §30 ListSessions — owner index for worksheet navigation (Slice 13)."""
+    rows = phase4_sessions.list_fermentation_sessions(db, user)
+    return [phase4_sessions.serialize_session_summary(row) for row in rows]
 
 
 @router.post(

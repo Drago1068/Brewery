@@ -28,6 +28,30 @@ def get_fermentation_session(
     return found
 
 
+def list_fermentation_sessions(db: Session, user: User) -> list[FermentationSession]:
+    """Owner-scoped session index (P4 §30 ListSessions)."""
+    return list(
+        db.scalars(
+            select(FermentationSession)
+            .where(FermentationSession.user_id == user.id)
+            .order_by(FermentationSession.started_at.desc(), FermentationSession.created_at.desc())
+        ).all()
+    )
+
+
+def serialize_session_summary(session: FermentationSession) -> dict:
+    return {
+        "id": str(session.id),
+        "brew_session_id": str(session.brew_session_id),
+        "status": session.status,
+        "revision": session.revision,
+        "started_at": session.started_at,
+        "closed_at": session.closed_at,
+        "aborted_at": session.aborted_at,
+        "handoff_ready_at": session.handoff_ready_at,
+    }
+
+
 def get_active_fermentation_for_brew(
     db: Session, brew_session_id: uuid.UUID
 ) -> FermentationSession | None:

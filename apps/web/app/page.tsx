@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { ApiError, apiFetch } from "@/lib/api";
 import { newOperationId } from "@/lib/brew";
+import type { FermentationSessionSummary } from "@/lib/fermentation";
 
 type Recipe = {
   id: string;
@@ -21,15 +22,24 @@ export default function Dashboard() {
   const router = useRouter();
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [activeId, setActiveId] = useState<string>();
+  const [activeFermentationId, setActiveFermentationId] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    Promise.all([apiFetch<Recipe[]>("/recipes"), apiFetch<{ id: string } | null>("/brew-sessions/active")])
-      .then(([items, active]) => {
+    Promise.all([
+      apiFetch<Recipe[]>("/recipes"),
+      apiFetch<{ id: string } | null>("/brew-sessions/active"),
+      apiFetch<FermentationSessionSummary[]>("/fermentation-sessions"),
+    ])
+      .then(([items, active, fermentations]) => {
         setRecipes(items);
         setActiveId(active?.id);
+        const open = fermentations.find(
+          (item) => item.status !== "CLOSED" && item.status !== "ABORTED",
+        );
+        setActiveFermentationId(open?.id);
       })
       .catch((reason) => {
         if (reason instanceof ApiError && reason.status === 401) router.replace("/login");
@@ -99,6 +109,14 @@ export default function Dashboard() {
         <section id="active-brew" className="active-banner">
           <div><span className="pulse" /> Active brew session ready to resume</div>
           <button className="secondary" onClick={() => router.push(`/brew/${activeId}`)}>Resume brew</button>
+        </section>
+      )}
+      {activeFermentationId && (
+        <section id="active-fermentation" className="active-banner" style={{ marginTop: activeId ? 12 : 0 }}>
+          <div><span className="pulse" /> Fermentation worksheet ready to resume</div>
+          <button className="secondary" onClick={() => router.push(`/ferment/${activeFermentationId}`)}>
+            Resume fermentation
+          </button>
         </section>
       )}
 

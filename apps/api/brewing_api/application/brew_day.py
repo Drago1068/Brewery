@@ -656,7 +656,7 @@ def record_measurement(
         boundary = stage.completed_at
         if session.status == "COMPLETED":
             boundary = session.completed_at
-        if boundary and utc_now() > _aware(boundary) + timedelta(hours=24):
+        if boundary and _aware(utc_now()) > _aware(boundary) + timedelta(hours=24):
             raise ConflictError("Late entry window has closed", code="LATE_ENTRY_WINDOW_CLOSED")
         late = True
     elif stage.status != "ACTIVE" or session.status != "ACTIVE":
@@ -860,7 +860,7 @@ def correct_measurement(
     if command.unit != expected_unit:
         raise DomainError(f"Correction must use unit {expected_unit}")
     if session.status in {"COMPLETED", "ABORTED"} and session.completed_at:
-        if utc_now() > _aware(session.completed_at or session.aborted_at) + timedelta(days=30):
+        if _aware(utc_now()) > _aware(session.completed_at or session.aborted_at) + timedelta(days=30):
             raise ConflictError("Late entry window has closed", code="LATE_ENTRY_WINDOW_CLOSED")
     context = _measurement_context(command)
     correction = Measurement(

@@ -528,8 +528,187 @@ export async function assertBrewDayA11y(page: Page, options?: { mobile?: boolean
 }
 
 export async function assertErrorAssociation(page: Page) {
-  const alert = page.locator("#brew-session-error");
+  const alert = page.locator("#brew-session-error, #ferment-session-error");
   await expect(alert).toBeVisible();
   await expect(alert).toHaveAttribute("role", "alert");
   await expect(alert).toBeFocused();
 }
+
+export async function waitForFermentIdle(page: Page) {
+  const sheet = page.getByTestId("ferment-worksheet");
+  await expect(sheet).toBeVisible({ timeout: 20_000 });
+  await expect(sheet).toHaveAttribute("data-busy", "false", { timeout: 20_000 });
+}
+
+export async function clickAndWaitFerment(
+  page: Page,
+  button: Locator,
+  urlPart: string,
+  options?: { allowConflict?: boolean },
+) {
+  await expect(button).toBeEnabled({ timeout: 20_000 });
+  const pending = page.waitForResponse(isPostTo(urlPart), { timeout: 20_000 });
+  await button.click();
+  const response = await pending;
+  if (options?.allowConflict && response.status() === 409) {
+    await waitForFermentIdle(page);
+    return response;
+  }
+  if (!response.ok()) {
+    throw new Error(`${urlPart} failed: ${response.status()} ${await response.text()}`);
+  }
+  await waitForFermentIdle(page);
+  return response;
+}
+
+export async function assertFermentA11y(page: Page, options?: { mobile?: boolean }) {
+  await expect(page.getByRole("heading", { name: "Lifecycle stages" })).toBeVisible();
+  await expect(page.getByRole("status", { name: "Session status" })).toBeVisible();
+  const gravity = page.getByLabel("Gravity reading");
+  if (await gravity.isVisible().catch(() => false)) {
+    await gravity.focus();
+    await expect(gravity).toBeFocused();
+    await expect(page.getByLabel("Measurement note")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Record gravity" })).toBeVisible();
+    const box = await gravity.boundingBox();
+    expect(box).toBeTruthy();
+    if (options?.mobile && box) {
+      const viewport = page.viewportSize();
+      if (viewport) {
+        expect(box.x + box.width).toBeLessThanOrEqual(viewport.width + 1);
+      }
+    }
+  }
+  const reminders = page.getByRole("region", { name: "Required actions" });
+  if (await reminders.isVisible().catch(() => false)) {
+    await expect(reminders).toHaveAttribute("aria-live", "polite");
+    await expect(reminders.getByRole("button", { name: "Acknowledge" }).first()).toBeVisible();
+  }
+}
+
+/** API-seed a completed legacy brew + ACTIVE fermentation for Phase 4 worksheet E2E. */
+export async function seedActiveFermentation(page: Page, label: string) {
+  await clearActiveBrew(page);
+  const origin = e2eOrigin();
+  const headers = await csrfHeaders(page, origin);
+  const recipe = await createLegacyRecipe(page, label);
+  const brew = await postJson(
+    page.request,
+    "/api/v1/brew-sessions",
+    { recipe_version_id: recipe.version_id, operation_id: `e2e-ferm-create-${Date.now()}` },
+    headers,
+  );
+  let details = await page.request.get(`/api/v1/brew-sessions/${brew.id}`, {
+    headers: { Origin: origin },
+  });
+  if (!details.ok()) throw new Error(`brew details failed: ${details.status()}`);
+  let revision = (await details.json()).revision as number;
+  await postJson(
+    page.request,
+    `/api/v1/brew-sessions/${brew.id}/start`,
+    { operation_id: `e2e-ferm-start-${Date.now()}`, expected_revision: revision },
+    headers,
+  );
+  details = await page.request.get(`/api/v1/brew-sessions/${brew.id}`, {
+    headers: { Origin: origin },
+  });
+  revision = (await details.json()).revision as number;
+  const mash = await postJson(
+    page.request,
+    `/api/v1/brew-sessions/${brew.id}/mash/start`,
+    { operation_id: `e2e-ferm-mash-${Date.now()}`, expected_revision: revision },
+    headers,
+  );
+  await postJson(
+    page.request,
+    `/api/v1/brew-sessions/stages/${mash.id}/measurements`,
+    {
+      measurement_type: "MASH_PH",
+      value: "5.30",
+      unit: "pH",
+      operation_id: `e2e-ferm-ph-${Date.now()}`,
+      method: "METER",
+      sample_temperature_c: "65.00",
+      temperature_compensated: true,
+    },
+    headers,
+  );
+  await postJson(
+    page.request,
+    `/api/v1/brew-sessions/stages/${mash.id}/measurements`,
+    {
+      measurement_type: "MASH_GRAVITY",
+      value: "1.048",
+      unit: "SG",
+      operation_id: `e2e-ferm-sg-${Date.now()}`,
+      method: "HYDROMETER",
+      sample_temperature_c: "20.00",
+    },
+    headers,
+  );
+  details = await page.request.get(`/api/v1/brew-sessions/${brew.id}`, {
+    headers: { Origin: origin },
+  });
+  revision = (await details.json()).revision as number;
+  await postJson(
+    page.request,
+    `/api/v1/brew-sessions/${brew.id}/pitch-handoff`,
+    {
+      yeast_addition_note: "E2E US-05 pitched for Phase 4 worksheet",
+      pitch_temperature_c: "18.0",
+      operation_id: `e2e-ferm-pitch-${Date.now()}`,
+      expected_revision: revision,
+    },
+    headers,
+  );
+  details = await page.request.get(`/api/v1/brew-sessions/${brew.id}`, {
+    headers: { Origin: origin },
+  });
+  revision = (await details.json()).revision as number;
+  await postJson(
+    page.request,
+    `/api/v1/brew-sessions/stages/${mash.id}/complete`,
+    { operation_id: `e2e-ferm-mash-complete-${Date.now()}`, expected_revision: revision },
+    headers,
+  );
+  const fermentation = await postJson(
+    page.request,
+    `/api/v1/fermentation-sessions/brew-sessions/${brew.id}/start`,
+    { operation_id: `e2e-ferm-session-${Date.now()}` },
+    headers,
+  );
+  const activeStage = (fermentation.stages as Array<{ id: string; canonical_stage_type: string }>).find(
+    (stage) => stage.canonical_stage_type === "ACTIVE_FERMENTATION",
+  );
+  if (!activeStage) throw new Error("ACTIVE_FERMENTATION stage missing after start");
+  await postJson(
+    page.request,
+    `/api/v1/fermentation-sessions/${fermentation.id}/measurements`,
+    {
+      operation_id: `e2e-ferm-gravity-${Date.now()}`,
+      measurement_type: "FERMENTATION_GRAVITY",
+      value: "1.020",
+      unit: "SG",
+      observed_at: new Date().toISOString(),
+      stage_instance_id: activeStage.id,
+      source: "OBSERVED",
+      method: "HYDROMETER",
+      sample_temperature_c: "20.00",
+      note: "Seeded gravity leaf for worksheet E2E",
+      expected_revision: fermentation.revision,
+    },
+    headers,
+  );
+  const refreshed = await page.request.get(`/api/v1/fermentation-sessions/${fermentation.id}`, {
+    headers: { Origin: origin },
+  });
+  if (!refreshed.ok()) throw new Error(`ferment refresh failed: ${refreshed.status()}`);
+  const current = await refreshed.json();
+  return {
+    brewSessionId: brew.id as string,
+    fermentationSessionId: fermentation.id as string,
+    revision: current.revision as number,
+    stages: current.stages as Array<{ id: string; canonical_stage_type: string; status: string }>,
+  };
+}
+
