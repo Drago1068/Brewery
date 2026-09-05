@@ -390,3 +390,136 @@ Do not create candidate evidence in this review.
 - `PHASE_5_IMPLEMENTATION=NOT_AUTHORIZED`
 - Spec / prior evidence artifacts not modified by this review.
 - Slice 15 not started.
+
+---
+
+## Reconciliation correction (post-publication)
+
+**Authority:** Governance surgical correction against HEAD `6725afbad833a672d9b48518232f179d53dacfe1`.  
+**Spec SHA-256 verified:** `EB7CA66F37AF5BD27904A722AE68AEEAEE4C8814C9821E911B8D9CC134F3816D` (`SPECIFICATION_CHANGED=NO`).  
+**Effect:** Supersedes inconsistent FR-075 / AC-038 / cluster-count / implementation-required set statements above. Historical Slice 14 closure facts and 89/68/42 arithmetic remain correct.
+
+### Defect corrected
+
+The original review listed `P4-FR-075` and `P4-AC-038` as **implementation-required** while assigning them only to a `FINAL_ACCEPTANCE` pseudo-cluster and omitting them from the proposed Slice 15 set. It also reported `REMAINING_IMPLEMENTATION_CLUSTER_COUNT=2` (including FINAL_ACCEPTANCE) while claiming `FINAL_FEATURE_SLICE_POSSIBLE=YES` with JOURNAL as the sole feature cluster. Those claims are mutually inconsistent under the rule that every implementation-required ID must belong to an identified remaining **implementation** cluster, and that final-acceptance-only verification must not be counted as an implementation cluster.
+
+### P4-FR-075 classification correction
+
+| Field | Corrected value |
+|---|---|
+| P4_FR_075_CLASSIFICATION | **FINAL_ACCEPTANCE_ONLY** |
+| P4_FR_075_OWNING_CLUSTER | FINAL_ACCEPTANCE (verification bucket — **not** an implementation cluster) |
+| P4_FR_075_DEPENDENCIES | Complete §33 nested-ID inventory after all mutation surfaces exist (incl. note/media/export) |
+| P4_FR_075_DEPENDENCIES_SATISFIED | NO until JOURNAL surfaces exist; then matrix campaign |
+| P4_FR_075_CAN_BE_INCLUDED_IN_SLICE_15 | **NO** |
+| P4_FR_075_REASON | Normative FR-075 requires owner-only `404` on nested IDs. Product ownership gates already exist on implemented surfaces via session-scoped getters (`get_fermentation_session` → cross-owner `404`). Remaining work is the consolidated executable §33 matrix / re-proof (AC-038 / ADV-003), not a missing standalone ownership product feature. Note/media/export ownership is delivered as part of FR-064/065 when those routes are built; that does not make FR-075 itself a JOURNAL-owned feature ID. |
+
+### P4-AC-038 classification correction
+
+| Field | Corrected value |
+|---|---|
+| P4_AC_038_CLASSIFICATION | **FINAL_ACCEPTANCE_ONLY** |
+| P4_AC_038_OWNING_CLUSTER | FINAL_ACCEPTANCE (verification bucket) |
+| P4_AC_038_GOVERNING_FR_IDS | P4-FR-075 |
+| P4_AC_038_DEPENDENCIES | Full §33 surface inventory incl. note, media bytes, journal, export |
+| P4_AC_038_DEPENDENCIES_SATISFIED | NO until JOURNAL closes those surfaces |
+| P4_AC_038_CAN_BE_INCLUDED_IN_SLICE_15 | **NO** |
+| P4_AC_038_REASON | AC-038 is an evidence AC: “nested IDOR matrix §33 … EVIDENCE: security tests.” It requires consolidated security proof across the closed inventory, not a separate feature cluster. New JOURNAL surfaces will carry ownership gates under FR-064/065; the global matrix remains final acceptance. |
+
+`FINAL_ACCEPTANCE_BUCKET_CONTAINS_MISSING_FEATURE_CODE=NO`
+
+### Corrected implementation-required set
+
+Every implementation-required ID belongs to `JOURNAL_MEDIA_EXPORT`.
+
+| Set | Corrected value |
+|---|---|
+| IMPLEMENTATION_REQUIRED_FR_COUNT | **4** |
+| IMPLEMENTATION_REQUIRED_FR_IDS | P4-FR-062, P4-FR-063, P4-FR-064, P4-FR-065 |
+| IMPLEMENTATION_REQUIRED_AC_COUNT | **2** |
+| IMPLEMENTATION_REQUIRED_AC_IDS | P4-AC-046, P4-AC-052 |
+| IMPLEMENTATION_REQUIRED_ADV_COUNT | **2** |
+| IMPLEMENTATION_REQUIRED_ADV_IDS | P4-ADV-013, P4-ADV-019 |
+
+Removed from implementation-required: P4-FR-075, P4-AC-038 (reclassified FINAL_ACCEPTANCE_ONLY).
+
+### Corrected cluster topology
+
+Do **not** count FINAL_ACCEPTANCE as an implementation cluster.
+
+| CLUSTER_NAME | CLASSIFICATION | FR_IDS | AC_IDS | ADV_IDS | DEPENDENCIES_SATISFIED | CAN_START_NOW |
+|---|---|---|---|---|---|---|
+| JOURNAL_MEDIA_EXPORT | BACKEND | 062,063,064,065 | 046,052 | 013,019 | YES | YES |
+
+`REMAINING_BACKEND_CLUSTER_COUNT=1`  
+`REMAINING_FRONTEND_OR_INTEGRATION_CLUSTER_COUNT=0`  
+`REMAINING_CROSS_CUTTING_CLUSTER_COUNT=0`  
+`REMAINING_IMPLEMENTATION_CLUSTER_COUNT=1`  
+(1+0+0=1)
+
+### JOURNAL_MEDIA_EXPORT (corrected)
+
+| Field | Value |
+|---|---|
+| JOURNAL_MEDIA_EXPORT_FR_IDS | P4-FR-062, P4-FR-063, P4-FR-064, P4-FR-065 |
+| JOURNAL_MEDIA_EXPORT_AC_IDS | P4-AC-046, P4-AC-052 |
+| JOURNAL_MEDIA_EXPORT_ADV_IDS | P4-ADV-013, P4-ADV-019 |
+| JOURNAL_MEDIA_EXPORT_SCOPE_COHERENT | YES |
+
+FR-075 / AC-038 are **not** included: they are acceptance-matrix obligations, not JOURNAL feature IDs.
+
+### Final-feature-slice decision (corrected)
+
+`FINAL_FEATURE_SLICE_POSSIBLE=YES`
+
+All gates hold: exactly one implementation cluster; every implementation-required FR/AC/ADV belongs to it; dependencies satisfied; no separate yeast **feature** requirement outside it; no feature frontend; no additional backend/cross-cutting **implementation** cluster; AI feature remaining = NO; Phase 5 leakage = NO.
+
+### Corrected Slice 15 scope
+
+| Field | Value |
+|---|---|
+| RECOMMENDED_NEXT_SLICE | JOURNAL_MEDIA_EXPORT |
+| NEXT_SLICE_CLASSIFICATION | BACKEND |
+| NEXT_SLICE_FR_IDS | P4-FR-062, P4-FR-063, P4-FR-064, P4-FR-065 |
+| NEXT_SLICE_AC_IDS | P4-AC-046, P4-AC-052 |
+| NEXT_SLICE_ADV_IDS | P4-ADV-013, P4-ADV-019 |
+| NEXT_SLICE_DEPENDENCIES | SATISFIED |
+| NEXT_SLICE_SCOPE_COHERENT | YES |
+| NEXT_SLICE_PHASE_5_LEAKAGE | NO |
+| NEXT_SLICE_COULD_COMPLETE_PHASE_4_FEATURE_IMPLEMENTATION | YES |
+
+Set equality verified:
+
+- `NEXT_SLICE_FR_IDS` = `IMPLEMENTATION_REQUIRED_FR_IDS`
+- `NEXT_SLICE_AC_IDS` = `IMPLEMENTATION_REQUIRED_AC_IDS`
+- `NEXT_SLICE_ADV_IDS` = `IMPLEMENTATION_REQUIRED_ADV_IDS`
+
+### Yeast tail (corrected)
+
+| Metric | Value |
+|---|---|
+| YEAST_REQUIREMENTS_TOTAL | 19 |
+| YEAST_REQUIREMENTS_IMPLEMENTED | 18 |
+| YEAST_REQUIREMENTS_REMAINING | 1 (P4-FR-075 PARTIAL pending §33 matrix) |
+| YEAST_FEATURE_IMPLEMENTATION_REMAINING | **NO** |
+
+Normative basis: FR-075 residual is consolidated owner-only matrix evidence (AC-038), not missing yeast-domain product behavior. FR-070 already closed in Slice 14.
+
+### Candidate blockers (corrected)
+
+`IMPLEMENTATION_CANDIDATE_PREREQUISITES_COMPLETE=NO`  
+`IMPLEMENTATION_CANDIDATE_BLOCKERS=JOURNAL_MEDIA_EXPORT`
+
+### Phase boundary (unchanged)
+
+`PHASE_5_PLUS_OPERATIONAL_LEAKAGE=NO`  
+`PHASE_4_PHASE_5_BOUNDARY=PASS`
+
+### Security section note (superseding earlier SECURITY_FEATURE_IDS row)
+
+Corrected classification:
+
+| Class | IDs |
+|---|---|
+| SECURITY_FEATURE_IDS | FR-064 / AC-052 / ADV-013 media security via JOURNAL only |
+| SECURITY_FINAL_ACCEPTANCE_IDS | P4-FR-075, P4-AC-038, P4-ADV-003 (global nested IDOR matrix); P4-FR-076 / AC-039 / ADV-014 (CSRF); FR-071/072 final fingerprint campaign |
