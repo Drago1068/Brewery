@@ -19,7 +19,10 @@ from brewing_api.application.phase4.completion import (
 from brewing_api.application.phase4.conditioning import current_conditioning_assessment
 from brewing_api.application.phase4.deviations import list_session_deviations, serialize_deviation
 from brewing_api.application.phase4.derived_gravity import latest_derived_gravity
+from brewing_api.application.phase4.journal import merged_journal_events
 from brewing_api.application.phase4.measurements import serialize_measurement
+from brewing_api.application.phase4.media import list_session_attachments, serialize_attachment
+from brewing_api.application.phase4.notes import list_session_notes, serialize_note
 from brewing_api.application.phase4.og_consumption import (
     current_og_consumption,
     serialize_og_consumption,
@@ -83,6 +86,11 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
     addition_events = list_session_addition_events(db, session.id)
     packaging_assessment = current_packaging_assessment(db, session.id)
     handoff = current_handoff(db, session.id)
+    journal = merged_journal_events(db, session)
+    notes = [serialize_note(item) for item in list_session_notes(db, session.id)]
+    attachments = [
+        serialize_attachment(item) for item in list_session_attachments(db, session.id)
+    ]
     db.commit()
     pitch_rate_estimate = compute_pitch_rate_estimate(db, session, snapshot=snapshot, og=og)
     return {
@@ -181,4 +189,7 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
         if packaging_assessment is None
         else serialize_assessment(packaging_assessment),
         "packaging_readiness_handoff": serialize_handoff(handoff),
+        "journal": journal,
+        "notes": notes,
+        "attachments": attachments,
     }

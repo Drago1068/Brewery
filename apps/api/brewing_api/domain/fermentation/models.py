@@ -889,3 +889,61 @@ class FermentationAdditionCorrection(UuidTimestampMixin, Base):
     schema_version: Mapped[str] = mapped_column(
         String(64), default=ADDITION_CORRECTION_SCHEMA_VERSION, nullable=False
     )
+
+
+class FermentationNote(UuidTimestampMixin, Base):
+    __tablename__ = "fermentation_notes"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["stage_instance_id", "fermentation_session_id"],
+            [
+                "fermentation_stage_instances.id",
+                "fermentation_stage_instances.fermentation_session_id",
+            ],
+            name="fk_fermentation_note_stage_session",
+        ),
+    )
+
+    fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    stage_instance_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("fermentation_stage_instances.id", ondelete="CASCADE"), index=True
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    operation_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    post_terminal: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
+class FermentationAttachment(UuidTimestampMixin, Base):
+    __tablename__ = "fermentation_attachments"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["stage_instance_id", "fermentation_session_id"],
+            [
+                "fermentation_stage_instances.id",
+                "fermentation_stage_instances.fermentation_session_id",
+            ],
+            name="fk_fermentation_attachment_stage_session",
+        ),
+    )
+
+    fermentation_session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("fermentation_sessions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    stage_instance_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("fermentation_stage_instances.id", ondelete="CASCADE"), index=True
+    )
+    storage_key: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
+    content_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    byte_length: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    original_filename: Mapped[str | None] = mapped_column(String(255))
+    caption: Mapped[str | None] = mapped_column(String(1000))
+    status: Mapped[str] = mapped_column(String(24), default="FINAL", nullable=False)
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    operation_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    removal_reason: Mapped[str | None] = mapped_column(Text)
+

@@ -1,8 +1,10 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Annotated
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, File, Form, UploadFile, status
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from brewing_api.application.phase4 import (
@@ -11,7 +13,10 @@ from brewing_api.application.phase4 import (
     commands,
     completion,
     conditioning,
+    export as phase4_export,
     measurements,
+    media as phase4_media,
+    notes as phase4_notes,
     og_consumption,
     read_models,
     readiness,
@@ -21,6 +26,10 @@ from brewing_api.application.phase4 import (
     transitions,
     waivers,
     yeast,
+)
+from brewing_api.application.phase4.journal import merged_journal_events
+from brewing_api.application.phase4.sessions import (
+    get_fermentation_session as load_fermentation_session,
 )
 from brewing_api.application.phase4.actions import RecordActionCommand
 from brewing_api.application.phase4.additions import (
@@ -131,6 +140,18 @@ class ExtendTimerCommand(RevisionCommand):
 
 class OperationOnlyCommand(BaseModel):
     operation_id: str = Field(min_length=1, max_length=64)
+
+
+class CreateNoteCommand(BaseModel):
+    operation_id: str = Field(min_length=1, max_length=64)
+    body: str = Field(min_length=1, max_length=4000)
+    stage_instance_id: uuid.UUID | None = None
+    expected_revision: int | None = Field(default=None, ge=0)
+
+
+class RemoveAttachmentCommand(BaseModel):
+    operation_id: str = Field(min_length=1, max_length=64)
+    reason: str = Field(min_length=1, max_length=1000)
 
 
 class EnrichYeastReferenceCommand(BaseModel):
@@ -864,3 +885,82 @@ def acknowledge_reminder(
         expected_revision=body.expected_revision,
     )
     return reminders.serialize_reminder(reminder)
+
+
+@router.post("/{session_id}/notes", status_code=status.HTTP_201_CREATED)
+def add_note(
+    session_id: uuid.UUID, body: CreateNoteCommand, user: CurrentUser, db: Db
+) -> dict:
+    note = phase4_notes.create_note(
+        db,
+        user,
+        session_id,
+        body.body,
+        operation_id=body.operation_id,
+        stage_id=body.stage_instance_id,
+        expected_revision=body.expected_revision,
+    )
+    return phase4_notes.serialize_note(note)
+
+
+@router.post("/{session_id}/attachments", status_code=status.HTTP_201_CREATED)
+async def upload_attachment(
+    session_id: uuid.UUID,
+    db: Db,
+    user: CurrentUser,
+    file: Annotated[UploadFile, File()],
+    operation_id: Annotated[str, Form()],
+    caption: Annotated[str | None, Form()] = None,
+    stage_id: Annotated[uuid.UUID | None, Form()] = None,
+) -> dict:
+    attachment = phase4_media.upload_attachment(
+        db, user, session_id, file, operation_id, caption, stage_id
+    )
+    return phase4_media.serialize_attachment(attachment)
+
+
+@router.get("/{session_id}/attachments")
+def list_attachments(session_id: uuid.UUID, user: CurrentUser, db: Db) -> dict:
+    session = load_fermentation_session(db, user, session_id)
+    items = phase4_media.list_session_attachments(db, session.id)
+    return {"items": [phase4_media.serialize_attachment(item) for item in items]}
+
+
+@router.get("/{session_id}/attachments/{attachment_id}")
+def get_attachment(
+    session_id: uuid.UUID, attachment_id: uuid.UUID, user: CurrentUser, db: Db
+) -> Response:
+    return phase4_media.retrieve_attachment(db, user, session_id, attachment_id)
+
+
+@router.post("/{session_id}/attachments/{attachment_id}/remove")
+def remove_attachment(
+    session_id: uuid.UUID,
+    attachment_id: uuid.UUID,
+    body: RemoveAttachmentCommand,
+    user: CurrentUser,
+    db: Db,
+) -> dict:
+    attachment = phase4_media.soft_remove_attachment(
+        db,
+        user,
+        session_id,
+        attachment_id,
+        body.reason,
+        body.operation_id,
+    )
+    return phase4_media.serialize_attachment(attachment)
+
+
+@router.get("/{session_id}/journal")
+def get_journal(session_id: uuid.UUID, user: CurrentUser, db: Db) -> dict:
+    session = load_fermentation_session(db, user, session_id)
+    return {"items": merged_journal_events(db, session)}
+
+
+@router.get("/{session_id}/export")
+def export_session(
+    session_id: uuid.UUID, user: CurrentUser, db: Db, format: str = "json"
+) -> dict:
+    return phase4_export.export_session(db, user, session_id, format=format)
+
