@@ -62,26 +62,27 @@ def test_cross_session_conditioning_denied(started_fermentation, client):
 
 
 def test_mass_assignment_and_forged_fields_rejected(started_fermentation):
+    """P4-AC-067 — unknown fields must yield 422 UNKNOWN_FIELD with no mutation."""
     client = started_fermentation["client"]
     session_id = started_fermentation["fermentation_session_id"]
     set_plan_conditioning(session_id=session_id)
     payload = reach_fermentation_complete(client, started_fermentation)
+    before_revision = payload["revision"]
     response = client.post(
         f"/api/v1/fermentation-sessions/{session_id}/commands/start-conditioning",
         json={
             "operation_id": str(uuid.uuid4()),
-            "expected_revision": payload["revision"],
+            "expected_revision": before_revision,
             "status": "CONDITIONING_COMPLETE",
             "conditioning_mode": "LAGERING",
         },
     )
-    # Pydantic v2 default ignores extras unless forbid; ensure no status forge
-    if response.status_code == 200:
-        assert response.json()["status"] == "CONDITIONING"
-        assert response.json()["conditioning_mode"] == "COLD_CONDITIONING"
-    else:
-        assert response.status_code == 422
-
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "UNKNOWN_FIELD"
+    detail = client.get(f"/api/v1/fermentation-sessions/{session_id}")
+    assert detail.status_code == 200
+    assert detail.json()["status"] == "FERMENTATION_COMPLETE"
+    assert detail.json()["revision"] == before_revision
 
 @pytest.mark.skipif(
     os.environ.get("TEST_USE_POSTGRES") != "1",

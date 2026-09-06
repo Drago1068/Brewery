@@ -5,8 +5,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Form, UploadFile, status
 from fastapi.responses import Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
+from brewing_api.presentation.phase4_schemas import Phase4ClosedCommand
 from brewing_api.application.phase4 import (
     actions,
     additions,
@@ -51,13 +52,13 @@ from brewing_api.presentation.dependencies import CurrentUser, Db
 router = APIRouter(prefix="/fermentation-sessions", tags=["fermentation"])
 
 
-class StartFermentationCommand(BaseModel):
+class StartFermentationCommand(Phase4ClosedCommand):
     operation_id: str = Field(min_length=1, max_length=64)
     expected_brew_revision: int | None = Field(default=None, ge=0)
     equipment_profile_id: uuid.UUID | None = None
 
 
-class RecordMeasurementCommand(BaseModel):
+class RecordMeasurementCommand(Phase4ClosedCommand):
     operation_id: str = Field(min_length=1, max_length=64)
     measurement_type: str
     value: str
@@ -74,7 +75,7 @@ class RecordMeasurementCommand(BaseModel):
     expected_revision: int | None = Field(default=None, ge=0)
 
 
-class CorrectMeasurementCommand(BaseModel):
+class CorrectMeasurementCommand(Phase4ClosedCommand):
     operation_id: str = Field(min_length=1, max_length=64)
     correction_of_id: uuid.UUID
     reason: str
@@ -87,7 +88,7 @@ class CorrectMeasurementCommand(BaseModel):
     expected_revision: int | None = Field(default=None, ge=0)
 
 
-class RevisionCommand(BaseModel):
+class RevisionCommand(Phase4ClosedCommand):
     operation_id: str = Field(min_length=1, max_length=64)
     expected_revision: int | None = Field(default=None, ge=0)
 
@@ -138,23 +139,23 @@ class ExtendTimerCommand(RevisionCommand):
     reason: str
 
 
-class OperationOnlyCommand(BaseModel):
+class OperationOnlyCommand(Phase4ClosedCommand):
     operation_id: str = Field(min_length=1, max_length=64)
 
 
-class CreateNoteCommand(BaseModel):
+class CreateNoteCommand(Phase4ClosedCommand):
     operation_id: str = Field(min_length=1, max_length=64)
     body: str = Field(min_length=1, max_length=4000)
     stage_instance_id: uuid.UUID | None = None
     expected_revision: int | None = Field(default=None, ge=0)
 
 
-class RemoveAttachmentCommand(BaseModel):
+class RemoveAttachmentCommand(Phase4ClosedCommand):
     operation_id: str = Field(min_length=1, max_length=64)
     reason: str = Field(min_length=1, max_length=1000)
 
 
-class EnrichYeastReferenceCommand(BaseModel):
+class EnrichYeastReferenceCommand(Phase4ClosedCommand):
     operation_id: str = Field(min_length=1, max_length=64)
     expected_revision: int | None = Field(default=None, ge=0)
     ingredient_lot_id: uuid.UUID | None = None
@@ -167,17 +168,13 @@ class EnrichYeastReferenceCommand(BaseModel):
     reason: str | None = None
 
 
-class ReconcileOgCommandBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class ReconcileOgCommandBody(Phase4ClosedCommand):
     operation_id: str = Field(min_length=1, max_length=64)
     brew_measurement_id: uuid.UUID
     expected_revision: int | None = Field(default=None, ge=0)
 
 
-class RecordActionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class RecordActionRequest(Phase4ClosedCommand):
     operation_id: str = Field(min_length=1, max_length=64)
     action_type: str
     occurred_at: datetime
@@ -186,9 +183,7 @@ class RecordActionRequest(BaseModel):
     expected_revision: int | None = Field(default=None, ge=0)
 
 
-class ExecutePlannedAdditionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class ExecutePlannedAdditionRequest(Phase4ClosedCommand):
     operation_id: str = Field(min_length=1, max_length=64)
     quantity: str
     unit: str
@@ -198,9 +193,7 @@ class ExecutePlannedAdditionRequest(BaseModel):
     expected_revision: int | None = Field(default=None, ge=0)
 
 
-class RecordUnplannedAdditionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class RecordUnplannedAdditionRequest(Phase4ClosedCommand):
     operation_id: str = Field(min_length=1, max_length=64)
     quantity: str
     unit: str
@@ -213,9 +206,7 @@ class RecordUnplannedAdditionRequest(BaseModel):
     expected_revision: int | None = Field(default=None, ge=0)
 
 
-class CorrectAdditionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class CorrectAdditionRequest(Phase4ClosedCommand):
     operation_id: str = Field(min_length=1, max_length=64)
     correction_of_id: uuid.UUID
     reason: str

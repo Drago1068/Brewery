@@ -333,8 +333,7 @@ def test_reconcile_security_cross_session_and_mass_assignment(completed_brew_wit
         },
     )
     assert bad.status_code == 422
-
-    # Stale revision
+    assert bad.json()["code"] == "UNKNOWN_FIELD"
     stale = client.post(
         f"/api/v1/fermentation-sessions/{ferm_a}/og-consumption",
         json={
