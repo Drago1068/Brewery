@@ -22,10 +22,11 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
             <Link href="/">Recipes</Link>
             <Link href="/designer">Recipe Designer</Link>
             <Link href="/#active-brew">Active brew</Link>
+            <Link href="/#active-fermentation">Active fermentation</Link>
           </nav>
         </header>
         <main>{children}</main>
-        <footer>Phase 3 · Private brewing workspace · Deterministic calculations</footer>
+        <footer>Phase 4 · Private brewing workspace · Deterministic calculations</footer>
       </body>
     </html>
   );

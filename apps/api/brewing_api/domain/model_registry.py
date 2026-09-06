@@ -17,6 +17,27 @@ from brewing_api.domain.brew_day.models import (
 )
 from brewing_api.domain.brew_sessions.models import BrewSession, BrewStage, BrewTimer
 from brewing_api.domain.equipment.models import EquipmentProfile
+from brewing_api.domain.fermentation.models import (
+    FermentationAction,
+    FermentationAdditionCorrection,
+    FermentationAdditionEvent,
+    FermentationAdditionRequirement,
+    FermentationAttachment,
+    FermentationDerivedGravitySnapshot,
+    FermentationDeviation,
+    FermentationJournalEvent,
+    FermentationMeasurement,
+    FermentationMeasurementCorrection,
+    FermentationNote,
+    FermentationOgConsumption,
+    FermentationOperation,
+    FermentationPlanSnapshot,
+    FermentationSession,
+    FermentationStageInstance,
+    FermentationWaiver,
+    FermentationYeastPitchReference,
+    PackagingReadinessHandoff,
+)
 from brewing_api.domain.identity.models import AuthSession, User
 from brewing_api.domain.ingredients.models import Ingredient, IngredientLot, Supplier, SupplierItem
 from brewing_api.domain.inventory.models import (
@@ -57,6 +78,25 @@ __all__ = [
     "BrewWaiver",
     "Deviation",
     "EquipmentProfile",
+    "FermentationAction",
+    "FermentationAdditionCorrection",
+    "FermentationAdditionEvent",
+    "FermentationAdditionRequirement",
+    "FermentationAttachment",
+    "FermentationDerivedGravitySnapshot",
+    "FermentationDeviation",
+    "FermentationWaiver",
+    "FermentationJournalEvent",
+    "FermentationMeasurement",
+    "FermentationMeasurementCorrection",
+    "FermentationNote",
+    "FermentationOgConsumption",
+    "FermentationOperation",
+    "FermentationPlanSnapshot",
+    "FermentationSession",
+    "FermentationStageInstance",
+    "FermentationYeastPitchReference",
+    "PackagingReadinessHandoff",
     "Ingredient",
     "IngredientLot",
     "IngredientSubstitution",

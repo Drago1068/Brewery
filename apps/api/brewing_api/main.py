@@ -3,8 +3,10 @@ from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 
 from brewing_api.application.auth import ensure_bootstrap_user
 from brewing_api.application.errors import DomainError
@@ -20,11 +22,13 @@ from brewing_api.platform.metrics import (
     snapshot,
 )
 from brewing_api.presentation.dependencies import CurrentUser
-from brewing_api.presentation.routes import auth, brew_sessions, brewing_core, health, recipes
+from brewing_api.presentation.routes import auth, brew_sessions, brewing_core, fermentation_sessions, health, recipes
 
 configure_logging()
 log = structlog.get_logger()
 settings = get_settings()
+
+_PHASE4_API_PREFIX = "/api/v1/fermentation-sessions"
 
 
 @asynccontextmanager
@@ -95,6 +99,30 @@ async def domain_error_handler(request: Request, exc: DomainError) -> JSONRespon
     return response
 
 
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """Normalize Phase 4 closed-schema extras to ``422 UNKNOWN_FIELD`` (P4-FR-077).
+
+    Other validation failures keep FastAPI's default detail list shape so missing
+    fields, type errors, and enums are not mislabeled as unknown fields. Non-Phase-4
+    routes are unchanged.
+    """
+    errors = exc.errors()
+    if request.url.path.startswith(_PHASE4_API_PREFIX) and any(
+        error.get("type") == "extra_forbidden" for error in errors
+    ):
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": "Unknown field is not permitted on Phase 4 command schemas",
+                "code": "UNKNOWN_FIELD",
+            },
+        )
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
+
 @app.exception_handler(Exception)
 async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
     log.exception("unhandled_error", path=request.url.path)
@@ -117,3 +145,4 @@ app.include_router(recipes.router, prefix="/api/v1")
 app.include_router(brew_sessions.router, prefix="/api/v1")
 app.include_router(brew_sessions.preview_router, prefix="/api/v1")
 app.include_router(brewing_core.router, prefix="/api/v1")
+app.include_router(fermentation_sessions.router, prefix="/api/v1")

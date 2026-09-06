@@ -2,7 +2,7 @@ import os
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, text
 
 from brewing_api.domain import model_registry  # noqa: F401
 from brewing_api.platform.config import get_settings
@@ -29,6 +29,17 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def _ensure_alembic_version_width(connection) -> None:
+    if connection.dialect.name != "postgresql":
+        return
+    connection.execute(
+        text(
+            "ALTER TABLE IF EXISTS alembic_version "
+            "ALTER COLUMN version_num TYPE VARCHAR(128)"
+        )
+    )
+
+
 def run_migrations_online() -> None:
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
@@ -36,6 +47,8 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
+        _ensure_alembic_version_width(connection)
+        connection.commit()
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()

@@ -36,6 +36,11 @@ from brewing_api.domain.measurements.models import Measurement
 from brewing_api.platform.database import SessionLocal, engine
 from brewing_api.platform.time import utc_now
 
+from phase3_migration_regression import (
+    assert_phase3_migration_ancestry,
+    assert_phase3_migrations_unchanged,
+)
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -49,7 +54,7 @@ def _cmd(active_mash, **extra):
 
 
 def test_ac_001_phase3_diff_scope_excludes_forward_domains():
-    """P3-AC-001: Phase 3 tree must not introduce Phase 4–10 domain packages."""
+    """P3-AC-001: no unauthorized Phase 4–10 domain packages; Phase 3 migrations preserved."""
     forbidden_dirs = {
         "fermentation_management",
         "packaging_session",
@@ -62,10 +67,8 @@ def test_ac_001_phase3_diff_scope_excludes_forward_domains():
     domain = ROOT / "apps/api/brewing_api/domain"
     present = {p.name for p in domain.iterdir() if p.is_dir()}
     assert not (present & forbidden_dirs)
-    versions = list((ROOT / "database/migrations/versions").glob("*.py"))
-    names = sorted(p.name for p in versions if p.name[0].isdigit())
-    assert names[-1].startswith("0003_phase3")
-    assert not any(n.startswith("0004") for n in names)
+    assert_phase3_migrations_unchanged(ROOT)
+    assert_phase3_migration_ancestry(ROOT)
 
 
 def test_ac_002_045_065_no_ai_or_always_listening():

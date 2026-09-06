@@ -41,6 +41,7 @@ export default function BrewDayPage() {
   const [pitchNote, setPitchNote] = useState("");
   const [repeatReason, setRepeatReason] = useState("Runtime repeat requested by brewer");
   const [abortReason, setAbortReason] = useState("");
+  const [fermentBusy, setFermentBusy] = useState(false);
   const errorRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async () => {
@@ -168,6 +169,44 @@ export default function BrewDayPage() {
       }
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function startFermentation() {
+    setFermentBusy(true);
+    setError("");
+    try {
+      const existing = await apiFetch<Array<{ id: string; brew_session_id: string; status: string }>>(
+        "/fermentation-sessions",
+      );
+      const match = existing.find(
+        (item) => item.brew_session_id === id && item.status !== "ABORTED",
+      );
+      if (match) {
+        router.push(`/ferment/${match.id}`);
+        return;
+      }
+      const started = await apiFetch<{ id: string }>(`/fermentation-sessions/brew-sessions/${id}/start`, {
+        method: "POST",
+        body: JSON.stringify({ operation_id: newOperationId() }),
+      });
+      router.push(`/ferment/${started.id}`);
+    } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 409) {
+        const existing = await apiFetch<Array<{ id: string; brew_session_id: string; status: string }>>(
+          "/fermentation-sessions",
+        );
+        const match = existing.find(
+          (item) => item.brew_session_id === id && item.status !== "ABORTED",
+        );
+        if (match) {
+          router.push(`/ferment/${match.id}`);
+          return;
+        }
+      }
+      setError(reason instanceof ApiError ? reason.message : "Could not start fermentation.");
+    } finally {
+      setFermentBusy(false);
     }
   }
 
@@ -907,6 +946,16 @@ export default function BrewDayPage() {
             <button className="primary" disabled={busy} onClick={() => action(`/brew-sessions/${id}/complete`)}>
               Complete brew session
             </button>
+            {brew.status === "COMPLETED" && (
+              <button
+                className="primary"
+                disabled={busy || fermentBusy}
+                data-testid="start-fermentation"
+                onClick={() => startFermentation()}
+              >
+                Start fermentation worksheet
+              </button>
+            )}
             <label>
               Abort reason
               <input value={abortReason} onChange={(event) => setAbortReason(event.target.value)} />

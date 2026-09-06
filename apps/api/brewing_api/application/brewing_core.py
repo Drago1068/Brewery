@@ -487,6 +487,7 @@ def _calculate(
         "grain_temperature_c": _json_decimal(grain_temperature_c),
         "mash_temperature_c": _json_decimal(mash_temperature_c),
         "carbonation_volumes": _json_decimal(carbonation_volumes),
+        "pitch_rate_million_per_ml_plato": _json_decimal(Decimal("0.75")),
     }
     return inputs, outputs
 

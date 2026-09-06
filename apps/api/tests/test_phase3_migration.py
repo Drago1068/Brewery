@@ -18,6 +18,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.exc import DBAPIError
 
+from phase3_migration_regression import assert_phase3_migration_ancestry
+
 from brewing_api.platform.database import engine
 
 pytestmark = pytest.mark.integration
@@ -87,10 +89,12 @@ def _terminate_and_drop(admin: Engine, database: str) -> None:
 
 
 def test_alembic_version_is_phase3_head():
+    """Accepted Phase 3 head remains an ancestor of the live PostgreSQL migration head."""
     _require_postgres()
     with engine.connect() as connection:
         version = connection.scalar(text("SELECT version_num FROM alembic_version"))
-    assert version == EXPECTED_REVISION
+    root = Path(__file__).resolve().parents[3]
+    assert assert_phase3_migration_ancestry(root, head_revision=version) == version
 
 
 def test_phase3_tables_exist():
@@ -251,7 +255,7 @@ def test_alembic_roundtrip_preserves_phase2_session_on_disposable_database():
         with admin.connect() as conn:
             conn.execute(text(f'CREATE DATABASE "{DISPOSABLE_DB}"'))
         target = _render(mig_url)
-        _run_alembic(target, "upgrade", "head")
+        _run_alembic(target, "upgrade", EXPECTED_REVISION)
         disposable = create_engine(target)
         with disposable.connect() as connection:
             assert _version(connection) == EXPECTED_REVISION
@@ -266,7 +270,7 @@ def test_alembic_roundtrip_preserves_phase2_session_on_disposable_database():
                 connection, now, user_id, recipe_id, version_id, session_id, stage_id
             )
             connection.commit()
-        _run_alembic(target, "upgrade", "head")
+        _run_alembic(target, "upgrade", EXPECTED_REVISION)
         with disposable.connect() as connection:
             assert _version(connection) == EXPECTED_REVISION
             status = connection.scalar(
@@ -288,7 +292,7 @@ def test_alembic_roundtrip_preserves_phase2_session_on_disposable_database():
                 )
                 == session_id
             )
-        _run_alembic(target, "upgrade", "head")
+        _run_alembic(target, "upgrade", EXPECTED_REVISION)
         with disposable.connect() as connection:
             assert _version(connection) == EXPECTED_REVISION
             assert (
