@@ -6,7 +6,7 @@ This is the authoritative long-range product scope for the Brewing Platform, her
 
 Every capability listed here is committed master-plan scope. Assignment to an advanced or intelligence horizon means sequenced, not optional or removed. Implementation still requires explicit phase authorization, acceptance criteria, migrations where needed, tests, documentation, and an architecture gate.
 
-The accepted implementation baseline remains `v0.2.0-phase2`. This plan does not authorize Phase 3 or alter that immutable baseline.
+The latest accepted implementation baseline is Phase 4, tag `v0.4.0-phase4`. Earlier accepted tagged baselines remain immutable, including Phase 3 `v0.3.0-phase3` and Phase 2 `v0.2.0-phase2`. This plan does not independently authorize Phase 5 or NAS production deployment.
 
 ## Product architecture
 
@@ -166,6 +166,9 @@ Every capability must preserve server-side authorization; explicit units; UTC st
 - Phase 0: accepted architecture/governance foundation.
 - Phase 1 and Phase 1A: accepted platform and architecture-proving Mash slice.
 - Phase 2: accepted Brewing Core baseline, tag `v0.2.0-phase2`.
-- Phase 3: awaiting explicit authorization.
+- Phase 3: accepted Brew-Day OS, tag `v0.3.0-phase3`; formal record [Phase 3 Formal Acceptance Record](../evidence/PHASE_3_ACCEPTANCE.md). The Phase 3 specification file retains its original in-document status wording because its exact bytes are bound by that record. No additional Phase 3 specification freeze is required.
+- Phase 4: accepted and formally closed Fermentation and Conditioning OS, tag `v0.4.0-phase4`; records [Phase 4 Formal Specification Acceptance](../evidence/PHASE_4_FORMAL_SPECIFICATION_ACCEPTANCE.md) and [Phase 4 Formal Implementation Acceptance](../evidence/PHASE_4_FORMAL_IMPLEMENTATION_ACCEPTANCE.md).
+- Phase 5: not authorized.
+- NAS production deployment: not authorized.
 
-Nothing in this master plan independently authorizes Phase 3 implementation or NAS production deployment.
+Nothing in this master plan independently authorizes Phase 5 implementation or NAS production deployment.

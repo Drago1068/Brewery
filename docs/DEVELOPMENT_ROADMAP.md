@@ -32,19 +32,21 @@ Status: ACCEPTED — `v0.3.0-phase3`
 
 Complete stage-aware worksheet; multiple persistent timers; hop/addition schedules; required-data reminders; mash, post-mash, pre-boil, OG, knockout, volume, and temperature measurements; validation; planned-versus-actual deviations; voice-entry confirmation boundary; event log; photos/notes; automatic journal; and refresh recovery.
 
-Normative gate: [Phase 3 Engineering and Acceptance Specification](specifications/PHASE_3_ENGINEERING_AND_ACCEPTANCE_SPECIFICATION.md).
-
-Acceptance record: [Phase 3 Formal Acceptance Record](evidence/PHASE_3_ACCEPTANCE.md).
+Normative gate: [Phase 3 Engineering and Acceptance Specification](specifications/PHASE_3_ENGINEERING_AND_ACCEPTANCE_SPECIFICATION.md). That file retains its original in-document status wording because its exact bytes are bound by acceptance; accepted status is established by the [Phase 3 Formal Acceptance Record](evidence/PHASE_3_ACCEPTANCE.md). No additional Phase 3 specification freeze is required.
 
 ## Phase 4 — Fermentation, Conditioning & Yeast
 
-Status: ENGINEERING SPECIFICATION REVIEW CANDIDATE — AWAITING INDEPENDENT SPECIFICATION REVIEW AND EXPLICIT IMPLEMENTATION AUTHORIZATION
+Status: ACCEPTED AND FORMALLY CLOSED — `v0.4.0-phase4`
 
 Gravity/temperature/pH tracking, fermentation curves, alerts, yeast lots and pitch history, milestones/additions, conditioning, readiness, and troubleshooting.
 
-Normative gate: [Phase 4 Engineering and Acceptance Specification](specifications/PHASE_4_ENGINEERING_AND_ACCEPTANCE_SPECIFICATION.md).
+Normative gate: [Phase 4 Engineering and Acceptance Specification](specifications/PHASE_4_ENGINEERING_AND_ACCEPTANCE_SPECIFICATION.md). That file retains its original in-document status wording because its exact bytes are bound by acceptance; accepted status is established by [Phase 4 Formal Specification Acceptance](evidence/PHASE_4_FORMAL_SPECIFICATION_ACCEPTANCE.md).
+
+Implementation acceptance: [Phase 4 Formal Implementation Acceptance](evidence/PHASE_4_FORMAL_IMPLEMENTATION_ACCEPTANCE.md). The latest accepted implementation baseline is Phase 4. This roadmap does not authorize Phase 5 or NAS production deployment.
 
 ## Phase 5 — Quality, Packaging & Finished Beer
+
+Status: NOT AUTHORIZED
 
 QA/QC, sanitation/CIP, calibration and maintenance foundations, oxygen/packaging exposure, stability, packaging sessions, carbonation, kegs, cans/bottles, package traceability, draft assets, taps, line cleaning, and consumption.
 

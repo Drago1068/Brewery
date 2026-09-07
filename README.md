@@ -1,14 +1,22 @@
 # Brewing Platform
 
-Phase 3 Brew-Day OS implementation candidate on `codex/phase3-brew-day-os`. Phase 3 is not accepted and is not merged to `main`.
+Accepted Phase 4 Fermentation and Conditioning OS on `main` at `v0.4.0-phase4`. Phase 3 Brew-Day OS is accepted at `v0.3.0-phase3`. Phase 5 and NAS production deployment are not authorized.
 
 ## Status
 
-**Phase 2 Brewing Core remains the accepted `v0.2.0-phase2` baseline**
+**Latest accepted implementation baseline: Phase 4 — `v0.4.0-phase4`**
 
-**Phase 3 Brew-Day OS implementation candidate — not yet independently reviewed or accepted**
+**Phase 3 Brew-Day OS accepted — `v0.3.0-phase3`**
 
-The candidate adds persistent multi-stage brew-day execution through yeast-pitch handoff: plan materialization, stage lifecycle, PostgreSQL-authoritative timers/reminders/measurements/additions, CSRF, notes/photos, and journal projection. Phase 4 fermentation management and NAS production deployment are not authorized.
+Formal acceptance records:
+
+- Phase 3 implementation: [Phase 3 Formal Acceptance Record](docs/evidence/PHASE_3_ACCEPTANCE.md)
+- Phase 4 specification: [Phase 4 Formal Specification Acceptance](docs/evidence/PHASE_4_FORMAL_SPECIFICATION_ACCEPTANCE.md)
+- Phase 4 implementation: [Phase 4 Formal Implementation Acceptance](docs/evidence/PHASE_4_FORMAL_IMPLEMENTATION_ACCEPTANCE.md)
+
+Phase 2 Brewing Core remains the immutable earlier baseline `v0.2.0-phase2`. Historical specification files keep their original in-document status wording because their exact bytes are bound by those acceptance records; later formal acceptance records establish accepted status. No additional Phase 3 specification freeze is required.
+
+Phase 4 fermentation and conditioning is accepted and formally closed. Phase 5 quality, packaging, and later-phase work, and NAS production deployment, remain unauthorized.
 
 ## Repository
 
@@ -59,8 +67,8 @@ See [Local Development](docs/operations/LOCAL_DEVELOPMENT.md), [Database](docs/o
 
 The authoritative long-range product scope and phase boundaries are defined in the [Brewing Intelligence & Competition OS Master Plan](docs/product/BREWING_INTELLIGENCE_AND_COMPETITION_OS_MASTER_PLAN.md) and [Development Roadmap](docs/DEVELOPMENT_ROADMAP.md).
 
-The next independent review gate is Codex review of the Phase 3 implementation candidate on `codex/phase3-brew-day-os`. Phase 3 acceptance is not granted by this README. Phase 4 implementation and production deployment remain unauthorized.
+The latest accepted implementation baseline is Phase 4. Phase 5 implementation and production deployment remain unauthorized. This README does not grant Phase 5, further implementation, or deployment authorization.
 
 ## Scope gate
 
-Phase 2 remains the accepted `v0.2.0-phase2` baseline on `main`. Phase 3 implementation lives on `codex/phase3-brew-day-os` until independent review and acceptance. Work stops at yeast-pitch handoff: fermentation, packaging, serving, advanced analytics/AI, IoT, inventory reservation-to-consumption, and NAS production deployment are not included.
+The latest accepted implementation baseline on `main` is Phase 4 (`v0.4.0-phase4`). Phase 3 (`v0.3.0-phase3`) and Phase 2 (`v0.2.0-phase2`) remain accepted immutable predecessors. Phase 5, later-horizon operational domains, and NAS production deployment are not authorized.
