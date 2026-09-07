@@ -539,6 +539,9 @@ def create_recipe_design(db: Session, user: User, command) -> dict:
     equipment = _owned(
         db, EquipmentProfile, user.id, command.equipment_profile_id, "Equipment profile"
     )
+    sequences = [step.sequence for step in command.process_steps]
+    if len(sequences) != len(set(sequences)):
+        raise DomainError("Process step sequences must be unique")
     resolved = []
     for line in command.ingredients:
         ingredient = _ingredient_and_unit(db, user, line.ingredient_id, line.unit)

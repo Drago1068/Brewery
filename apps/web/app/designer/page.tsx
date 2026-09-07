@@ -4,7 +4,26 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { ApiError, apiFetch } from "@/lib/api";
-import { DraftLine, Ingredient, displayEstimate, makeDraftLine } from "@/lib/designer";
+import {
+  DraftLine,
+  Ingredient,
+  MashStepDraft,
+  USE_STAGES,
+  addMashStep,
+  applyLinePatch,
+  defaultMashStep,
+  displayEstimate,
+  editMashStep,
+  makeDraftLine,
+  mashStepError,
+  orderMashSteps,
+  parsePositiveAmount,
+  parseTimingMinutes,
+  removeMashStep,
+  stageAllowsTiming,
+  stageRequiresTiming,
+  toProcessSteps,
+} from "@/lib/designer";
 
 type Equipment = { id: string; name: string };
 type Location = { id: string; name: string };
@@ -17,6 +36,10 @@ export default function RecipeDesigner() {
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [lines, setLines] = useState<DraftLine[]>([]);
+  const [lineErrors, setLineErrors] = useState<Record<number, string>>({});
+  const [mashSteps, setMashSteps] = useState<MashStepDraft[]>([defaultMashStep()]);
+  const [mashError, setMashError] = useState("");
+  const [addError, setAddError] = useState("");
   const [ingredientId, setIngredientId] = useState("");
   const [design, setDesign] = useState<Design>();
   const [busy, setBusy] = useState(false);
@@ -64,9 +87,50 @@ export default function RecipeDesigner() {
     } finally { setBusy(false); }
   }
 
+  function patchLine(index: number, patch: Parameters<typeof applyLinePatch>[2]) {
+    setLines((current) => {
+      const line = current[index];
+      const item = ingredients.find((ingredient) => ingredient.id === line.ingredient_id);
+      const result = applyLinePatch(line, item, patch);
+      setLineErrors((errors) => {
+        const next = { ...errors };
+        if (result.error) next[index] = result.error;
+        else delete next[index];
+        return next;
+      });
+      if (result.error) return current;
+      return current.map((entry, lineIndex) => (lineIndex === index ? result.line : entry));
+    });
+  }
+
+  function addSelectedLine() {
+    const amount = (document.getElementById("line-amount") as HTMLInputElement).value;
+    if (!selected) return;
+    if (parsePositiveAmount(amount) === undefined) {
+      setAddError("Amount must be a positive number with up to 4 decimal places.");
+      return;
+    }
+    setAddError("");
+    setLines((current) => [...current, makeDraftLine(selected, amount)]);
+  }
+
   async function saveRecipe(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setBusy(true); setError("");
+    event.preventDefault(); setBusy(true); setError(""); setMashError("");
     const form = new FormData(event.currentTarget);
+    const nextErrors: Record<number, string> = {};
+    lines.forEach((line, index) => {
+      const item = ingredients.find((ingredient) => ingredient.id === line.ingredient_id);
+      const result = applyLinePatch(line, item, {});
+      if (result.error) nextErrors[index] = result.error;
+    });
+    setLineErrors(nextErrors);
+    const process = toProcessSteps(mashSteps, String(form.get("boil_duration_minutes") ?? ""));
+    if (Object.keys(nextErrors).length > 0 || process.error || !process.steps) {
+      setMashError(process.error ?? "");
+      setError("Correct the highlighted addition or mash-step fields before saving.");
+      setBusy(false);
+      return;
+    }
     try {
       setDesign(await apiFetch<Design>("/recipe-designs", { method: "POST", body: JSON.stringify({
         name: form.get("name"), equipment_profile_id: form.get("equipment_profile_id"),
@@ -77,10 +141,7 @@ export default function RecipeDesigner() {
         boil_duration_minutes: form.get("boil_duration_minutes"),
         apparent_attenuation: form.get("apparent_attenuation"),
         target_carbonation_volumes: form.get("target_carbonation_volumes"),
-        process_steps: [
-          { step_type: "MASH", sequence: 1, name: "Saccharification", duration_minutes: form.get("mash_duration_minutes"), temperature_c: form.get("target_mash_temperature_c") },
-          { step_type: "BOIL", sequence: 2, name: "Boil", duration_minutes: form.get("boil_duration_minutes") },
-        ],
+        process_steps: process.steps,
       }) }));
     } catch (reason) {
       setError(reason instanceof ApiError ? reason.message : "Recipe version could not be saved.");
@@ -139,8 +200,72 @@ export default function RecipeDesigner() {
     </section>
     <section className="card designer-card">
       <div className="section-heading"><div><div className="eyebrow">4 · Formulation</div><h2>Build recipe version</h2></div><span className="version-pill">{lines.length} lines</span></div>
-      <div className="line-builder"><label>Ingredient<select aria-label="Recipe ingredient" value={ingredientId} onChange={(event) => setIngredientId(event.target.value)}><option value="">Select ingredient</option>{ingredients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Amount<input id="line-amount" type="number" min="0.0001" step="0.0001" defaultValue="1000" /></label><button type="button" className="secondary dark" disabled={!selected} onClick={() => { const amount = (document.getElementById("line-amount") as HTMLInputElement).value; if (selected) setLines((current) => [...current, makeDraftLine(selected, amount)]); }}>Add to recipe</button></div>
-      <ul className="ingredient-lines">{lines.map((line, index) => { const item = ingredients.find((ingredient) => ingredient.id === line.ingredient_id); return <li key={`${line.ingredient_id}-${index}`}><span>{item?.name}</span><strong>{line.amount} {line.unit}</strong><small>{line.use_stage}{line.timing_minutes !== undefined ? ` · ${line.timing_minutes} min` : ""}</small><button type="button" aria-label={`Remove ${item?.name}`} onClick={() => setLines((current) => current.filter((_, lineIndex) => lineIndex !== index))}>×</button></li>; })}</ul>
+      <div className="line-builder"><label>Ingredient<select aria-label="Recipe ingredient" value={ingredientId} onChange={(event) => setIngredientId(event.target.value)}><option value="">Select ingredient</option>{ingredients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Amount<input id="line-amount" type="number" min="0.0001" step="0.0001" defaultValue="1000" /></label><button type="button" className="secondary dark" disabled={!selected} onClick={addSelectedLine}>Add to recipe</button></div>
+      {addError && <p className="field-error" role="alert">{addError}</p>}
+      <ul className="ingredient-lines">{lines.map((line, index) => {
+        const item = ingredients.find((ingredient) => ingredient.id === line.ingredient_id);
+        const identity = item?.name ?? "Addition";
+        const timed = stageAllowsTiming(line.use_stage);
+        return <li key={`${line.ingredient_id}-${index}`} className="ingredient-line">
+          <span className="line-identity">{identity}</span>
+          <label>Amount<input aria-label={`${identity} amount`} value={line.amount} onChange={(event) => patchLine(index, { amount: event.target.value })} /></label>
+          <label>Unit<select aria-label={`${identity} unit`} value={line.unit} onChange={(event) => patchLine(index, { unit: event.target.value })}>{item ? <option value={item.canonical_unit}>{item.canonical_unit}</option> : <option value={line.unit}>{line.unit}</option>}</select></label>
+          <label>Stage<select aria-label={`${identity} stage`} value={line.use_stage} onChange={(event) => {
+            const use_stage = event.target.value;
+            patchLine(index, stageRequiresTiming(use_stage) && line.timing_minutes === undefined
+              ? { use_stage, timing_minutes: 60 }
+              : { use_stage });
+          }}>{USE_STAGES.map((stage) => <option key={stage} value={stage}>{stage}</option>)}</select></label>
+          {timed
+            ? <label>Timing (min)<input aria-label={`${identity} timing`} inputMode="numeric" value={line.timing_minutes ?? ""} onChange={(event) => {
+                const raw = event.target.value;
+                if (raw === "") {
+                  patchLine(index, { timing_minutes: null });
+                  return;
+                }
+                const parsed = parseTimingMinutes(raw);
+                if (parsed === undefined) {
+                  setLineErrors((errors) => ({ ...errors, [index]: "Timing must be a whole number of minutes from 0 to 10080." }));
+                  return;
+                }
+                patchLine(index, { timing_minutes: parsed });
+              }} /></label>
+            : <small className="timing-unused">Timing not used for this stage</small>}
+          {lineErrors[index] && <p className="field-error" role="alert">{lineErrors[index]}</p>}
+          <button type="button" aria-label={`Remove ${identity}`} onClick={() => {
+            setLines((current) => current.filter((_, lineIndex) => lineIndex !== index));
+            setLineErrors((errors) => {
+              const next: Record<number, string> = {};
+              Object.entries(errors).forEach(([key, message]) => {
+                const from = Number(key);
+                if (from === index) return;
+                next[from > index ? from - 1 : from] = message;
+              });
+              return next;
+            });
+          }}>×</button>
+        </li>;
+      })}</ul>
+      <div className="mash-steps">
+        <div className="section-heading"><div><div className="eyebrow">Mash steps</div><h3>Configure mash rest order</h3></div>
+          <button type="button" className="secondary dark" onClick={() => { setMashSteps((current) => addMashStep(current)); setMashError(""); }}>Add mash step</button>
+        </div>
+        {mashError && <p className="field-error" role="alert">{mashError}</p>}
+        <ol className="mash-step-list">{mashSteps.map((step, index) => {
+          const stepError = mashStepError(step);
+          return <li key={`mash-${index}`}>
+            <label>Name<input aria-label={`Mash step ${index + 1} name`} value={step.name} onChange={(event) => setMashSteps((current) => editMashStep(current, index, { name: event.target.value }))} /></label>
+            <label>Minutes<input aria-label={`Mash step ${index + 1} duration`} value={step.duration_minutes} onChange={(event) => setMashSteps((current) => editMashStep(current, index, { duration_minutes: event.target.value }))} /></label>
+            <label>Temp °C<input aria-label={`Mash step ${index + 1} temperature`} value={step.temperature_c} onChange={(event) => setMashSteps((current) => editMashStep(current, index, { temperature_c: event.target.value }))} /></label>
+            <div className="mash-step-actions">
+              <button type="button" aria-label={`Move mash step ${index + 1} up`} disabled={index === 0} onClick={() => setMashSteps((current) => orderMashSteps(current, index, index - 1))}>Up</button>
+              <button type="button" aria-label={`Move mash step ${index + 1} down`} disabled={index === mashSteps.length - 1} onClick={() => setMashSteps((current) => orderMashSteps(current, index, index + 1))}>Down</button>
+              <button type="button" aria-label={`Remove mash step ${index + 1}`} onClick={() => setMashSteps((current) => removeMashStep(current, index))}>Remove</button>
+            </div>
+            {stepError && <p className="field-error" role="alert">{stepError}</p>}
+          </li>;
+        })}</ol>
+      </div>
       <form className="design-form" onSubmit={saveRecipe}><label>Recipe name<input name="name" required placeholder="House Pale Ale" /></label><label>Style<input name="style_name" placeholder="American Pale Ale" /></label><label>Equipment<select name="equipment_profile_id" required defaultValue=""><option value="" disabled>Select equipment</option>{equipment.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Batch liters<input name="batch_size_liters" type="number" defaultValue="20" min="0.1" step="0.1" required /></label><label>Mash °C<input name="target_mash_temperature_c" type="number" defaultValue="66.67" min="0" max="100" step="0.01" required /></label><label>Mash minutes<input name="mash_duration_minutes" type="number" defaultValue="60" min="1" max="240" required /></label><label>Boil minutes<input name="boil_duration_minutes" type="number" defaultValue="60" min="0" max="360" required /></label><label>Attenuation<input name="apparent_attenuation" type="number" defaultValue="0.75" min="0" max="1" step="0.01" required /></label><label>CO₂ volumes<input name="target_carbonation_volumes" type="number" defaultValue="2.4" min="0" max="6" step="0.1" required /></label><button className="primary" disabled={busy || lines.length === 0}>Calculate and save version</button></form>
     </section>
     {design && <section className="card calculation-summary" aria-live="polite">
