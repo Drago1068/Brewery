@@ -11,25 +11,23 @@ from sqlalchemy.orm import Session
 
 from brewing_api.application.errors import ConflictError, DomainError, NotFoundError
 from brewing_api.application.events import audit
+from brewing_api.application.phase4.completion import (
+    gravity_change_affects_completion,
+    invalidate_after_fermentation_affecting_evidence,
+)
 from brewing_api.application.phase4.derived_gravity import (
     effective_measurement_leaf,
     latest_derived_gravity,
     recompute_derived_gravity,
 )
+from brewing_api.application.phase4.operations import replay_or_conflict, store_success
 from brewing_api.application.phase4.reminders import (
     satisfy_conditioning_temperature_reminders,
     satisfy_gravity_reminders,
 )
-from brewing_api.application.phase4.completion import (
-    gravity_change_affects_completion,
-    invalidate_after_fermentation_affecting_evidence,
-)
-from brewing_api.application.phase4.operations import replay_or_conflict, store_success
-from brewing_api.application.phase4.sessions import get_fermentation_session
 from brewing_api.application.phase4.time_validation import (
     assert_correction_window,
     classify_late_entry,
-    require_non_paused_for_new_measurement,
     validate_observed_at,
 )
 from brewing_api.domain.fermentation.constants import (
@@ -161,8 +159,9 @@ def _validate_method(measurement_type: str, method: str | None) -> str:
         raise DomainError("Method is required", 422, code="MEASUREMENT_CONTEXT_REQUIRED")
     if measurement_type == "FERMENTATION_GRAVITY" and method not in GRAVITY_METHODS:
         raise DomainError("Unsupported gravity method", 422)
-    if measurement_type in {"FERMENTATION_TEMPERATURE", "CONDITIONING_TEMPERATURE"} and method not in TEMPERATURE_METHODS:
-        raise DomainError("Unsupported temperature method", 422)
+    if measurement_type in {"FERMENTATION_TEMPERATURE", "CONDITIONING_TEMPERATURE"}:
+        if method not in TEMPERATURE_METHODS:
+            raise DomainError("Unsupported temperature method", 422)
     if measurement_type == "FERMENTATION_PH" and method not in PH_METHODS:
         raise DomainError("Unsupported pH method", 422)
     return method
@@ -210,7 +209,9 @@ def serialize_measurement(
     canonical_value = (
         leaf_correction.canonical_value if leaf_correction else measurement.canonical_value
     )
-    canonical_unit = leaf_correction.canonical_unit if leaf_correction else measurement.canonical_unit
+    canonical_unit = (
+        leaf_correction.canonical_unit if leaf_correction else measurement.canonical_unit
+    )
     observed_at = leaf_correction.observed_at if leaf_correction else measurement.observed_at
     conversion_model_id = (
         leaf_correction.conversion_model_id
@@ -275,7 +276,10 @@ def record_measurement(
     session = _lock_session(db, user, session_id)
     if command.expected_revision is not None and session.revision != command.expected_revision:
         raise ConflictError("Stale session revision", code="STALE_REVISION")
-    require_non_paused_for_new_measurement(session)
+    # Slice 2 remediation (F-003): the specification (§18) governs measurement
+    # windows by stage status, including an explicit window for PAUSED stages.
+    # There is no session-level pause prohibition; stage validation below is
+    # the single authority.
     if command.measurement_type not in MEASUREMENT_TYPES:
         raise DomainError("Unsupported measurement type", 422)
     if command.source not in MEASUREMENT_SOURCES:
@@ -476,7 +480,9 @@ def correct_measurement(
             extra={"current_effective_id": str(current_leaf_id)},
         )
 
-    raw_value = command.value if command.value is not None else (leaf.raw_value if leaf else measurement.raw_value)
+    raw_value = command.value
+    if raw_value is None:
+        raw_value = leaf.raw_value if leaf else measurement.raw_value
     raw_unit = command.unit or (leaf.raw_unit if leaf else measurement.raw_unit)
     observed_at = command.observed_at or (leaf.observed_at if leaf else measurement.observed_at)
     method = command.method or (leaf.method if leaf else measurement.method)
@@ -502,11 +508,16 @@ def correct_measurement(
 
     pitch = _pitch_reference(db, session.id)
     stage = _stage_for_session(db, session.id, measurement.stage_instance_id)
+    # Slice 2 remediation (F-004): client-supplied correction timestamps apply
+    # the same strict UTC/offset rules as measurement timestamps (§18); naive
+    # client input is rejected. An omitted observed_at inherits the persisted
+    # leaf value (already validated at original write) with UTC coercion, since
+    # SQLite round-trips timezone-aware instants as naive datetimes.
     observed_at = validate_observed_at(
         observed_at,
         pitched_at=pitch.pitched_at,
         stage=stage,
-        require_explicit_offset=False,
+        require_explicit_offset=command.observed_at is not None,
     )
     method = _validate_method(measurement.measurement_type, method)
     canonical_value, canonical_unit, conversion_model_id = _canonicalize(
@@ -624,7 +635,13 @@ def correct_measurement(
             "correction_of_id": str(current_leaf_id),
         },
     )
-    audit(db, user.id, "FERMENTATION_MEASUREMENT_CORRECTED", "FermentationMeasurementCorrection", session.id)
+    audit(
+        db,
+        user.id,
+        "FERMENTATION_MEASUREMENT_CORRECTED",
+        "FermentationMeasurementCorrection",
+        session.id,
+    )
     db.flush()
     store_success(
         db,

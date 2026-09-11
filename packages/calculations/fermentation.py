@@ -9,7 +9,7 @@ from enum import Enum
 from typing import Literal
 from uuid import UUID
 
-from .brewing import ONE, apparent_attenuation, abv, specific_gravity_to_plato
+from .brewing import ONE, abv, apparent_attenuation
 from .units import fahrenheit_to_celsius
 
 ZERO = Decimal("0")
@@ -48,6 +48,12 @@ class StableGravityEvaluation:
 
 
 def _plato_polynomial(sg: Decimal) -> Decimal:
+    # Slice 2 remediation (F-005): coefficients are identical to the shared
+    # ``specific_gravity_to_plato`` authority (proven by golden equivalence in
+    # ``test_phase4_slice2_remediation.py``). This local form is retained
+    # because the shared authority raises below SG 1.000 while this adapter's
+    # normative domain is SG 0.900-1.300, so unconditional delegation would
+    # change observable results for valid negative-Plato inputs.
     return (
         Decimal("-616.868")
         + Decimal("1111.14") * sg

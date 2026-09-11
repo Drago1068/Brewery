@@ -1,36 +1,40 @@
 import uuid
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, UploadFile, status
 from fastapi.responses import Response
 from pydantic import Field
 
-from brewing_api.presentation.phase4_schemas import Phase4ClosedCommand
+from brewing_api.application.errors import DomainError
 from brewing_api.application.phase4 import (
     actions,
     additions,
     commands,
     completion,
     conditioning,
-    export as phase4_export,
     measurements,
-    media as phase4_media,
-    notes as phase4_notes,
     og_consumption,
     read_models,
     readiness,
     reminders,
-    sessions as phase4_sessions,
     timers,
     transitions,
     waivers,
     yeast,
 )
-from brewing_api.application.phase4.journal import merged_journal_events
-from brewing_api.application.phase4.sessions import (
-    get_fermentation_session as load_fermentation_session,
+from brewing_api.application.phase4 import (
+    export as phase4_export,
+)
+from brewing_api.application.phase4 import (
+    media as phase4_media,
+)
+from brewing_api.application.phase4 import (
+    notes as phase4_notes,
+)
+from brewing_api.application.phase4 import (
+    sessions as phase4_sessions,
 )
 from brewing_api.application.phase4.actions import RecordActionCommand
 from brewing_api.application.phase4.additions import (
@@ -40,16 +44,41 @@ from brewing_api.application.phase4.additions import (
 )
 from brewing_api.application.phase4.completion import CompleteFermentationCommand
 from brewing_api.application.phase4.conditioning import ConditioningCommand
+from brewing_api.application.phase4.journal import merged_journal_events
 from brewing_api.application.phase4.measurements import CorrectionCommand, MeasurementCommand
+from brewing_api.application.phase4.og_consumption import ReconcileOgCommand
 from brewing_api.application.phase4.readiness import AssessReadinessCommand, RecordHandoffCommand
+from brewing_api.application.phase4.sessions import (
+    get_fermentation_session as load_fermentation_session,
+)
 from brewing_api.application.phase4.transitions import SessionCommand
 from brewing_api.application.phase4.waivers import RecordWaiverCommand
 from brewing_api.application.phase4.yeast import YeastEnrichCommand
-from brewing_api.application.phase4.og_consumption import ReconcileOgCommand
 from brewing_api.domain.fermentation.models import FermentationMeasurement
 from brewing_api.presentation.dependencies import CurrentUser, Db
+from brewing_api.presentation.phase4_schemas import Phase4ClosedCommand
 
 router = APIRouter(prefix="/fermentation-sessions", tags=["fermentation"])
+
+
+def _parse_decimal_field(raw: str, field: str) -> Decimal:
+    """Parse a client-supplied numeric string with deterministic 422 semantics.
+
+    Slice 2 remediation (F-002): malformed strings and non-finite values must
+    fail closed as validation errors, never as unhandled ``Decimal``
+    ``InvalidOperation`` (HTTP 500).
+    """
+    try:
+        parsed = Decimal(raw)
+    except InvalidOperation as exc:
+        raise DomainError(
+            f"Invalid numeric value for {field}", 422, code="INVALID_NUMERIC_VALUE"
+        ) from exc
+    if not parsed.is_finite():
+        raise DomainError(
+            f"Invalid numeric value for {field}", 422, code="INVALID_NUMERIC_VALUE"
+        )
+    return parsed
 
 
 class StartFermentationCommand(Phase4ClosedCommand):
@@ -330,7 +359,7 @@ def record_measurement(
         fermentation_session_id,
         MeasurementCommand(
             measurement_type=body.measurement_type,
-            value=Decimal(body.value),
+            value=_parse_decimal_field(body.value, "value"),
             unit=body.unit,
             observed_at=body.observed_at,
             operation_id=body.operation_id,
@@ -339,7 +368,7 @@ def record_measurement(
             method=body.method,
             sample_temperature_c=None
             if body.sample_temperature_c is None
-            else Decimal(body.sample_temperature_c),
+            else _parse_decimal_field(body.sample_temperature_c, "sample_temperature_c"),
             instrument_reference=body.instrument_reference,
             confidence=body.confidence,
             note=body.note,
@@ -370,13 +399,13 @@ def correct_measurement(
             correction_of_id=body.correction_of_id,
             reason=body.reason,
             operation_id=body.operation_id,
-            value=None if body.value is None else Decimal(body.value),
+            value=None if body.value is None else _parse_decimal_field(body.value, "value"),
             unit=body.unit,
             observed_at=body.observed_at,
             method=body.method,
             sample_temperature_c=None
             if body.sample_temperature_c is None
-            else Decimal(body.sample_temperature_c),
+            else _parse_decimal_field(body.sample_temperature_c, "sample_temperature_c"),
             note=body.note,
             expected_revision=body.expected_revision,
         ),
