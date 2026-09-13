@@ -18,6 +18,18 @@ Phase 2 Brewing Core remains the immutable earlier baseline `v0.2.0-phase2`. His
 
 Phase 4 fermentation and conditioning is accepted and formally closed. Phase 5 quality, packaging, and later-phase work, and NAS production deployment, remain unauthorized.
 
+### Current state (canonical default branch)
+
+- GitHub default branch: `phase5a/recipe-editing-completeness`.
+- Canonical head at this decision: `885df59895d70e4134f14565dccc829a8d7a6721`.
+- Legacy `main` head: `bec32cd2bed5897a6e2ea2899cfbf2e94b928d2a`.
+- The canonical and legacy histories are unrelated (different root commits, no
+  merge base); merging, rebasing one onto the other, or force-pushing either is
+  prohibited. See `docs/governance/BICOS_CANONICAL_BRANCH_LINEAGE.md`.
+- Phase 5A specification installed and published on the canonical branch.
+- Deployment is not authorized.
+- Next action: branch-protection / CI policy decision.
+
 ## Repository
 
 ```text
