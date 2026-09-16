@@ -1,5 +1,6 @@
 import os
 import uuid
+from pathlib import Path
 
 if os.environ.get("TEST_USE_POSTGRES") != "1":
     os.environ["DATABASE_URL"] = "sqlite+pysqlite:///./.test-brewing.db"
@@ -67,6 +68,25 @@ def clean_database():
         connection.execute(text("PRAGMA foreign_keys=ON"))
     yield
     reset_rate_limits()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _remove_sqlite_test_residue():
+    """Bounded hygiene: drop sqlite files the sqlite run creates (P3-AC-032)."""
+    yield
+    if os.environ.get("TEST_USE_POSTGRES") == "1":
+        return
+    engine.dispose()
+    for name in (
+        ".test-brewing.db",
+        ".test-brewing.db-journal",
+        ".test-brewing.db-shm",
+        ".test-brewing.db-wal",
+    ):
+        try:
+            Path(name).unlink()
+        except FileNotFoundError:
+            pass
 
 
 @pytest.fixture

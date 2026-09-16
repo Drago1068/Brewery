@@ -13,7 +13,11 @@ import shutil
 import subprocess
 from pathlib import Path
 
-PHASE3_BASELINE_TAG = "v0.3.0-phase3"
+# Immutable accepted Phase 3 baseline commit (peel of the local annotated tag
+# v0.3.0-phase3; recorded in docs/evidence/PHASE_4_FORMAL_SPECIFICATION_ACCEPTANCE.md
+# and docs/specifications/PHASE_4_ENGINEERING_AND_ACCEPTANCE_SPECIFICATION.md).
+# Tied to the commit so evidence checks do not depend on an unpublished tag.
+PHASE3_BASELINE_COMMIT = "39c440f234149e67be6dfae948b33393857a153e"
 PHASE3_HEAD_REVISION = "0003_phase3_brew_day_os"
 PHASE3_MIGRATION_PATHS = (
     "database/migrations/versions/0001_phase1a.py",
@@ -66,14 +70,24 @@ def assert_phase3_migrations_unchanged(root: Path) -> None:
         assert (root / relative).is_file(), f"missing accepted migration {relative}"
     if not (root / ".git").exists() or not shutil.which("git"):
         return
+    baseline_present = subprocess.run(
+        ["git", "cat-file", "-e", f"{PHASE3_BASELINE_COMMIT}^{{commit}}"],
+        cwd=root,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    assert baseline_present.returncode == 0, (
+        f"immutable Phase 3 baseline commit {PHASE3_BASELINE_COMMIT} is unavailable; "
+        "the CI checkout must fetch it (see .github/workflows/ci.yml)"
+    )
     for relative in PHASE3_MIGRATION_PATHS:
         diff = subprocess.check_output(
-            ["git", "diff", PHASE3_BASELINE_TAG, "HEAD", "--", relative],
+            ["git", "diff", PHASE3_BASELINE_COMMIT, "HEAD", "--", relative],
             cwd=root,
             text=True,
             encoding="utf-8",
         )
-        assert diff == "", f"{relative} changed since {PHASE3_BASELINE_TAG}"
+        assert diff == "", f"{relative} changed since Phase 3 baseline {PHASE3_BASELINE_COMMIT}"
 
 
 def assert_phase3_migration_ancestry(root: Path, *, head_revision: str | None = None) -> str:

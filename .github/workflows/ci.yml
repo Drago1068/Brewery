@@ -19,6 +19,15 @@ jobs:
       PYTHONPATH: ${{ github.workspace }}/apps/api:${{ github.workspace }}/packages
     steps:
       - uses: actions/checkout@v4
+      # Evidence tests compare committed migrations/products against the
+      # immutable Phase 3 baseline (39c440f...), which the default shallow
+      # checkout omits. Fetch exactly that reachable baseline object instead of
+      # pulling all branches (including the unrelated legacy-main history), and
+      # fail clearly if the baseline cannot be resolved.
+      - name: Fetch Phase 3 baseline for evidence comparisons
+        run: |
+          git fetch --no-tags origin 39c440f234149e67be6dfae948b33393857a153e
+          git cat-file -e 39c440f234149e67be6dfae948b33393857a153e^{commit}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
