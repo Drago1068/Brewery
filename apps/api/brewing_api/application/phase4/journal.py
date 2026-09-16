@@ -140,9 +140,7 @@ def merged_journal_events(
             )
         ).all()
     )
-    merged = [_normalize_phase3(row) for row in phase3] + [
-        _normalize_phase4(row) for row in phase4
-    ]
+    merged = [_normalize_phase3(row) for row in phase3] + [_normalize_phase4(row) for row in phase4]
     merged.sort(key=_sort_key)
     return [serialize_journal_entry(entry) for entry in merged]
 

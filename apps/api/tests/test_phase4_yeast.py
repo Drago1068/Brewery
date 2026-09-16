@@ -1,4 +1,5 @@
 """Slice 6 yeast provenance and pitch history (API + domain, SQLite)."""
+# ruff: noqa: F811 - test parameters intentionally shadow the fixture import
 
 from __future__ import annotations
 

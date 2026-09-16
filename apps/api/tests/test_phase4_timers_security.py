@@ -1,4 +1,5 @@
 """Slice 4 security and PostgreSQL concurrency for timers/reminders."""
+# ruff: noqa: F811 - test parameters intentionally shadow the fixture import
 
 from __future__ import annotations
 
@@ -8,16 +9,15 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from phase4_fixtures import started_fermentation  # noqa: F401
 from sqlalchemy import select
 
 from brewing_api.application.auth import password_hash
 from brewing_api.application.errors import ConflictError
 from brewing_api.application.phase4.reminders import acknowledge_reminder
-from brewing_api.domain.fermentation.models import FermentationReminder, FermentationSession
+from brewing_api.domain.fermentation.models import FermentationReminder
 from brewing_api.domain.identity.models import User
 from brewing_api.platform.database import SessionLocal
-
-from phase4_fixtures import started_fermentation  # noqa: F401
 
 pytestmark = pytest.mark.integration
 

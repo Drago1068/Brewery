@@ -1,4 +1,5 @@
 """Slice 3 PostgreSQL concurrency for lifecycle commands."""
+# ruff: noqa: F811 - test parameters intentionally shadow the fixture import
 
 from __future__ import annotations
 
@@ -6,23 +7,23 @@ import os
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from decimal import Decimal
-from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi.testclient import TestClient
+from phase4_fixtures import started_fermentation  # noqa: F401
+from phase4_lifecycle_helpers import seed_stable_gravity_measurements
 from sqlalchemy import select
 
 from brewing_api.application.errors import ConflictError
-from brewing_api.application.phase4.completion import CompleteFermentationCommand, complete_fermentation
+from brewing_api.application.phase4.completion import (
+    CompleteFermentationCommand,
+    complete_fermentation,
+)
 from brewing_api.application.phase4.measurements import MeasurementCommand, record_measurement
 from brewing_api.domain.fermentation.models import FermentationSession
 from brewing_api.domain.identity.models import User
-from brewing_api.main import app
 from brewing_api.platform.database import SessionLocal
-
-from phase4_fixtures import started_fermentation  # noqa: F401
-from phase4_lifecycle_helpers import seed_stable_gravity_measurements
 
 pytestmark = [
     pytest.mark.integration,
@@ -82,7 +83,7 @@ def _race_complete_vs_measurement(
                         measurement_type="FERMENTATION_GRAVITY",
                         value=Decimal("1.020"),
                         unit="SG",
-                        observed_at=datetime.now(timezone.utc),
+                        observed_at=datetime.now(UTC),
                         operation_id="race-measure-b",
                         stage_instance_id=stage_id,
                         method="HYDROMETER",
@@ -102,7 +103,6 @@ def _race_complete_vs_measurement(
 
 
 def test_concurrent_complete_vs_measurement_one_winner(started_fermentation):
-    client = started_fermentation["client"]
     session_id = uuid.UUID(started_fermentation["fermentation_session_id"])
     stage_id = uuid.UUID(started_fermentation["active_stage_id"])
     seed_stable_gravity_measurements(

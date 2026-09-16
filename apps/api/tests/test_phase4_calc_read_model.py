@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -13,6 +13,7 @@ from calculations.fermentation import (
     try_abv_percent,
     try_apparent_attenuation_ratio,
 )
+from phase4_fixtures import _measurement
 from sqlalchemy import select
 
 from brewing_api.application.auth import password_hash
@@ -21,7 +22,6 @@ from brewing_api.domain.fermentation.models import FermentationDerivedGravitySna
 from brewing_api.domain.identity.models import User
 from brewing_api.platform.database import SessionLocal
 from brewing_api.platform.time import utc_now
-from phase4_fixtures import _measurement
 
 pytestmark = pytest.mark.integration
 
@@ -32,7 +32,7 @@ def _gravity_payload(
     value: str,
     observed_at: datetime | None = None,
 ) -> dict:
-    when = observed_at or datetime.now(timezone.utc)
+    when = observed_at or datetime.now(UTC)
     return {
         "operation_id": str(uuid.uuid4()),
         "measurement_type": "FERMENTATION_GRAVITY",
@@ -105,20 +105,19 @@ def test_ac021_domain_goldens_attenuation_progress_abv():
     """P4-AC-021 domain goldens for attenuation / progress / ABV adapters."""
     assert try_apparent_attenuation_ratio(Decimal("1.050"), Decimal("1.010")) == Decimal("0.8")
     assert (
-        try_apparent_attenuation_ratio(Decimal("1.050"), Decimal("0.990"))
-        == CALCULATION_UNDEFINED
+        try_apparent_attenuation_ratio(Decimal("1.050"), Decimal("0.990")) == CALCULATION_UNDEFINED
     )
     assert try_apparent_attenuation_ratio(None, Decimal("1.010")) == CALCULATION_UNDEFINED
 
-    assert fermentation_progress(
-        Decimal("1.050"), Decimal("1.030"), Decimal("1.010")
-    ) == Decimal("0.5")
-    assert fermentation_progress(
-        Decimal("1.050"), Decimal("1.060"), Decimal("1.010")
-    ) == Decimal("0")
-    assert fermentation_progress(
-        Decimal("1.050"), Decimal("1.000"), Decimal("1.010")
-    ) == Decimal("1")
+    assert fermentation_progress(Decimal("1.050"), Decimal("1.030"), Decimal("1.010")) == Decimal(
+        "0.5"
+    )
+    assert fermentation_progress(Decimal("1.050"), Decimal("1.060"), Decimal("1.010")) == Decimal(
+        "0"
+    )
+    assert fermentation_progress(Decimal("1.050"), Decimal("1.000"), Decimal("1.010")) == Decimal(
+        "1"
+    )
     assert (
         fermentation_progress(Decimal("1.050"), Decimal("1.030"), Decimal("1.050"))
         == CALCULATION_UNDEFINED
@@ -169,8 +168,7 @@ def test_ac021_abv_exposed_on_session_read_model(started_fermentation):
         snap = db.scalar(
             select(FermentationDerivedGravitySnapshot)
             .where(
-                FermentationDerivedGravitySnapshot.fermentation_session_id
-                == uuid.UUID(session_id)
+                FermentationDerivedGravitySnapshot.fermentation_session_id == uuid.UUID(session_id)
             )
             .order_by(FermentationDerivedGravitySnapshot.evaluated_at.desc())
         )
@@ -190,9 +188,7 @@ def test_abv_undefined_when_og_unknown(completed_brew_without_og):
     body = started.json()
     assert body["og_consumption"]["og_availability"] == "UNKNOWN"
     session_id = body["id"]
-    active = next(
-        s for s in body["stages"] if s["canonical_stage_type"] == "ACTIVE_FERMENTATION"
-    )
+    active = next(s for s in body["stages"] if s["canonical_stage_type"] == "ACTIVE_FERMENTATION")
     started_ctx = {
         "client": client,
         "fermentation_session_id": session_id,
@@ -253,9 +249,7 @@ def test_abv_recomputes_after_og_reconcile(completed_brew_with_pitch):
     assert started.status_code == 201
     session_id = started.json()["id"]
     active = next(
-        s
-        for s in started.json()["stages"]
-        if s["canonical_stage_type"] == "ACTIVE_FERMENTATION"
+        s for s in started.json()["stages"] if s["canonical_stage_type"] == "ACTIVE_FERMENTATION"
     )
     started_ctx = {
         "client": client,
@@ -308,9 +302,12 @@ def test_calc_read_model_cross_owner_404(started_fermentation, client):
         f"/api/v1/fermentation-sessions/{session_id}/measurements",
         json=_gravity_payload(started_fermentation, value="1.018"),
     )
-    assert owner_client.get(f"/api/v1/fermentation-sessions/{session_id}").json()[
-        "derived_gravity"
-    ]["abv_percent"] is not None
+    assert (
+        owner_client.get(f"/api/v1/fermentation-sessions/{session_id}").json()["derived_gravity"][
+            "abv_percent"
+        ]
+        is not None
+    )
 
     with SessionLocal() as db:
         db.add(

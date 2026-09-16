@@ -1,11 +1,14 @@
 """Phase 4 Slice 3 lifecycle, completion, and invalidation tests."""
+# ruff: noqa: F811 - test parameters intentionally shadow the fixture import
 
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 
 import pytest
+from phase4_fixtures import started_fermentation  # noqa: F401
+from phase4_lifecycle_helpers import complete_fermentation, record_stable_gravities
 from sqlalchemy import select
 
 from brewing_api.domain.fermentation.models import (
@@ -14,9 +17,6 @@ from brewing_api.domain.fermentation.models import (
 )
 from brewing_api.platform.database import SessionLocal
 from brewing_api.platform.time import utc_now
-
-from phase4_fixtures import started_fermentation  # noqa: F401
-from phase4_lifecycle_helpers import complete_fermentation, record_stable_gravities
 
 pytestmark = pytest.mark.integration
 
@@ -229,13 +229,15 @@ def test_complete_fermentation_idempotency_replay(started_fermentation):
         client, session_id=session_id, revision=revision, operation_id=operation_id
     )
     assert second.status_code == 200, second.text
-    assert second.json()["completion_assessment"]["id"] == first.json()["completion_assessment"]["id"]
+    assert (
+        second.json()["completion_assessment"]["id"] == first.json()["completion_assessment"]["id"]
+    )
 
 
 def test_complete_override_with_single_gravity(started_fermentation):
     client = started_fermentation["client"]
     session_id = started_fermentation["fermentation_session_id"]
-    observed_at = datetime.now(timezone.utc).isoformat()
+    observed_at = datetime.now(UTC).isoformat()
     gravity = client.post(
         f"/api/v1/fermentation-sessions/{session_id}/measurements",
         json={

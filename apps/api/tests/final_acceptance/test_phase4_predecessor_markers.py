@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 REPO = Path(__file__).resolve().parents[4]
 
 
@@ -39,10 +37,6 @@ def test_fa_fr087_migration_head_constant_matches_candidate():
     text = migration.read_text(encoding="utf-8")
     assert 'EXPECTED_REVISION = "0015_phase4_journal_media_export"' in text
     head_file = (
-        REPO
-        / "database"
-        / "migrations"
-        / "versions"
-        / "0015_phase4_journal_media_export.py"
+        REPO / "database" / "migrations" / "versions" / "0015_phase4_journal_media_export.py"
     )
     assert head_file.is_file()

@@ -62,8 +62,7 @@ def seed_stable_gravity_measurements(
                 method="HYDROMETER",
                 sample_temperature_c=Decimal("20.00"),
                 validation_status="ACCEPTED",
-                late_entry=_coerce_aware(observed_at)
-                < _coerce_aware(session.started_at or now),
+                late_entry=_coerce_aware(observed_at) < _coerce_aware(session.started_at or now),
                 operation_id=f"seed-gravity-{index}-{uuid.uuid4()}",
                 schema_version=MEASUREMENT_SCHEMA_VERSION,
             )

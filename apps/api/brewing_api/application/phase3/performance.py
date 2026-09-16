@@ -82,11 +82,7 @@ def describe_benchmark_dataset(db: Session, session_id: uuid.UUID) -> dict:
         db.scalars(select(BrewStage).where(BrewStage.brew_session_id == session_id)).all()
     )
     canonical = sorted(
-        {
-            item.canonical_stage_type or item.name
-            for item in stages
-            if item.occurrence_number == 1
-        }
+        {item.canonical_stage_type or item.name for item in stages if item.occurrence_number == 1}
     )
     repeats = sum(1 for item in stages if item.occurrence_number > 1)
     timers = db.scalar(
@@ -523,9 +519,7 @@ def _isolated_benchmark_engine() -> tuple[Engine, dict, Callable[[], None]]:
     return engine, env, engine.dispose
 
 
-def run_isolated_performance_harness(
-    samples: int | None = None, warmup: int | None = None
-) -> dict:
+def run_isolated_performance_harness(samples: int | None = None, warmup: int | None = None) -> dict:
     engine, env_info, cleanup = _isolated_benchmark_engine()
     try:
         factory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -770,9 +764,7 @@ def session_fingerprint(db: Session, session_id: uuid.UUID | str) -> dict:
     sid = session_id if isinstance(session_id, uuid.UUID) else uuid.UUID(str(session_id))
     return {
         "timers": db.scalar(
-            select(func.count())
-            .select_from(BrewTimer)
-            .where(BrewTimer.brew_session_id == sid)
+            select(func.count()).select_from(BrewTimer).where(BrewTimer.brew_session_id == sid)
         ),
         "notes": db.scalar(
             select(func.count()).select_from(BrewNote).where(BrewNote.brew_session_id == sid)

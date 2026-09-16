@@ -7,6 +7,7 @@ from datetime import timedelta
 from io import BytesIO
 
 import pytest
+from phase4_lifecycle_helpers import reach_fermentation_complete, skip_conditioning
 from PIL import Image
 from sqlalchemy import func, select
 
@@ -22,7 +23,6 @@ from brewing_api.domain.fermentation.models import (
 from brewing_api.domain.identity.models import User
 from brewing_api.platform.database import SessionLocal
 from brewing_api.platform.time import utc_now
-from phase4_lifecycle_helpers import reach_fermentation_complete, skip_conditioning
 
 pytestmark = pytest.mark.integration
 
@@ -129,9 +129,7 @@ def test_fr063_closed_vocabulary_constant(started_fermentation):
     assert "FERMENTATION_SESSION_STARTED" in types
     export = client.get(f"/api/v1/fermentation-sessions/{session_id}/export?format=json")
     assert export.status_code == 200
-    export_types = {
-        item["event_type"] for item in export.json()["document"]["journal"]
-    }
+    export_types = {item["event_type"] for item in export.json()["document"]["journal"]}
     assert "FERMENTATION_SESSION_STARTED" in export_types
 
 
@@ -270,9 +268,9 @@ def test_ac052_malformed_media_rejected(started_fermentation, tmp_path, monkeypa
     before = 0
     with SessionLocal() as db:
         before = db.scalar(
-            select(func.count()).select_from(FermentationAttachment).where(
-                FermentationAttachment.fermentation_session_id == uuid.UUID(session_id)
-            )
+            select(func.count())
+            .select_from(FermentationAttachment)
+            .where(FermentationAttachment.fermentation_session_id == uuid.UUID(session_id))
         )
     rejected = client.post(
         f"/api/v1/fermentation-sessions/{session_id}/attachments",
@@ -282,9 +280,9 @@ def test_ac052_malformed_media_rejected(started_fermentation, tmp_path, monkeypa
     assert rejected.status_code in {415, 422}, rejected.text
     with SessionLocal() as db:
         after = db.scalar(
-            select(func.count()).select_from(FermentationAttachment).where(
-                FermentationAttachment.fermentation_session_id == uuid.UUID(session_id)
-            )
+            select(func.count())
+            .select_from(FermentationAttachment)
+            .where(FermentationAttachment.fermentation_session_id == uuid.UUID(session_id))
         )
     assert after == before
 
@@ -337,9 +335,7 @@ def test_fr064_note_and_media_happy_path(started_fermentation, tmp_path, monkeyp
     listed = client.get(f"/api/v1/fermentation-sessions/{session_id}/attachments")
     assert listed.status_code == 200
     assert any(item["id"] == attachment_id for item in listed.json()["items"])
-    fetched = client.get(
-        f"/api/v1/fermentation-sessions/{session_id}/attachments/{attachment_id}"
-    )
+    fetched = client.get(f"/api/v1/fermentation-sessions/{session_id}/attachments/{attachment_id}")
     assert fetched.status_code == 200
     assert fetched.headers["content-type"] == "image/jpeg"
     assert fetched.content[:3] == b"\xff\xd8\xff"
@@ -375,9 +371,7 @@ def test_fr065_export_json_html(started_fermentation):
             "expected_revision": _revision(client, session_id),
         },
     )
-    json_export = client.get(
-        f"/api/v1/fermentation-sessions/{session_id}/export?format=json"
-    )
+    json_export = client.get(f"/api/v1/fermentation-sessions/{session_id}/export?format=json")
     assert json_export.status_code == 200
     document = json_export.json()["document"]
     assert "journal" in document
@@ -390,9 +384,7 @@ def test_fr065_export_json_html(started_fermentation):
     assert "completion_assessment" in document
     assert "packaging_readiness_handoff" in document
 
-    html_export = client.get(
-        f"/api/v1/fermentation-sessions/{session_id}/export?format=html"
-    )
+    html_export = client.get(f"/api/v1/fermentation-sessions/{session_id}/export?format=html")
     assert html_export.status_code == 200
     body = html_export.json()
     assert body["format"] == "html"
@@ -437,7 +429,9 @@ def test_idempotent_note_replay(started_fermentation):
     assert first.json()["id"] == second.json()["id"]
     with SessionLocal() as db:
         count = db.scalar(
-            select(func.count()).select_from(FermentationNote).where(
+            select(func.count())
+            .select_from(FermentationNote)
+            .where(
                 FermentationNote.fermentation_session_id == uuid.UUID(session_id),
                 FermentationNote.operation_id == operation_id,
             )

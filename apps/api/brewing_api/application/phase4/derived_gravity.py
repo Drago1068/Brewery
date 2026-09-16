@@ -5,8 +5,8 @@ from decimal import Decimal
 
 from calculations.fermentation import (
     CALCULATION_UNDEFINED,
-    GravityLeaf,
     STABLE_GRAVITY_SCHEMA_VERSION,
+    GravityLeaf,
     final_gravity_from_leaves,
     stable_gravity_evaluator,
     try_abv_percent,
@@ -29,7 +29,11 @@ def _effective_values(
     correction: FermentationMeasurementCorrection | None,
 ) -> tuple[Decimal, str, str | None]:
     if correction is None:
-        return measurement.canonical_value, measurement.canonical_unit, measurement.conversion_model_id
+        return (
+            measurement.canonical_value,
+            measurement.canonical_unit,
+            measurement.conversion_model_id,
+        )
     return correction.canonical_value, correction.canonical_unit, correction.conversion_model_id
 
 
@@ -79,7 +83,9 @@ def effective_gravity_leaves(db: Session, session_id: uuid.UUID) -> list[Gravity
     return leaves
 
 
-def recompute_derived_gravity(db: Session, session_id: uuid.UUID) -> FermentationDerivedGravitySnapshot:
+def recompute_derived_gravity(
+    db: Session, session_id: uuid.UUID
+) -> FermentationDerivedGravitySnapshot:
     leaves = effective_gravity_leaves(db, session_id)
     evaluation = stable_gravity_evaluator(leaves)
     og_row = db.scalar(
@@ -96,18 +102,12 @@ def recompute_derived_gravity(db: Session, session_id: uuid.UUID) -> Fermentatio
         if final_fg is not None
         else CALCULATION_UNDEFINED
     )
-    abv = (
-        try_abv_percent(og, final_fg)
-        if final_fg is not None
-        else CALCULATION_UNDEFINED
-    )
+    abv = try_abv_percent(og, final_fg) if final_fg is not None else CALCULATION_UNDEFINED
     snapshot = FermentationDerivedGravitySnapshot(
         fermentation_session_id=session_id,
         stable_gravity_status=evaluation.status.value,
         final_gravity_sg=final_fg,
-        apparent_attenuation_ratio=None
-        if attenuation == CALCULATION_UNDEFINED
-        else attenuation,
+        apparent_attenuation_ratio=None if attenuation == CALCULATION_UNDEFINED else attenuation,
         abv_percent=None if abv == CALCULATION_UNDEFINED else abv,
         spread=evaluation.spread,
         window_measurement_ids=[str(item) for item in evaluation.window_measurement_ids],

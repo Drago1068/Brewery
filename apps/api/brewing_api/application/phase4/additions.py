@@ -126,7 +126,7 @@ def serialize_addition_event(
     unit = getattr(leaf, "actual_unit", event.actual_unit)
     occurred = getattr(leaf, "occurred_at", None)
     if occurred is None and hasattr(leaf, "actual_executed_at"):
-        occurred = getattr(leaf, "actual_executed_at")
+        occurred = leaf.actual_executed_at
     if occurred is None:
         occurred = event.occurred_at
     note = getattr(leaf, "note", event.note)
@@ -158,9 +158,7 @@ def serialize_addition_event(
         "inventory_effect": event.inventory_effect,
         "operation_id": event.operation_id,
         "schema_version": event.schema_version,
-        "current_correction_id": None
-        if leaf is event
-        else str(leaf.id),
+        "current_correction_id": None if leaf is event else str(leaf.id),
     }
 
 
@@ -219,9 +217,9 @@ def inventory_transaction_count(db: Session) -> int:
 def inventory_consumption_count(db: Session) -> int:
     return int(
         db.scalar(
-            select(func.count()).select_from(InventoryTransaction).where(
-                InventoryTransaction.transaction_type == "CONSUMPTION"
-            )
+            select(func.count())
+            .select_from(InventoryTransaction)
+            .where(InventoryTransaction.transaction_type == "CONSUMPTION")
         )
         or 0
     )
@@ -829,7 +827,9 @@ def correct_addition(
         original_addition_event_id=original.id,
         correction_of_id=leaf.id,
         execution_status=new_status,
-        actual_quantity=current_qty if new_status == "SKIPPED" else (command.quantity or current_qty),
+        actual_quantity=current_qty
+        if new_status == "SKIPPED"
+        else (command.quantity or current_qty),
         actual_unit=current_unit if new_status == "SKIPPED" else (command.unit or current_unit),
         occurred_at=None
         if new_status == "SKIPPED"

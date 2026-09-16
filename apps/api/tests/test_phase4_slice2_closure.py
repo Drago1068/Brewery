@@ -1,4 +1,5 @@
 """Slice 2 closure: PostgreSQL interleaving, late entry, recovery."""
+# ruff: noqa: F811 - test parameters intentionally shadow the fixture import
 
 from __future__ import annotations
 
@@ -6,25 +7,23 @@ import os
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
+from phase4_fixtures import started_fermentation  # noqa: F401
 from sqlalchemy import select
 
 from brewing_api.application.errors import ConflictError
 from brewing_api.application.phase4.measurements import (
     CorrectionCommand,
-    MeasurementCommand,
     correct_measurement,
-    record_measurement,
 )
 from brewing_api.domain.fermentation.models import (
     FermentationJournalEvent,
     FermentationMeasurement,
     FermentationMeasurementCorrection,
-    FermentationSession,
     FermentationStageInstance,
     FermentationYeastPitchReference,
 )
@@ -32,8 +31,6 @@ from brewing_api.domain.identity.models import User
 from brewing_api.main import app
 from brewing_api.platform.database import SessionLocal
 from brewing_api.platform.time import utc_now
-
-from phase4_fixtures import started_fermentation  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
@@ -48,7 +45,7 @@ _CORRECTION_REASON = "Corrected hydrometer reading after reviewing lab notes fro
 
 
 def _create_gravity(client, started: dict) -> dict:
-    observed_at = datetime.now(timezone.utc).isoformat()
+    observed_at = datetime.now(UTC).isoformat()
     response = client.post(
         f"/api/v1/fermentation-sessions/{started['fermentation_session_id']}/measurements",
         json={
@@ -196,7 +193,9 @@ def test_late_entry_on_completed_stage(started_fermentation):
                 FermentationYeastPitchReference.fermentation_session_id == ferm_id
             )
         )
-        stage = db.get(FermentationStageInstance, uuid.UUID(started_fermentation["active_stage_id"]))
+        stage = db.get(
+            FermentationStageInstance, uuid.UUID(started_fermentation["active_stage_id"])
+        )
         assert pitch is not None and stage is not None
         now = utc_now()
         pitched_at = now - timedelta(hours=3)
@@ -232,7 +231,9 @@ def test_late_entry_window_closed_rejects(started_fermentation):
     session_id = started_fermentation["fermentation_session_id"]
     now = utc_now()
     with SessionLocal() as db:
-        stage = db.get(FermentationStageInstance, uuid.UUID(started_fermentation["active_stage_id"]))
+        stage = db.get(
+            FermentationStageInstance, uuid.UUID(started_fermentation["active_stage_id"])
+        )
         assert stage is not None
         stage.status = "COMPLETED"
         stage.first_started_at = now - timedelta(hours=30)
@@ -263,7 +264,7 @@ def test_recovery_reload_after_new_test_client(started_fermentation):
     client = started_fermentation["client"]
     session_id = started_fermentation["fermentation_session_id"]
     operation_id = "recovery-meas-1"
-    observed_at = datetime.now(timezone.utc).isoformat()
+    observed_at = datetime.now(UTC).isoformat()
     created = client.post(
         f"/api/v1/fermentation-sessions/{session_id}/measurements",
         json={
@@ -315,7 +316,7 @@ def test_stale_revision_rejects_second_measurement(started_fermentation):
     session_id = started_fermentation["fermentation_session_id"]
     details = client.get(f"/api/v1/fermentation-sessions/{session_id}").json()
     revision = details["revision"]
-    observed_at = datetime.now(timezone.utc).isoformat()
+    observed_at = datetime.now(UTC).isoformat()
     first = client.post(
         f"/api/v1/fermentation-sessions/{session_id}/measurements",
         json={

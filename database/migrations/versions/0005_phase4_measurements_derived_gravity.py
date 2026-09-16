@@ -78,10 +78,11 @@ def upgrade() -> None:
         ),
         sa.Column("available_at_original_session_completion", sa.Boolean()),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("id", "fermentation_session_id", name="uq_fermentation_measurement_session"),
+        sa.UniqueConstraint(
+            "id", "fermentation_session_id", name="uq_fermentation_measurement_session"),
         sa.ForeignKeyConstraint(
             ["stage_instance_id", "fermentation_session_id"],
-            ["fermentation_stage_instances.id", "fermentation_stage_instances.fermentation_session_id"],
+            ["fermentation_stage_instances.id", "fermentation_stage_instances.fermentation_session_id"],  # noqa: E501
             name="fk_fermentation_measurement_stage_session",
         ),
     )
@@ -137,7 +138,8 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("correction_of_id", name="uq_fermentation_measurement_correction_leaf"),
-        sa.UniqueConstraint("id", "fermentation_session_id", name="uq_fermentation_correction_session"),
+        sa.UniqueConstraint(
+            "id", "fermentation_session_id", name="uq_fermentation_correction_session"),
     )
     op.create_index(
         "ix_fermentation_measurement_corrections_session_id",

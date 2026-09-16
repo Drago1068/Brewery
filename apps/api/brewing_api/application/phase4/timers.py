@@ -83,9 +83,7 @@ def project_timers(db: Session, session_id: uuid.UUID) -> list[FermentationTimer
     now = utc_now()
     timers = list(
         db.scalars(
-            select(FermentationTimer).where(
-                FermentationTimer.fermentation_session_id == session_id
-            )
+            select(FermentationTimer).where(FermentationTimer.fermentation_session_id == session_id)
         ).all()
     )
     for timer in timers:
@@ -167,7 +165,13 @@ def start_auxiliary_timer(
         "expected_revision": expected_revision,
     }
     replay = replay_or_conflict(
-        db, user.id, "StartAuxiliaryTimer", "FermentationSession", session_id, operation_id, document
+        db,
+        user.id,
+        "StartAuxiliaryTimer",
+        "FermentationSession",
+        session_id,
+        operation_id,
+        document,
     )
     if replay and replay.result_resource_id:
         found = db.get(FermentationTimer, replay.result_resource_id)

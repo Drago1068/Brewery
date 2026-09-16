@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -19,7 +19,6 @@ from brewing_api.presentation.phase4_schemas import (
     phase4_closed_command_models,
 )
 from brewing_api.presentation.routes import fermentation_sessions as routes
-
 
 # Concrete closed JSON command schemas (multipart media upload excluded — Form, not JSON body).
 EXPECTED_CLOSED_SCHEMA_NAMES = frozenset(
@@ -72,9 +71,7 @@ def test_ac067_unknown_field_on_start_conditioning(started_fermentation):
 
     with SessionLocal() as db:
         ops_before = db.scalar(select(func.count()).select_from(FermentationOperation)) or 0
-        journal_before = db.scalar(
-            select(func.count()).select_from(FermentationJournalEvent)
-        ) or 0
+        journal_before = db.scalar(select(func.count()).select_from(FermentationJournalEvent)) or 0
 
     response = client.post(
         f"/api/v1/fermentation-sessions/{session_id}/commands/pause",
@@ -97,9 +94,7 @@ def test_ac067_unknown_field_on_start_conditioning(started_fermentation):
 
     with SessionLocal() as db:
         ops_after = db.scalar(select(func.count()).select_from(FermentationOperation)) or 0
-        journal_after = db.scalar(
-            select(func.count()).select_from(FermentationJournalEvent)
-        ) or 0
+        journal_after = db.scalar(select(func.count()).select_from(FermentationJournalEvent)) or 0
     assert ops_after == ops_before
     assert journal_after == journal_before
 
@@ -119,7 +114,7 @@ def test_ac067_unknown_field_on_measurement_mixed_with_valid(
             "measurement_type": "FERMENTATION_TEMPERATURE",
             "value": "18.5",
             "unit": "C",
-            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "observed_at": datetime.now(UTC).isoformat(),
             "stage_instance_id": stage_id,
             "expected_revision": revision,
             "status": "ACTIVE",
@@ -149,7 +144,6 @@ def test_missing_required_field_is_not_unknown_field(started_fermentation):
 def test_invalid_type_is_not_unknown_field(started_fermentation):
     client = started_fermentation["client"]
     session_id = started_fermentation["fermentation_session_id"]
-    detail = client.get(f"/api/v1/fermentation-sessions/{session_id}")
     response = client.post(
         f"/api/v1/fermentation-sessions/{session_id}/commands/pause",
         json={
@@ -171,7 +165,7 @@ def test_invalid_enum_action_is_not_unknown_field(started_fermentation):
         json={
             "operation_id": str(uuid.uuid4()),
             "action_type": "NOT_A_REAL_ACTION",
-            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "occurred_at": datetime.now(UTC).isoformat(),
             "expected_revision": revision,
         },
     )

@@ -17,7 +17,6 @@ from brewing_api.domain.fermentation.models import (
 )
 from brewing_api.platform.database import SessionLocal
 from brewing_api.platform.time import utc_now
-
 from final_acceptance._helpers import fresh_authenticated_client, record_temperature
 
 pytestmark = pytest.mark.integration

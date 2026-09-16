@@ -1,4 +1,5 @@
 """Slice 13 — ListSessions compatibility for FRONTEND_E2E navigation."""
+# ruff: noqa: F811 - test parameters intentionally shadow the fixture import
 
 from __future__ import annotations
 

@@ -75,9 +75,7 @@ def _parse_decimal_field(raw: str, field: str) -> Decimal:
             f"Invalid numeric value for {field}", 422, code="INVALID_NUMERIC_VALUE"
         ) from exc
     if not parsed.is_finite():
-        raise DomainError(
-            f"Invalid numeric value for {field}", 422, code="INVALID_NUMERIC_VALUE"
-        )
+        raise DomainError(f"Invalid numeric value for {field}", 422, code="INVALID_NUMERIC_VALUE")
     return parsed
 
 
@@ -908,9 +906,7 @@ def acknowledge_reminder(
 
 
 @router.post("/{session_id}/notes", status_code=status.HTTP_201_CREATED)
-def add_note(
-    session_id: uuid.UUID, body: CreateNoteCommand, user: CurrentUser, db: Db
-) -> dict:
+def add_note(session_id: uuid.UUID, body: CreateNoteCommand, user: CurrentUser, db: Db) -> dict:
     note = phase4_notes.create_note(
         db,
         user,
@@ -979,8 +975,5 @@ def get_journal(session_id: uuid.UUID, user: CurrentUser, db: Db) -> dict:
 
 
 @router.get("/{session_id}/export")
-def export_session(
-    session_id: uuid.UUID, user: CurrentUser, db: Db, format: str = "json"
-) -> dict:
+def export_session(session_id: uuid.UUID, user: CurrentUser, db: Db, format: str = "json") -> dict:
     return phase4_export.export_session(db, user, session_id, format=format)
-

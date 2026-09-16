@@ -16,7 +16,10 @@ from brewing_api.application.phase4.child_effects import (
     pause_session_timers,
     resume_session_timers,
 )
-from brewing_api.application.phase4.completion import _invalidate_current_assessments, _invalidate_current_handoff
+from brewing_api.application.phase4.completion import (
+    _invalidate_current_assessments,
+    _invalidate_current_handoff,
+)
 from brewing_api.application.phase4.lifecycle import assert_command_allowed
 from brewing_api.application.phase4.operations import replay_or_conflict, store_success
 from brewing_api.application.phase4.readiness import current_handoff
@@ -331,7 +334,7 @@ def close_fermentation_session(
     session_id: uuid.UUID,
     command: SessionCommand,
 ) -> FermentationSession:
-    """CloseFermentationSession — require current READY/READY_WITH_WAIVERS handoff (§9.4 / FR-022)."""
+    """CloseFermentationSession — require current READY/READY_WITH_WAIVERS handoff (§9.4 / FR-022)."""  # noqa: E501
     get_fermentation_session(db, user, session_id)
     document = {
         "command_name": "CloseFermentationSession",

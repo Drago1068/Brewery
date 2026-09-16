@@ -860,7 +860,9 @@ def correct_measurement(
     if command.unit != expected_unit:
         raise DomainError(f"Correction must use unit {expected_unit}")
     if session.status in {"COMPLETED", "ABORTED"} and session.completed_at:
-        if _aware(utc_now()) > _aware(session.completed_at or session.aborted_at) + timedelta(days=30):
+        if _aware(utc_now()) > _aware(session.completed_at or session.aborted_at) + timedelta(
+            days=30
+        ):
             raise ConflictError("Late entry window has closed", code="LATE_ENTRY_WINDOW_CLOSED")
     context = _measurement_context(command)
     correction = Measurement(

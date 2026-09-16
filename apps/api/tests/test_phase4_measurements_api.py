@@ -1,20 +1,16 @@
+# ruff: noqa: F811 - test parameters intentionally shadow the fixture import
+
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from datetime import datetime, timezone
-
-import pytest
+from phase4_fixtures import completed_brew_with_pitch, started_fermentation  # noqa: F401
 from sqlalchemy import select
 
 from brewing_api.domain.fermentation.models import (
-    FermentationDerivedGravitySnapshot,
     FermentationMeasurement,
     FermentationMeasurementCorrection,
 )
 from brewing_api.platform.database import SessionLocal
-from brewing_api.platform.time import utc_now
-
-from phase4_fixtures import completed_brew_with_pitch, started_fermentation  # noqa: F401
 
 
 def _gravity_payload(
@@ -24,7 +20,7 @@ def _gravity_payload(
     operation_id: str | None = None,
     observed_at: datetime | None = None,
 ) -> dict:
-    when = observed_at or datetime.now(timezone.utc)
+    when = observed_at or datetime.now(UTC)
     return {
         "operation_id": operation_id or str(uuid.uuid4()),
         "measurement_type": "FERMENTATION_GRAVITY",
@@ -60,7 +56,7 @@ def test_measurement_idempotency_replay_and_conflict(started_fermentation):
     client = started_fermentation["client"]
     session_id = started_fermentation["fermentation_session_id"]
     operation_id = "meas-op-1"
-    observed_at = datetime.now(timezone.utc)
+    observed_at = datetime.now(UTC)
     first = client.post(
         f"/api/v1/fermentation-sessions/{session_id}/measurements",
         json=_gravity_payload(

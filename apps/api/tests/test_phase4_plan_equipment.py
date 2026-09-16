@@ -1,4 +1,5 @@
 """Slice 9 — PLAN_EQUIPMENT_CLOSURE (P4-FR-011 / AC-028,049,064 / ADV-029,039)."""
+# ruff: noqa: F811 - test parameters intentionally shadow the fixture import
 
 from __future__ import annotations
 
@@ -172,7 +173,9 @@ def test_adv039_schedule_included_in_plan_hash(completed_brew_with_pitch):
         {"effective_offset_minutes": 0, "target_temp_c": "20.0"},
         {"effective_offset_minutes": 120, "target_temp_c": "18.0"},
     ]
-    assert started.json()["logical_plan_hash"] == started.json()["plan_snapshot"]["logical_plan_hash"]
+    assert (
+        started.json()["logical_plan_hash"] == started.json()["plan_snapshot"]["logical_plan_hash"]
+    )
 
     with SessionLocal() as db:
         version = db.get(RecipeVersion, recipe_version_id)

@@ -401,7 +401,9 @@ def start_conditioning(
         session.conditioning_mode = snapshot.payload["conditioning_mode"]
     session.revision += 1
 
-    duration_minutes = None if snapshot is None else snapshot.payload.get("conditioning_duration_minutes")
+    duration_minutes = (
+        None if snapshot is None else snapshot.payload.get("conditioning_duration_minutes")
+    )
     duration_seconds = (
         int(duration_minutes) * 60 if duration_minutes is not None else 7 * 24 * 60 * 60
     )
@@ -424,7 +426,8 @@ def start_conditioning(
         event_data={
             "fermentation_assessment_id": str(ferm_assessment.id),
             "activation_ordinal": stage.activation_ordinal,
-            "fermentation_current_completed_at": session.fermentation_current_completed_at.isoformat()
+            "fermentation_current_completed_at":
+                session.fermentation_current_completed_at.isoformat()
             if session.fermentation_current_completed_at
             else None,
         },

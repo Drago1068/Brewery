@@ -34,7 +34,8 @@ def upgrade() -> None:
         batch.add_column(sa.Column("fermentation_first_completed_at", timestamp))
         batch.add_column(sa.Column("fermentation_current_completed_at", timestamp))
         batch.add_column(
-            sa.Column("conditioning_skipped", sa.Boolean(), server_default=sa.false(), nullable=False)
+            sa.Column("conditioning_skipped", sa.Boolean(), server_default=sa.false(),
+                nullable=False)
         )
         batch.add_column(sa.Column("conditioning_first_started_at", timestamp))
         batch.add_column(sa.Column("conditioning_current_activation_started_at", timestamp))
@@ -99,8 +100,10 @@ def upgrade() -> None:
     )
 
     with op.batch_alter_table("packaging_readiness_handoffs") as batch:
-        batch.drop_constraint("packaging_readiness_handoffs_fermentation_session_id_key", type_="unique")
-        batch.add_column(sa.Column("handoff_version", sa.Integer(), server_default="1", nullable=False))
+        batch.drop_constraint("packaging_readiness_handoffs_fermentation_session_id_key",
+            type_="unique")
+        batch.add_column(sa.Column("handoff_version", sa.Integer(), server_default="1",
+            nullable=False))
         batch.add_column(
             sa.Column("is_current", sa.Boolean(), server_default=sa.true(), nullable=False)
         )
@@ -136,7 +139,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("uq_packaging_handoff_current_per_session", table_name="packaging_readiness_handoffs")
+    op.drop_index(
+        "uq_packaging_handoff_current_per_session", table_name="packaging_readiness_handoffs")
     with op.batch_alter_table("packaging_readiness_handoffs") as batch:
         batch.drop_column("assessment_id")
         batch.drop_column("invalidation_cause_id")

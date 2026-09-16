@@ -62,8 +62,10 @@ def upgrade() -> None:
         "fermentation_actions",
         ["stage_instance_id"],
     )
-    op.create_index("ix_fermentation_actions_actor_user_id", "fermentation_actions", ["actor_user_id"])
-    op.create_index("ix_fermentation_actions_operation_id", "fermentation_actions", ["operation_id"])
+    op.create_index("ix_fermentation_actions_actor_user_id", "fermentation_actions",
+        ["actor_user_id"])
+    op.create_index("ix_fermentation_actions_operation_id", "fermentation_actions",
+        ["operation_id"])
 
     op.create_table(
         "fermentation_addition_requirements",
@@ -193,7 +195,8 @@ def upgrade() -> None:
         sa.Column("late_entry_reason", sa.Text()),
         sa.Column("available_at_original_session_completion", sa.Boolean()),
         sa.Column("terminal_state_at_recording", sa.String(32)),
-        sa.Column("inventory_effect", sa.Boolean(), server_default=sa.text("false"), nullable=False),
+        sa.Column("inventory_effect", sa.Boolean(), server_default=sa.text("false"),
+            nullable=False),
         sa.Column(
             "schema_version",
             sa.String(64),

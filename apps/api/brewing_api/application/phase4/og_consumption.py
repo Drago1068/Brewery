@@ -11,7 +11,9 @@ from sqlalchemy.orm import Session
 
 from brewing_api.application.errors import ConflictError, DomainError
 from brewing_api.application.events import audit
-from brewing_api.application.phase4.completion import invalidate_after_fermentation_affecting_evidence
+from brewing_api.application.phase4.completion import (
+    invalidate_after_fermentation_affecting_evidence,
+)
 from brewing_api.application.phase4.derived_gravity import recompute_derived_gravity
 from brewing_api.application.phase4.operations import replay_or_conflict, store_success
 from brewing_api.application.phase4.sessions import get_fermentation_session
@@ -207,14 +209,9 @@ def _journal(
 
 
 def _lock_session(db: Session, user: User, session_id: uuid.UUID) -> FermentationSession:
-    session = (
-        db.execute(
-            select(FermentationSession)
-            .where(FermentationSession.id == session_id)
-            .with_for_update()
-        )
-        .scalar_one_or_none()
-    )
+    session = db.execute(
+        select(FermentationSession).where(FermentationSession.id == session_id).with_for_update()
+    ).scalar_one_or_none()
     if session is None or session.user_id != user.id:
         raise DomainError("Fermentation session not found", 404)
     return session

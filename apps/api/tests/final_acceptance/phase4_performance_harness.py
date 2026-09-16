@@ -19,7 +19,6 @@ from sqlalchemy import func, select
 
 from brewing_api.application.auth import password_hash
 from brewing_api.domain.identity.models import User
-from brewing_api.domain.fermentation.models import FermentationMeasurement, FermentationSession
 from brewing_api.main import app
 from brewing_api.platform.database import SessionLocal, engine
 from brewing_api.platform.time import utc_now
@@ -123,7 +122,9 @@ def _seed_perf_session(client: TestClient, measurement_target: int) -> dict:
         },
     ):
         assert (
-            client.post(f"/api/v1/brew-sessions/stages/{mash_id}/measurements", json=payload).status_code
+            client.post(
+                f"/api/v1/brew-sessions/stages/{mash_id}/measurements", json=payload
+            ).status_code
             == 201
         )
     revision = client.get(f"/api/v1/brew-sessions/{brew_id}").json()["revision"]
@@ -324,7 +325,8 @@ def run_isolated_phase4_performance_harness(
                 "operation_id": str(uuid.uuid4()),
                 "expected_revision": rev,
                 "override": True,
-                "override_reason": "Phase 4 performance harness eligible override for disposable session",
+                "override_reason":
+                    "Phase 4 performance harness eligible override for disposable session",
             },
         )
         elapsed_ms = (time.perf_counter() - started) * 1000.0
@@ -346,7 +348,10 @@ def run_isolated_phase4_performance_harness(
             "UNIT": "ms",
             "RESULT": "BLOCKED",
             "status": "BLOCKED",
-            "blocker": "Set PHASE4_PERF_ALLOW_COMPLETE=1 to time complete-fermentation on disposable fixtures",
+            "blocker": (
+                "Set PHASE4_PERF_ALLOW_COMPLETE=1 to time "
+                "complete-fermentation on disposable fixtures"
+            ),
             "SAMPLE_COUNT": 0,
             "raw_samples_ms": [],
         }

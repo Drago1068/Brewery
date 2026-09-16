@@ -13,12 +13,11 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from phase3_migration_regression import assert_phase3_migration_ancestry
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.exc import DBAPIError
-
-from phase3_migration_regression import assert_phase3_migration_ancestry
 
 from brewing_api.platform.database import engine
 

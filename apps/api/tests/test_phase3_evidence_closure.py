@@ -17,6 +17,10 @@ from pathlib import Path
 
 import pytest
 import yaml
+from phase3_migration_regression import (
+    assert_phase3_migration_ancestry,
+    assert_phase3_migrations_unchanged,
+)
 from sqlalchemy import func, select, text
 from test_phase3_adversarial import _record
 from test_phase3_engines import PNG, _requirement
@@ -35,11 +39,6 @@ from brewing_api.domain.identity.models import User
 from brewing_api.domain.measurements.models import Measurement
 from brewing_api.platform.database import SessionLocal, engine
 from brewing_api.platform.time import utc_now
-
-from phase3_migration_regression import (
-    assert_phase3_migration_ancestry,
-    assert_phase3_migrations_unchanged,
-)
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -284,9 +283,10 @@ def _stage_for_type(session_id: uuid.UUID, kind: str) -> uuid.UUID:
                 id=stage_id,
                 brew_session_id=session_id,
                 name=name,
-                canonical_stage_type=name if name in {
-                    "MASH", "MASH_IN", "POST_MASH", "PRE_BOIL", "POST_BOIL", "KNOCKOUT", "PITCH"
-                } else "MASH",
+                canonical_stage_type=name
+                if name
+                in {"MASH", "MASH_IN", "POST_MASH", "PRE_BOIL", "POST_BOIL", "KNOCKOUT", "PITCH"}
+                else "MASH",
                 status="ACTIVE",
                 started_at=now,
                 target_duration_seconds=3600,
@@ -754,9 +754,7 @@ def test_ac_063_adv_031_operation_fingerprint_and_tombstone(active_mash):
     conflict = _record(client, stage_id, "MASH_PH", "5.40", "pH", operation_id=op)
     assert conflict.status_code == 409
     with SessionLocal() as db:
-        rows = db.scalars(
-            select(BrewOperation).where(BrewOperation.operation_id == op)
-        ).all()
+        rows = db.scalars(select(BrewOperation).where(BrewOperation.operation_id == op)).all()
         assert rows
         assert rows[0].fingerprint
         assert rows[0].completed_at is not None
@@ -848,7 +846,9 @@ def test_adv_010_011_timer_deadline_and_no_partial_on_conflict(active_mash):
     assert conflict.status_code == 409
     with SessionLocal() as db:
         after = db.scalar(
-            select(func.count()).select_from(Measurement).where(
+            select(func.count())
+            .select_from(Measurement)
+            .where(
                 Measurement.brew_stage_id == uuid.UUID(stage_id),
                 Measurement.measurement_type == "MASH_PH",
             )

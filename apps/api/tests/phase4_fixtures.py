@@ -3,10 +3,8 @@
 import uuid
 
 import pytest
-from sqlalchemy import select
 
 from brewing_api.domain.brew_sessions.models import BrewSession, BrewStage
-from brewing_api.domain.measurements.models import Measurement
 from brewing_api.platform.database import SessionLocal
 from brewing_api.platform.time import utc_now
 

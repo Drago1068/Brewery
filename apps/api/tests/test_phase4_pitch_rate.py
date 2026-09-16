@@ -1,4 +1,5 @@
 """P4-FR-037 pitch-rate estimate read model."""
+# ruff: noqa: F811 - test parameters intentionally shadow the fixture import
 
 from __future__ import annotations
 
@@ -6,6 +7,7 @@ import uuid
 from decimal import Decimal
 
 from calculations.brewing import yeast_pitch_cells
+from phase4_fixtures import started_fermentation  # noqa: F401
 from sqlalchemy import select
 
 from brewing_api.domain.fermentation.models import (
@@ -14,8 +16,6 @@ from brewing_api.domain.fermentation.models import (
     FermentationSession,
 )
 from brewing_api.platform.database import SessionLocal
-
-from phase4_fixtures import started_fermentation  # noqa: F401
 
 
 def test_pitch_rate_not_computed_without_snapshot_inputs(started_fermentation):

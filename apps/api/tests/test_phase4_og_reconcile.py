@@ -8,6 +8,7 @@ import uuid
 from decimal import Decimal
 
 import pytest
+from phase4_fixtures import _measurement
 from sqlalchemy import select
 
 from brewing_api.application.phase4.og_consumption import (
@@ -21,7 +22,6 @@ from brewing_api.domain.identity.models import User
 from brewing_api.domain.measurements.models import Measurement
 from brewing_api.platform.database import SessionLocal
 from brewing_api.platform.time import utc_now
-from phase4_fixtures import _measurement
 
 pytestmark = pytest.mark.integration
 
@@ -111,9 +111,7 @@ def test_start_with_unknown_og_fr004_adv021(completed_brew_without_og):
     assert og["consumed_value"] is None
     assert og["is_current"] is True
 
-    active = next(
-        s for s in body["stages"] if s["canonical_stage_type"] == "ACTIVE_FERMENTATION"
-    )
+    active = next(s for s in body["stages"] if s["canonical_stage_type"] == "ACTIVE_FERMENTATION")
     observed = utc_now().isoformat().replace("+00:00", "Z")
     gravity = client.post(
         f"/api/v1/fermentation-sessions/{body['id']}/measurements",
@@ -135,9 +133,7 @@ def test_start_with_unknown_og_fr004_adv021(completed_brew_without_og):
     refreshed = detail.json()
     assert refreshed["og_consumption"]["og_availability"] == "UNKNOWN"
     assert refreshed["og_consumption"]["brew_measurement_id"] is None
-    assert all(
-        item["measurement_type"] != "ORIGINAL_GRAVITY" for item in refreshed["measurements"]
-    )
+    assert all(item["measurement_type"] != "ORIGINAL_GRAVITY" for item in refreshed["measurements"])
     assert refreshed["pitch_rate_estimate"]["status"] == "NOT_COMPUTED"
 
     with SessionLocal() as db:
@@ -216,9 +212,7 @@ def test_ac010_reconcile_after_phase3_og_correction(completed_brew_with_pitch):
         pins = list(
             db.scalars(
                 select(FermentationOgConsumption)
-                .where(
-                    FermentationOgConsumption.fermentation_session_id == uuid.UUID(ferm_id)
-                )
+                .where(FermentationOgConsumption.fermentation_session_id == uuid.UUID(ferm_id))
                 .order_by(FermentationOgConsumption.pin_ordinal)
             ).all()
         )

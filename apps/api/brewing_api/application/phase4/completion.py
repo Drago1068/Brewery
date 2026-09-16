@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -171,7 +170,9 @@ def evaluate_fermentation_confirmation_predicates(
 
     # F1 — stable gravity
     stable_status = (
-        derived.stable_gravity_status if derived else StableGravityStatus.INSUFFICIENT_EVIDENCE.value
+        derived.stable_gravity_status
+        if derived
+        else StableGravityStatus.INSUFFICIENT_EVIDENCE.value
     )
     f1_pass = stable_status == StableGravityStatus.STABLE.value
     predicate_results["F1"] = {"passed": f1_pass, "stable_gravity_status": stable_status}

@@ -726,9 +726,7 @@ def cancel_timer(
 def ack_timer(
     timer_id: uuid.UUID, db: Db, user: CurrentUser, command: SessionCommand
 ) -> IdStatusResponse:
-    timer = timer_service.acknowledge_timer(
-        db, user, timer_id, command.operation_id
-    )
+    timer = timer_service.acknowledge_timer(db, user, timer_id, command.operation_id)
     return IdStatusResponse(id=timer.id, status=timer.status)
 
 
@@ -807,5 +805,3 @@ def voice_proposal(command: SessionCommand) -> dict:
     if proposal is None:
         return {"proposal": None, "committed": False}
     return {"proposal": proposal, "committed": False}
-
-

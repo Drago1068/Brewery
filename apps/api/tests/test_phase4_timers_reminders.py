@@ -1,4 +1,5 @@
 """Phase 4 Slice 4 timers, reminders, and lifecycle child effects."""
+# ruff: noqa: F811 - test parameters intentionally shadow the fixture import
 
 from __future__ import annotations
 
@@ -6,18 +7,16 @@ import uuid
 from datetime import timedelta
 
 import pytest
+from phase4_fixtures import started_fermentation  # noqa: F401
 from sqlalchemy import select
 
 from brewing_api.domain.fermentation.models import (
-    FermentationReminder,
     FermentationReminderHistory,
     FermentationSession,
     FermentationTimer,
 )
 from brewing_api.platform.database import SessionLocal
 from brewing_api.platform.time import utc_now
-
-from phase4_fixtures import started_fermentation  # noqa: F401
 
 pytestmark = pytest.mark.integration
 
@@ -36,7 +35,9 @@ def test_start_materializes_timers_and_reminders(started_fermentation):
     assert "WALL_CLOCK" in clocks
     assert "ACTIVE_TIME" in clocks
     assert any(t["status"] == "RUNNING" for t in body["timers"])
-    assert any(r["reminder_type"] == "gravity_reading" and r["status"] == "DUE" for r in body["reminders"])
+    assert any(
+        r["reminder_type"] == "gravity_reading" and r["status"] == "DUE" for r in body["reminders"]
+    )
 
 
 def test_pause_resume_child_timer_effects(started_fermentation):
@@ -85,7 +86,9 @@ def test_acknowledge_does_not_satisfy_reminder(started_fermentation):
     client = started_fermentation["client"]
     session_id = started_fermentation["fermentation_session_id"]
     detail = client.get(f"/api/v1/fermentation-sessions/{session_id}")
-    reminder = next(r for r in detail.json()["reminders"] if r["reminder_type"] == "gravity_reading")
+    reminder = next(
+        r for r in detail.json()["reminders"] if r["reminder_type"] == "gravity_reading"
+    )
     ack = client.post(
         f"/api/v1/fermentation-sessions/reminders/{reminder['id']}/acknowledge",
         json={
@@ -104,7 +107,9 @@ def test_measurement_satisfies_gravity_reminder(started_fermentation):
     client = started_fermentation["client"]
     session_id = started_fermentation["fermentation_session_id"]
     detail = client.get(f"/api/v1/fermentation-sessions/{session_id}")
-    reminder = next(r for r in detail.json()["reminders"] if r["reminder_type"] == "gravity_reading")
+    reminder = next(
+        r for r in detail.json()["reminders"] if r["reminder_type"] == "gravity_reading"
+    )
     client.post(
         f"/api/v1/fermentation-sessions/reminders/{reminder['id']}/acknowledge",
         json={
@@ -271,7 +276,9 @@ def test_acknowledge_idempotency(started_fermentation):
     client = started_fermentation["client"]
     session_id = started_fermentation["fermentation_session_id"]
     detail = client.get(f"/api/v1/fermentation-sessions/{session_id}")
-    reminder = next(r for r in detail.json()["reminders"] if r["reminder_type"] == "gravity_reading")
+    reminder = next(
+        r for r in detail.json()["reminders"] if r["reminder_type"] == "gravity_reading"
+    )
     op = "ack-reminder-replay-1"
     first = client.post(
         f"/api/v1/fermentation-sessions/reminders/{reminder['id']}/acknowledge",

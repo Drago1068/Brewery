@@ -140,14 +140,15 @@ def materialize_start_children(
     additions: list[dict] | None = None,
 ) -> tuple[list[FermentationTimer], list[FermentationReminder]]:
     """Create start-transaction timers/reminders for ACTIVE_FERMENTATION."""
+    from decimal import Decimal
+
     from brewing_api.application.phase4.plan import phase4_requirement_template_id
+    from brewing_api.application.phase4.time_validation import _coerce_aware
     from brewing_api.domain.fermentation.constants import (
         ADDITION_RUNTIME_OCCURRENCE_POLICY,
         ADDITION_SCHEDULE_SCHEMA_VERSION,
     )
     from brewing_api.domain.fermentation.models import FermentationAdditionRequirement
-    from brewing_api.application.phase4.time_validation import _coerce_aware
-    from decimal import Decimal
 
     now = utc_now()
     timers = create_activation_timers(
@@ -679,7 +680,7 @@ def invalidate_and_reactivate_children(
     cause: str = "COMPLETION_INVALIDATED",
     actor_id: uuid.UUID | None = None,
 ) -> tuple[list[FermentationTimer], list[FermentationReminder]]:
-    """§9.8: cancel prior-activation nonterminal timers; create new timer identities; reopen reminders."""
+    """§9.8: cancel prior-activation nonterminal timers; create new timer identities; reopen reminders."""  # noqa: E501
     now = utc_now()
     for timer in db.scalars(
         select(FermentationTimer).where(

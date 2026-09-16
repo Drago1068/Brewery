@@ -98,8 +98,7 @@ def _seed_two_sessions(connection, now):
     )
     connection.execute(
         text(
-            "INSERT INTO recipes (id, created_at, owner_id, name) "
-            "VALUES (:id, :now, :owner, 'Inv')"
+            "INSERT INTO recipes (id, created_at, owner_id, name) VALUES (:id, :now, :owner, 'Inv')"
         ),
         {"id": recipe_id, "now": now, "owner": user_id},
     )

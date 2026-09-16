@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from brewing_api.application.errors import ConflictError, DomainError, NotFoundError
+from brewing_api.application.errors import ConflictError, NotFoundError
 from brewing_api.application.events import audit
 from brewing_api.application.phase4.operations import replay_or_conflict, store_success
 from brewing_api.domain.fermentation.models import (

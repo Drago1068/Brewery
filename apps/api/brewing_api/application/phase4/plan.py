@@ -11,7 +11,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from brewing_api.application.errors import ValidationConflictError
-from brewing_api.domain.fermentation.constants import CONDITIONING_MODES, PLAN_SCHEMA_VERSION, STAGE_TYPES
+from brewing_api.domain.fermentation.constants import (
+    CONDITIONING_MODES,
+    PLAN_SCHEMA_VERSION,
+    STAGE_TYPES,
+)
 from brewing_api.domain.recipes.models import RecipeIngredient, RecipeProcessStep, RecipeVersion
 
 MATERIALIZATION_RULE_VERSION = "phase4-materialization-v1"
@@ -359,14 +363,20 @@ def materialize_phase4_plan(db: Session, recipe_version: RecipeVersion) -> Ferme
                     [{"reason": "INVALID_CONDITIONING_MODE", "value": mode}],
                 )
             conditioning_mode = mode
-        if "conditioning_temperature_c" in details and details["conditioning_temperature_c"] is not None:
+        if (
+            "conditioning_temperature_c" in details
+            and details["conditioning_temperature_c"] is not None
+        ):
             conditioning_temperature_c = str(
                 _parse_decimal(
                     details["conditioning_temperature_c"],
                     field="conditioning_temperature_c",
                 )
             )
-        if "conditioning_duration_minutes" in details and details["conditioning_duration_minutes"] is not None:
+        if (
+            "conditioning_duration_minutes" in details
+            and details["conditioning_duration_minutes"] is not None
+        ):
             try:
                 conditioning_duration_minutes = int(details["conditioning_duration_minutes"])
             except (TypeError, ValueError) as exc:
@@ -397,7 +407,9 @@ def materialize_phase4_plan(db: Session, recipe_version: RecipeVersion) -> Ferme
             conditioning_schedule = _normalize_schedule(
                 details["conditioning_schedule"], field="conditioning_schedule"
             )
-        if "conditioning_required" in details and isinstance(details["conditioning_required"], bool):
+        if "conditioning_required" in details and isinstance(
+            details["conditioning_required"], bool
+        ):
             conditioning_required = details["conditioning_required"]
         elif (
             conditioning_mode is not None

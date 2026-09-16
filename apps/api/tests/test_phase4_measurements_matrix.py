@@ -1,12 +1,12 @@
 """Phase 4 Slice 2 §12 measurement-type matrix (P4-FR-025..028, P4-AC-020)."""
+# ruff: noqa: F811 - test parameters intentionally shadow the fixture import
 
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-
 from phase4_fixtures import started_fermentation  # noqa: F401
 
 
@@ -24,7 +24,7 @@ def _payload(
         "measurement_type": measurement_type,
         "value": value,
         "unit": unit,
-        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "observed_at": datetime.now(UTC).isoformat(),
         "stage_instance_id": stage_instance_id or started["active_stage_id"],
         "method": method,
         "source": "OBSERVED",
@@ -125,9 +125,7 @@ def test_conditioning_temperature_bounds_on_conditioning_stage(started_fermentat
     session_id = started_fermentation["fermentation_session_id"]
     set_plan_conditioning(session_id=session_id)
     payload = reach_fermentation_complete(client, started_fermentation)
-    started = start_conditioning(
-        client, session_id=session_id, revision=payload["revision"]
-    )
+    started = start_conditioning(client, session_id=session_id, revision=payload["revision"])
     assert started.status_code == 200, started.text
     conditioning_stage = next(
         stage

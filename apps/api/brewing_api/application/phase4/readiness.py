@@ -18,7 +18,6 @@ from brewing_api.application.events import audit
 from brewing_api.application.phase4.completion import (
     current_fermentation_assessment,
     evaluate_fermentation_confirmation_predicates,
-    serialize_assessment,
 )
 from brewing_api.application.phase4.conditioning import (
     current_conditioning_assessment,
@@ -239,14 +238,18 @@ def evaluate_packaging_readiness(
             "R1": {
                 "passed": r1,
                 "evaluation_mode": "ASSESSMENT_ROW",
-                "fermentation_assessment_id": None if fermentation is None else str(fermentation.id),
+                "fermentation_assessment_id": None
+                if fermentation is None
+                else str(fermentation.id),
                 "fermentation_outcome": None if fermentation is None else fermentation.outcome,
             },
             "R2": {
                 "passed": r2,
                 "evaluation_mode": "ASSESSMENT_ROW",
                 "conditioning_skipped": bool(session.conditioning_skipped),
-                "conditioning_assessment_id": None if conditioning is None else str(conditioning.id),
+                "conditioning_assessment_id": None
+                if conditioning is None
+                else str(conditioning.id),
                 "conditioning_outcome": None if conditioning is None else conditioning.outcome,
             },
             "R3": {
@@ -451,10 +454,7 @@ def assess_packaging_readiness(
     # unsuccessful → remain CONDITIONING_COMPLETE / CLOSED (or existing status)
 
     # On R1/R2 failure from HANDOFF_READY path, invalidate current handoff (§9.4).
-    if (
-        session.status == "HANDOFF_READY"
-        and result.readiness_status == "NOT_READY"
-    ):
+    if session.status == "HANDOFF_READY" and result.readiness_status == "NOT_READY":
         handoff = current_handoff(db, session.id)
         if handoff is not None and handoff.invalidated_at is None:
             handoff.readiness_status = "INVALIDATED"
@@ -488,7 +488,13 @@ def assess_packaging_readiness(
             "outcome": result.outcome,
         },
     )
-    audit(db, user.id, "PACKAGING_READINESS_ASSESSED", "FermentationCompletionAssessment", assessment.id)
+    audit(
+        db,
+        user.id,
+        "PACKAGING_READINESS_ASSESSED",
+        "FermentationCompletionAssessment",
+        assessment.id,
+    )
     store_success(
         db,
         user.id,
@@ -628,7 +634,9 @@ def record_packaging_readiness_handoff(
             "readiness_status": readiness_status,
         },
     )
-    audit(db, user.id, "PACKAGING_READINESS_HANDOFF_RECORDED", "PackagingReadinessHandoff", handoff.id)
+    audit(
+        db, user.id, "PACKAGING_READINESS_HANDOFF_RECORDED", "PackagingReadinessHandoff", handoff.id
+    )
     store_success(
         db,
         user.id,

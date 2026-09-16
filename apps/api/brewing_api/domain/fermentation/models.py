@@ -26,7 +26,6 @@ from brewing_api.domain.fermentation.constants import (
     ADDITION_SCHEDULE_SCHEMA_VERSION,
     DERIVED_GRAVITY_SCHEMA_VERSION,
     DEVIATION_SCHEMA_VERSION,
-    WAIVER_SCHEMA_VERSION,
     ENTRY_SCHEMA_VERSION,
     FERMENTATION_ELIGIBILITY_SCHEMA_VERSION,
     MEASUREMENT_SCHEMA_VERSION,
@@ -35,6 +34,7 @@ from brewing_api.domain.fermentation.constants import (
     REMINDER_SCHEMA_VERSION,
     SESSION_STATE_SCHEMA_VERSION,
     TIMER_SCHEMA_VERSION,
+    WAIVER_SCHEMA_VERSION,
 )
 from brewing_api.platform.database import Base
 
@@ -767,7 +767,9 @@ class FermentationAdditionRequirement(UuidTimestampMixin, Base):
     )
     requirement_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     requirement_template_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True, nullable=False)
-    requirement_class: Mapped[str] = mapped_column(String(64), default="PLANNED_ADDITION", nullable=False)
+    requirement_class: Mapped[str] = mapped_column(
+        String(64), default="PLANNED_ADDITION", nullable=False
+    )
     status: Mapped[str] = mapped_column(String(24), default="PENDING", nullable=False)
     required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     waivable: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -946,4 +948,3 @@ class FermentationAttachment(UuidTimestampMixin, Base):
     operation_id: Mapped[str | None] = mapped_column(String(64), index=True)
     removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     removal_reason: Mapped[str | None] = mapped_column(Text)
-

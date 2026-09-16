@@ -21,7 +21,8 @@ timestamp = sa.DateTime(timezone=True)
 
 def upgrade() -> None:
     with op.batch_alter_table("fermentation_og_consumptions") as batch:
-        batch.drop_constraint("fermentation_og_consumptions_fermentation_session_id_key", type_="unique")
+        batch.drop_constraint("fermentation_og_consumptions_fermentation_session_id_key",
+            type_="unique")
         batch.alter_column("brew_measurement_id", existing_type=uuid, nullable=True)
         batch.alter_column("consumed_value", existing_type=sa.Numeric(8, 3), nullable=True)
         batch.alter_column("consumed_unit", existing_type=sa.String(16), nullable=True)
@@ -72,8 +73,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("uq_fermentation_og_consumption_current", table_name="fermentation_og_consumptions")
-    op.drop_index("ix_fermentation_og_consumptions_session_id", table_name="fermentation_og_consumptions")
+    op.drop_index(
+        "uq_fermentation_og_consumption_current", table_name="fermentation_og_consumptions")
+    op.drop_index("ix_fermentation_og_consumptions_session_id",
+        table_name="fermentation_og_consumptions")
     with op.batch_alter_table("fermentation_og_consumptions") as batch:
         batch.drop_column("operation_id")
         batch.drop_column("actor_user_id")

@@ -74,9 +74,7 @@ def serialize_attachment(
         "caption": attachment.caption,
         "status": attachment.status,
         "operation_id": attachment.operation_id,
-        "removed_at": None
-        if attachment.removed_at is None
-        else attachment.removed_at.isoformat(),
+        "removed_at": None if attachment.removed_at is None else attachment.removed_at.isoformat(),
         "created_at": None if attachment.created_at is None else attachment.created_at.isoformat(),
     }
     if include_bytes_available:
@@ -95,7 +93,9 @@ def list_session_attachments(
     if not include_removed:
         query = query.where(FermentationAttachment.removed_at.is_(None))
     return list(
-        db.scalars(query.order_by(FermentationAttachment.created_at, FermentationAttachment.id)).all()
+        db.scalars(
+            query.order_by(FermentationAttachment.created_at, FermentationAttachment.id)
+        ).all()
     )
 
 

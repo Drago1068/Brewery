@@ -53,7 +53,8 @@ def upgrade() -> None:
         sa.Column("timer_type", sa.String(40), server_default="STAGE_PRIMARY", nullable=False),
         sa.Column("paused_by", sa.String(32)),
         sa.Column("continues_after_stage", sa.Boolean(), server_default=sa.false(), nullable=False),
-        sa.Column("replaces_timer_id", uuid, sa.ForeignKey("fermentation_timers.id", ondelete="SET NULL")),
+        sa.Column("replaces_timer_id", uuid, sa.ForeignKey("fermentation_timers.id",
+            ondelete="SET NULL")),
         sa.Column("activation_ordinal", sa.Integer(), server_default="1", nullable=False),
         sa.Column("cancel_reason", sa.Text()),
         sa.Column(
@@ -66,7 +67,7 @@ def upgrade() -> None:
         sa.UniqueConstraint("id", "fermentation_session_id", name="uq_fermentation_timer_session"),
         sa.ForeignKeyConstraint(
             ["stage_instance_id", "fermentation_session_id"],
-            ["fermentation_stage_instances.id", "fermentation_stage_instances.fermentation_session_id"],
+            ["fermentation_stage_instances.id", "fermentation_stage_instances.fermentation_session_id"],  # noqa: E501
             name="fk_fermentation_timer_stage_session",
         ),
         sa.UniqueConstraint(
@@ -150,10 +151,11 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("id", "fermentation_session_id", name="uq_fermentation_reminder_session"),
+        sa.UniqueConstraint(
+            "id", "fermentation_session_id", name="uq_fermentation_reminder_session"),
         sa.ForeignKeyConstraint(
             ["stage_instance_id", "fermentation_session_id"],
-            ["fermentation_stage_instances.id", "fermentation_stage_instances.fermentation_session_id"],
+            ["fermentation_stage_instances.id", "fermentation_stage_instances.fermentation_session_id"],  # noqa: E501
             name="fk_fermentation_reminder_stage_session",
         ),
         sa.UniqueConstraint(

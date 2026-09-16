@@ -6,12 +6,12 @@ import os
 
 import pytest
 
+from brewing_api.platform.database import engine
 from final_acceptance.phase4_performance_harness import (
     DATASET_TARGETS,
     THRESHOLDS_MS,
     run_isolated_phase4_performance_harness,
 )
-from brewing_api.platform.database import engine
 
 pytestmark = pytest.mark.integration
 

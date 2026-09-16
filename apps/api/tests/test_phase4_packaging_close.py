@@ -1,4 +1,4 @@
-"""Slice 12 — PACKAGING_READINESS_CLOSE (FR-008/013/015/022/043/044/074/089, AC-007/011/017/025/026/047/058/061, ADV-012/023/033)."""
+"""Slice 12 — PACKAGING_READINESS_CLOSE (FR-008/013/015/022/043/044/074/089, AC-007/011/017/025/026/047/058/061, ADV-012/023/033)."""  # noqa: E501
 
 from __future__ import annotations
 
@@ -8,6 +8,10 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from phase4_lifecycle_helpers import (
+    reach_fermentation_complete,
+    skip_conditioning,
+)
 from sqlalchemy import func, select, text
 
 from brewing_api.domain.fermentation.models import (
@@ -20,10 +24,6 @@ from brewing_api.domain.fermentation.models import (
 from brewing_api.domain.inventory.models import InventoryTransaction
 from brewing_api.platform.database import SessionLocal
 from brewing_api.platform.time import utc_now
-from phase4_lifecycle_helpers import (
-    reach_fermentation_complete,
-    skip_conditioning,
-)
 
 pytestmark = pytest.mark.integration
 
@@ -85,12 +85,16 @@ def _reach_handoff_ready(client, started: dict) -> dict:
     return handoff
 
 
-def _close(client, session_id: str, *, operation_id: str | None = None, revision: int | None = None):
+def _close(
+    client, session_id: str, *, operation_id: str | None = None, revision: int | None = None
+):
     return client.post(
         f"/api/v1/fermentation-sessions/{session_id}/commands/close",
         json={
             "operation_id": operation_id or str(uuid.uuid4()),
-            "expected_revision": revision if revision is not None else _revision(client, session_id),
+            "expected_revision": revision
+            if revision is not None
+            else _revision(client, session_id),
         },
     )
 
@@ -282,11 +286,14 @@ def test_adv033_abort_from_handoff_ready_denied(started_fermentation):
     )
     assert aborted.status_code == 409, aborted.text
     assert aborted.json()["code"] == "INVALID_TRANSITION"
-    assert client.get(f"/api/v1/fermentation-sessions/{session_id}").json()["status"] == "HANDOFF_READY"
+    assert (
+        client.get(f"/api/v1/fermentation-sessions/{session_id}").json()["status"]
+        == "HANDOFF_READY"
+    )
 
 
 def test_ac058_assess_after_f1_fail_from_handoff_ready(started_fermentation):
-    """P4-AC-058: HANDOFF_READY + F1-failing evidence → Assess → COMPLETION_ASSESSED + INVALIDATED."""
+    """P4-AC-058: HANDOFF_READY + F1-failing evidence → Assess → COMPLETION_ASSESSED + INVALIDATED."""  # noqa: E501
     client = started_fermentation["client"]
     session_id = started_fermentation["fermentation_session_id"]
     _reach_handoff_ready(client, started_fermentation)
@@ -314,7 +321,7 @@ def test_ac058_assess_after_f1_fail_from_handoff_ready(started_fermentation):
 
 
 def test_ac025_closed_correction_invalidates_handoff_stays_closed(started_fermentation):
-    """P4-AC-025 / P4-FR-043: CLOSED + completion-affecting correction → stay CLOSED, handoff INVALIDATED."""
+    """P4-AC-025 / P4-FR-043: CLOSED + completion-affecting correction → stay CLOSED, handoff INVALIDATED."""  # noqa: E501
     client = started_fermentation["client"]
     session_id = started_fermentation["fermentation_session_id"]
     _reach_handoff_ready(client, started_fermentation)
@@ -337,9 +344,9 @@ def test_ac025_closed_correction_invalidates_handoff_stays_closed(started_fermen
     assert corrected.status_code == 201, corrected.text
     detail = client.get(f"/api/v1/fermentation-sessions/{session_id}").json()
     assert detail["status"] == "CLOSED"
-    assert detail["packaging_readiness_handoff"] is None or detail["packaging_readiness_handoff"].get(
-        "is_current"
-    ) in {False, None}
+    assert detail["packaging_readiness_handoff"] is None or detail[
+        "packaging_readiness_handoff"
+    ].get("is_current") in {False, None}
 
     with SessionLocal() as db:
         session = db.get(FermentationSession, uuid.UUID(session_id))
@@ -364,7 +371,7 @@ def test_ac025_closed_correction_invalidates_handoff_stays_closed(started_fermen
 
 
 def test_ac026_ac061_fr089_closed_requalify_new_handoff_version(started_fermentation):
-    """P4-AC-026 / P4-AC-061 / P4-FR-089: CLOSED requalify from current evidence; handoff v2; stay CLOSED."""
+    """P4-AC-026 / P4-AC-061 / P4-FR-089: CLOSED requalify from current evidence; handoff v2; stay CLOSED."""  # noqa: E501
     client = started_fermentation["client"]
     session_id = started_fermentation["fermentation_session_id"]
     _reach_handoff_ready(client, started_fermentation)
@@ -398,7 +405,10 @@ def test_ac026_ac061_fr089_closed_requalify_new_handoff_version(started_fermenta
     # Prove no CompleteFermentation/CompleteConditioning after CLOSED.
     complete_denied = client.post(
         f"/api/v1/fermentation-sessions/{session_id}/commands/complete-fermentation",
-        json={"operation_id": str(uuid.uuid4()), "expected_revision": _revision(client, session_id)},
+        json={
+            "operation_id": str(uuid.uuid4()),
+            "expected_revision": _revision(client, session_id),
+        },
     )
     assert complete_denied.status_code == 409, complete_denied.text
 

@@ -10,6 +10,10 @@ from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from phase4_lifecycle_helpers import (
+    reach_fermentation_complete,
+    skip_conditioning,
+)
 from sqlalchemy import select
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -30,10 +34,6 @@ from brewing_api.domain.identity.models import User
 from brewing_api.main import app
 from brewing_api.platform.database import SessionLocal
 from brewing_api.platform.time import utc_now
-from phase4_lifecycle_helpers import (
-    reach_fermentation_complete,
-    skip_conditioning,
-)
 
 pytestmark = pytest.mark.integration
 
@@ -177,7 +177,10 @@ def test_ac051_waiver_vs_later_gravity_supersession(started_fermentation):
     primary = next(r for r in detail["reminders"] if r["id"] != checkpoint_id)
     ack = client.post(
         f"/api/v1/fermentation-sessions/reminders/{primary['id']}/acknowledge",
-        json={"operation_id": str(uuid.uuid4()), "expected_revision": _revision(client, session_id)},
+        json={
+            "operation_id": str(uuid.uuid4()),
+            "expected_revision": _revision(client, session_id),
+        },
     )
     assert ack.status_code == 200, ack.text
     ack_body = ack.json()
@@ -241,7 +244,10 @@ def test_ac059_adv035_og_unknown_readiness_waiver_and_override(started_fermentat
     # (a) assess without waiver → not READY
     assess_a = client.post(
         f"/api/v1/fermentation-sessions/{session_id}/commands/assess-packaging-readiness",
-        json={"operation_id": str(uuid.uuid4()), "expected_revision": _revision(client, session_id)},
+        json={
+            "operation_id": str(uuid.uuid4()),
+            "expected_revision": _revision(client, session_id),
+        },
     )
     assert assess_a.status_code == 200, assess_a.text
     body_a = assess_a.json()
@@ -269,7 +275,10 @@ def test_ac059_adv035_og_unknown_readiness_waiver_and_override(started_fermentat
 
     assess_b = client.post(
         f"/api/v1/fermentation-sessions/{session_id}/commands/assess-packaging-readiness",
-        json={"operation_id": str(uuid.uuid4()), "expected_revision": _revision(client, session_id)},
+        json={
+            "operation_id": str(uuid.uuid4()),
+            "expected_revision": _revision(client, session_id),
+        },
     )
     assert assess_b.status_code == 200, assess_b.text
     body_b = assess_b.json()
@@ -413,7 +422,10 @@ def test_fr059_recovery_reread_waiver_and_handoff(started_fermentation):
     )
     assessed = client.post(
         f"/api/v1/fermentation-sessions/{session_id}/commands/assess-packaging-readiness",
-        json={"operation_id": str(uuid.uuid4()), "expected_revision": _revision(client, session_id)},
+        json={
+            "operation_id": str(uuid.uuid4()),
+            "expected_revision": _revision(client, session_id),
+        },
     )
     assert assessed.status_code == 200
     assessment_id = assessed.json()["packaging_readiness_assessment"]["id"]

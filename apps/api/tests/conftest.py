@@ -16,10 +16,10 @@ from fastapi.testclient import TestClient
 
 pytest_plugins = ["phase4_fixtures"]
 
-from brewing_api.application.phase3.csrf import reset_rate_limits
-from brewing_api.domain import model_registry  # noqa: F401
-from brewing_api.main import app
-from brewing_api.platform.database import Base, engine
+from brewing_api.application.phase3.csrf import reset_rate_limits  # noqa: E402
+from brewing_api.domain import model_registry  # noqa: E402, F401
+from brewing_api.main import app  # noqa: E402
+from brewing_api.platform.database import Base, engine  # noqa: E402
 
 
 def _truncate_postgres() -> None:

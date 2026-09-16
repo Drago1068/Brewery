@@ -141,9 +141,7 @@ def temperature_target_at(
 
     schedule_key = "conditioning_schedule" if conditioning else "schedule"
     schedule = payload.get(schedule_key)
-    single_key = (
-        "conditioning_temperature_c" if conditioning else "fermentation_temperature_c"
-    )
+    single_key = "conditioning_temperature_c" if conditioning else "fermentation_temperature_c"
     status_key = "fermentation_temperature_status"
 
     if isinstance(schedule, list) and schedule and pitched_at is not None:

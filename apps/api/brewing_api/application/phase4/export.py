@@ -31,9 +31,7 @@ from brewing_api.domain.fermentation.models import (
 from brewing_api.domain.identity.models import User
 
 
-def _assessments_by_kind(
-    db: Session, session_id: uuid.UUID, kind: str
-) -> list[dict[str, Any]]:
+def _assessments_by_kind(db: Session, session_id: uuid.UUID, kind: str) -> list[dict[str, Any]]:
     rows = list(
         db.scalars(
             select(FermentationCompletionAssessment)
@@ -71,9 +69,7 @@ def build_export_document(db: Session, user: User, session_id: uuid.UUID) -> dic
     session = get_fermentation_session(db, user, session_id)
     journal = merged_journal_events(db, session)
     notes = [serialize_note(item) for item in list_session_notes(db, session.id)]
-    attachments = [
-        serialize_attachment(item) for item in list_session_attachments(db, session.id)
-    ]
+    attachments = [serialize_attachment(item) for item in list_session_attachments(db, session.id)]
     document["journal"] = journal
     document["notes"] = notes
     document["attachments"] = attachments

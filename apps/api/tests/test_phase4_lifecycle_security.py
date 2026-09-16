@@ -1,14 +1,15 @@
 """Slice 3 security: lifecycle command ownership and IDOR."""
+# ruff: noqa: F811 - test parameters intentionally shadow the fixture import
 
 from __future__ import annotations
 
 import uuid
 
+from phase4_fixtures import started_fermentation  # noqa: F401
+
 from brewing_api.application.auth import password_hash
 from brewing_api.domain.identity.models import User
 from brewing_api.platform.database import SessionLocal
-
-from phase4_fixtures import started_fermentation  # noqa: F401
 
 pytestmark = __import__("pytest").mark.integration
 

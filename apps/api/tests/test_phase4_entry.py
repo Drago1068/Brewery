@@ -8,7 +8,6 @@ from brewing_api.domain.fermentation.models import (
     FermentationOgConsumption,
     FermentationYeastPitchReference,
 )
-from brewing_api.domain.measurements.models import Measurement
 from brewing_api.platform.database import SessionLocal
 from brewing_api.platform.time import utc_now
 
@@ -120,14 +119,16 @@ def test_start_fermentation_session_from_completed_brew(completed_brew_with_pitc
     body = started.json()
     assert body["status"] == "ACTIVE"
     assert body["brew_session_id"] == brew_session_id
-    assert body["og_consumption"]["brew_measurement_id"] == completed_brew_with_pitch[
-        "og_measurement_id"
-    ]
+    assert (
+        body["og_consumption"]["brew_measurement_id"]
+        == completed_brew_with_pitch["og_measurement_id"]
+    )
     assert body["og_consumption"]["og_availability"] == "KNOWN"
     assert body["og_consumption"]["is_current"] is True
-    assert body["yeast_pitch_reference"]["brew_pitch_handoff_id"] == completed_brew_with_pitch[
-        "pitch_handoff_id"
-    ]
+    assert (
+        body["yeast_pitch_reference"]["brew_pitch_handoff_id"]
+        == completed_brew_with_pitch["pitch_handoff_id"]
+    )
     stage_types = {stage["canonical_stage_type"]: stage["status"] for stage in body["stages"]}
     assert stage_types["PITCH_CONFIRMED"] == "COMPLETED"
     assert stage_types["ACTIVE_FERMENTATION"] == "ACTIVE"

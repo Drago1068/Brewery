@@ -208,7 +208,7 @@ def _insert_phase4_predecessor_session(
     connection.execute(
         text(
             "INSERT INTO fermentation_sessions "
-            "(id, created_at, user_id, brew_session_id, brew_pitch_handoff_id, status, revision, started_at, "
+            "(id, created_at, user_id, brew_session_id, brew_pitch_handoff_id, status, revision, started_at, "  # noqa: E501
             "plan_kind, materialization_rule_version, logical_plan_hash, plan_preview_hash, "
             "materialized_at) VALUES "
             "(:id, :now, :user, :brew, :handoff, 'ACTIVE', 1, :now, 'FERMENTATION_DEFAULT', "
@@ -253,7 +253,10 @@ def test_alembic_roundtrip_preserves_phase4_session_on_disposable_database():
         _run_alembic(target, "upgrade", "head")
         disposable = create_engine(target)
         with disposable.connect() as connection:
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == EXPECTED_REVISION
+            assert (
+                connection.scalar(text("SELECT version_num FROM alembic_version"))
+                == EXPECTED_REVISION
+            )
             tables = set(inspect(disposable).get_table_names())
             assert set(PHASE4_SLICE2_TABLES) <= tables
             assert set(PHASE4_SLICE3_TABLES) <= tables
@@ -261,7 +264,10 @@ def test_alembic_roundtrip_preserves_phase4_session_on_disposable_database():
             assert set(PHASE4_SLICE6_TABLES) <= tables
         _run_alembic(target, "downgrade", PHASE4_PREDECESSOR)
         with disposable.connect() as connection:
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == PHASE4_PREDECESSOR
+            assert (
+                connection.scalar(text("SELECT version_num FROM alembic_version"))
+                == PHASE4_PREDECESSOR
+            )
             tables = set(inspect(disposable).get_table_names())
             assert "fermentation_timers" not in tables
             assert "fermentation_reminders" not in tables
@@ -280,7 +286,10 @@ def test_alembic_roundtrip_preserves_phase4_session_on_disposable_database():
             connection.commit()
         _run_alembic(target, "upgrade", "head")
         with disposable.connect() as connection:
-            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == EXPECTED_REVISION
+            assert (
+                connection.scalar(text("SELECT version_num FROM alembic_version"))
+                == EXPECTED_REVISION
+            )
             status = connection.scalar(
                 text("SELECT status FROM fermentation_sessions WHERE id = :id"),
                 {"id": ferm_id},

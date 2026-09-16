@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
 from brewing_api.main import app
-from brewing_api.platform.database import SessionLocal
 
 
 def fresh_authenticated_client(username: str = "brewer", password: str | None = None) -> TestClient:
@@ -24,11 +23,13 @@ def fresh_authenticated_client(username: str = "brewer", password: str | None = 
 
 
 def utc_iso(dt: datetime | None = None) -> str:
-    value = dt or datetime.now(timezone.utc)
+    value = dt or datetime.now(UTC)
     return value.isoformat()
 
 
-def record_temperature(client: TestClient, session_id: str, stage_id: str, revision: int, value: str = "18.5") -> dict:
+def record_temperature(
+    client: TestClient, session_id: str, stage_id: str, revision: int, value: str = "18.5"
+) -> dict:
     response = client.post(
         f"/api/v1/fermentation-sessions/{session_id}/measurements",
         json={

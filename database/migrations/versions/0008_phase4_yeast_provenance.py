@@ -33,7 +33,8 @@ def upgrade() -> None:
     # metadata is stored independently so live lot edits never rewrite it.
     op.add_column(
         "fermentation_yeast_pitch_references",
-        sa.Column("ingredient_lot_id", uuid, sa.ForeignKey("ingredient_lots.id", ondelete="SET NULL")),
+        sa.Column("ingredient_lot_id", uuid, sa.ForeignKey("ingredient_lots.id",
+            ondelete="SET NULL")),
     )
     op.add_column(
         "fermentation_yeast_pitch_references",

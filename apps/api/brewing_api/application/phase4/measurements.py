@@ -214,9 +214,7 @@ def serialize_measurement(
     )
     observed_at = leaf_correction.observed_at if leaf_correction else measurement.observed_at
     conversion_model_id = (
-        leaf_correction.conversion_model_id
-        if leaf_correction
-        else measurement.conversion_model_id
+        leaf_correction.conversion_model_id if leaf_correction else measurement.conversion_model_id
     )
     return {
         "id": str(measurement.id),
@@ -492,15 +490,12 @@ def correct_measurement(
         if command.sample_temperature_c is not None
         else (leaf.sample_temperature_c if leaf else measurement.sample_temperature_c)
     )
-    note_only = (
-        measurement.measurement_type != "FERMENTATION_GRAVITY"
-        or (
-            command.value is None
-            and command.unit is None
-            and command.observed_at is None
-            and command.method is None
-            and command.sample_temperature_c is None
-        )
+    note_only = measurement.measurement_type != "FERMENTATION_GRAVITY" or (
+        command.value is None
+        and command.unit is None
+        and command.observed_at is None
+        and command.method is None
+        and command.sample_temperature_c is None
     )
     source = leaf.source if leaf else measurement.source
     instrument_reference = leaf.instrument_reference if leaf else measurement.instrument_reference

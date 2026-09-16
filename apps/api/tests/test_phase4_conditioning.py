@@ -1,25 +1,12 @@
 """Phase 4 Slice 5 conditioning lifecycle and fermentation handoff."""
+# ruff: noqa: F811 - test parameters intentionally shadow the fixture import
 
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import func, select
-
-from brewing_api.domain.fermentation.models import (
-    FermentationCompletionAssessment,
-    FermentationJournalEvent,
-    FermentationReminder,
-    FermentationSession,
-    FermentationStageInstance,
-    FermentationTimer,
-)
-from brewing_api.platform.database import SessionLocal
-from brewing_api.platform.time import utc_now
-
 from phase4_fixtures import started_fermentation  # noqa: F401
 from phase4_lifecycle_helpers import (
     backdate_conditioning_first_started,
@@ -31,6 +18,16 @@ from phase4_lifecycle_helpers import (
     skip_conditioning,
     start_conditioning,
 )
+from sqlalchemy import func, select
+
+from brewing_api.domain.fermentation.models import (
+    FermentationCompletionAssessment,
+    FermentationJournalEvent,
+    FermentationSession,
+    FermentationStageInstance,
+    FermentationTimer,
+)
+from brewing_api.platform.database import SessionLocal
 
 pytestmark = pytest.mark.integration
 
@@ -43,9 +40,7 @@ def test_skip_conditioning_when_not_required(started_fermentation):
     client = started_fermentation["client"]
     session_id = started_fermentation["fermentation_session_id"]
     payload = reach_fermentation_complete(client, started_fermentation)
-    response = skip_conditioning(
-        client, session_id=session_id, revision=payload["revision"]
-    )
+    response = skip_conditioning(client, session_id=session_id, revision=payload["revision"])
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["status"] == "CONDITIONING_COMPLETE"
@@ -71,9 +66,7 @@ def test_skip_denied_when_conditioning_required(started_fermentation):
     session_id = started_fermentation["fermentation_session_id"]
     set_plan_conditioning(session_id=session_id, conditioning_required=True)
     payload = reach_fermentation_complete(client, started_fermentation)
-    response = skip_conditioning(
-        client, session_id=session_id, revision=payload["revision"]
-    )
+    response = skip_conditioning(client, session_id=session_id, revision=payload["revision"])
     assert response.status_code == 409, response.text
     assert response.json()["code"] == "CONDITIONING_REQUIRED"
 
@@ -85,21 +78,21 @@ def test_start_conditioning_handoff_and_timers(started_fermentation):
     set_plan_conditioning(session_id=session_id)
     payload = reach_fermentation_complete(client, started_fermentation)
     ferm_assessment_id = payload["completion_assessment"]["id"]
-    response = start_conditioning(
-        client, session_id=session_id, revision=payload["revision"]
-    )
+    response = start_conditioning(client, session_id=session_id, revision=payload["revision"])
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["status"] == "CONDITIONING"
     assert body["conditioning_mode"] == "COLD_CONDITIONING"
     assert body["conditioning_first_started_at"] is not None
     assert body["conditioning_skipped"] is False
-    conditioning_stages = [
-        s for s in body["stages"] if s["canonical_stage_type"] == "CONDITIONING"
-    ]
+    conditioning_stages = [s for s in body["stages"] if s["canonical_stage_type"] == "CONDITIONING"]
     assert len(conditioning_stages) == 1
     assert conditioning_stages[0]["activation_ordinal"] == 1
-    assert any(t["timer_type"] == "STAGE_PRIMARY" for t in body["timers"] if "conditioning" in t["name"].lower())
+    assert any(
+        t["timer_type"] == "STAGE_PRIMARY"
+        for t in body["timers"]
+        if "conditioning" in t["name"].lower()
+    )
     assert any(r["reminder_type"] == "conditioning_temperature_check" for r in body["reminders"])
     with SessionLocal() as db:
         events = list(
@@ -119,9 +112,7 @@ def test_start_denied_when_conditioning_not_required(started_fermentation):
     client = started_fermentation["client"]
     session_id = started_fermentation["fermentation_session_id"]
     payload = reach_fermentation_complete(client, started_fermentation)
-    response = start_conditioning(
-        client, session_id=session_id, revision=payload["revision"]
-    )
+    response = start_conditioning(client, session_id=session_id, revision=payload["revision"])
     assert response.status_code == 409, response.text
     assert response.json()["code"] == "CONDITIONING_NOT_REQUIRED"
 
@@ -136,9 +127,7 @@ def test_stale_revision_and_duplicate_start(started_fermentation):
         client, session_id=session_id, revision=payload["revision"], operation_id=op
     )
     assert first.status_code == 200, first.text
-    stale = start_conditioning(
-        client, session_id=session_id, revision=payload["revision"]
-    )
+    stale = start_conditioning(client, session_id=session_id, revision=payload["revision"])
     assert stale.status_code == 409, stale.text
     assert stale.json()["code"] in {"STALE_REVISION", "INVALID_TRANSITION"}
     replay = start_conditioning(
@@ -159,9 +148,7 @@ def test_complete_conditioning_ineligible_missing_temperature(started_fermentati
         conditioning_temperature_c="2.0",
     )
     payload = reach_fermentation_complete(client, started_fermentation)
-    started = start_conditioning(
-        client, session_id=session_id, revision=payload["revision"]
-    )
+    started = start_conditioning(client, session_id=session_id, revision=payload["revision"])
     assert started.status_code == 200, started.text
     backdate_conditioning_first_started(session_id=session_id, minutes_ago=5)
     response = complete_conditioning(
@@ -192,14 +179,10 @@ def test_complete_conditioning_success_with_temperature(started_fermentation):
         conditioning_temperature_c="2.0",
     )
     payload = reach_fermentation_complete(client, started_fermentation)
-    started = start_conditioning(
-        client, session_id=session_id, revision=payload["revision"]
-    )
+    started = start_conditioning(client, session_id=session_id, revision=payload["revision"])
     assert started.status_code == 200, started.text
     stage_id = next(
-        s["id"]
-        for s in started.json()["stages"]
-        if s["canonical_stage_type"] == "CONDITIONING"
+        s["id"] for s in started.json()["stages"] if s["canonical_stage_type"] == "CONDITIONING"
     )
     backdate_conditioning_first_started(session_id=session_id, minutes_ago=5)
     temp = client.post(
@@ -209,7 +192,7 @@ def test_complete_conditioning_success_with_temperature(started_fermentation):
             "measurement_type": "CONDITIONING_TEMPERATURE",
             "value": "2.0",
             "unit": "degC",
-            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "observed_at": datetime.now(UTC).isoformat(),
             "stage_instance_id": stage_id,
             "method": "PROBE",
             "expected_revision": started.json()["revision"],
@@ -238,9 +221,7 @@ def test_complete_conditioning_override(started_fermentation):
     session_id = started_fermentation["fermentation_session_id"]
     set_plan_conditioning(session_id=session_id)
     payload = reach_fermentation_complete(client, started_fermentation)
-    started = start_conditioning(
-        client, session_id=session_id, revision=payload["revision"]
-    )
+    started = start_conditioning(client, session_id=session_id, revision=payload["revision"])
     response = complete_conditioning(
         client,
         session_id=session_id,
@@ -258,18 +239,16 @@ def test_post_handoff_fermentation_invalidation_reuses_conditioning(started_ferm
     session_id = started_fermentation["fermentation_session_id"]
     set_plan_conditioning(session_id=session_id)
     payload = reach_fermentation_complete(client, started_fermentation)
-    started = start_conditioning(
-        client, session_id=session_id, revision=payload["revision"]
-    )
+    started = start_conditioning(client, session_id=session_id, revision=payload["revision"])
     assert started.status_code == 200, started.text
     stage_id = next(
-        s["id"]
-        for s in started.json()["stages"]
-        if s["canonical_stage_type"] == "CONDITIONING"
+        s["id"] for s in started.json()["stages"] if s["canonical_stage_type"] == "CONDITIONING"
     )
     with SessionLocal() as db:
         timers_before = db.scalar(
-            select(func.count()).select_from(FermentationTimer).where(
+            select(func.count())
+            .select_from(FermentationTimer)
+            .where(
                 FermentationTimer.fermentation_session_id == uuid.UUID(session_id),
                 FermentationTimer.stage_instance_id == uuid.UUID(stage_id),
                 FermentationTimer.status == "RUNNING",
@@ -278,9 +257,7 @@ def test_post_handoff_fermentation_invalidation_reuses_conditioning(started_ferm
         assert timers_before >= 1
 
     gravity = next(
-        m
-        for m in started.json()["measurements"]
-        if m["measurement_type"] == "FERMENTATION_GRAVITY"
+        m for m in started.json()["measurements"] if m["measurement_type"] == "FERMENTATION_GRAVITY"
     )
     correction = client.post(
         f"/api/v1/fermentation-sessions/{session_id}/measurements/{gravity['id']}/corrections",
@@ -290,7 +267,7 @@ def test_post_handoff_fermentation_invalidation_reuses_conditioning(started_ferm
             "reason": _CORRECTION_REASON,
             "value": "1.025",
             "unit": "SG",
-            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "observed_at": datetime.now(UTC).isoformat(),
             "method": "HYDROMETER",
             "sample_temperature_c": "20.00",
             "expected_revision": started.json()["revision"],
@@ -303,7 +280,9 @@ def test_post_handoff_fermentation_invalidation_reuses_conditioning(started_ferm
         stage = db.get(FermentationStageInstance, uuid.UUID(stage_id))
         assert stage.status == "INVALIDATED"
         running = db.scalar(
-            select(func.count()).select_from(FermentationTimer).where(
+            select(func.count())
+            .select_from(FermentationTimer)
+            .where(
                 FermentationTimer.stage_instance_id == uuid.UUID(stage_id),
                 FermentationTimer.status.in_(("RUNNING", "PAUSED", "PENDING", "EXPIRED")),
             )
@@ -330,11 +309,7 @@ def test_post_handoff_fermentation_invalidation_reuses_conditioning(started_ferm
         client, session_id=session_id, revision=completed.json()["revision"]
     )
     assert restarted.status_code == 200, restarted.text
-    stages = [
-        s
-        for s in restarted.json()["stages"]
-        if s["canonical_stage_type"] == "CONDITIONING"
-    ]
+    stages = [s for s in restarted.json()["stages"] if s["canonical_stage_type"] == "CONDITIONING"]
     assert len(stages) == 1
     assert stages[0]["id"] == stage_id
     assert stages[0]["activation_ordinal"] == 2
@@ -345,12 +320,8 @@ def test_invalid_transition_while_conditioning(started_fermentation):
     session_id = started_fermentation["fermentation_session_id"]
     set_plan_conditioning(session_id=session_id)
     payload = reach_fermentation_complete(client, started_fermentation)
-    started = start_conditioning(
-        client, session_id=session_id, revision=payload["revision"]
-    )
-    skip = skip_conditioning(
-        client, session_id=session_id, revision=started.json()["revision"]
-    )
+    started = start_conditioning(client, session_id=session_id, revision=payload["revision"])
+    skip = skip_conditioning(client, session_id=session_id, revision=started.json()["revision"])
     assert skip.status_code == 409
     assert skip.json()["code"] == "INVALID_TRANSITION"
 
@@ -361,9 +332,7 @@ def test_pause_resume_preserves_conditioning_origin(started_fermentation):
     session_id = started_fermentation["fermentation_session_id"]
     set_plan_conditioning(session_id=session_id)
     payload = reach_fermentation_complete(client, started_fermentation)
-    started = start_conditioning(
-        client, session_id=session_id, revision=payload["revision"]
-    )
+    started = start_conditioning(client, session_id=session_id, revision=payload["revision"])
     pause = client.post(
         f"/api/v1/fermentation-sessions/{session_id}/commands/pause",
         json={
@@ -390,14 +359,13 @@ def test_recovery_after_restart_reads_conditioning_state(started_fermentation):
     session_id = started_fermentation["fermentation_session_id"]
     set_plan_conditioning(session_id=session_id)
     payload = reach_fermentation_complete(client, started_fermentation)
-    started = start_conditioning(
-        client, session_id=session_id, revision=payload["revision"]
-    )
+    started = start_conditioning(client, session_id=session_id, revision=payload["revision"])
     assert started.status_code == 200
     refreshed = client.get(f"/api/v1/fermentation-sessions/{session_id}")
     assert refreshed.status_code == 200
     assert refreshed.json()["status"] == "CONDITIONING"
     assert refreshed.json()["revision"] == started.json()["revision"]
-    assert refreshed.json()["conditioning_first_started_at"] == started.json()[
-        "conditioning_first_started_at"
-    ]
+    assert (
+        refreshed.json()["conditioning_first_started_at"]
+        == started.json()["conditioning_first_started_at"]
+    )

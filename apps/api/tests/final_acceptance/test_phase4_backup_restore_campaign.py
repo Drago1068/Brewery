@@ -307,7 +307,9 @@ def test_phase4_isolated_backup_restore_preserves_vectors(tmp_path, monkeypatch)
                 client.headers["X-CSRF-Token"] = login.json()["csrf_token"]
                 seeded = _seed_fermentation_fixture(client)
                 session_id = uuid.UUID(seeded["session_id"])
-                pre_body = client.get(f"/api/v1/fermentation-sessions/{seeded['session_id']}").json()
+                pre_body = client.get(
+                    f"/api/v1/fermentation-sessions/{seeded['session_id']}"
+                ).json()
                 pause_key = str(uuid.uuid4())
                 paused = client.post(
                     f"/api/v1/fermentation-sessions/{seeded['session_id']}/commands/pause",
@@ -325,7 +327,7 @@ def test_phase4_isolated_backup_restore_preserves_vectors(tmp_path, monkeypatch)
                     },
                 )
                 assert resumed.status_code == 200, resumed.text
-                # Second lifecycle vector: abort → terminal CLOSED-class status for §35 dual fixture.
+                # Second lifecycle vector: abort → terminal CLOSED-class status for §35 dual fixture.  # noqa: E501
                 aborted = client.post(
                     f"/api/v1/fermentation-sessions/{seeded['session_id']}/commands/abort",
                     json={
@@ -440,7 +442,7 @@ def test_phase4_isolated_backup_restore_preserves_vectors(tmp_path, monkeypatch)
                 row = (
                     connection.execute(
                         text(
-                            "SELECT storage_key, sha256 FROM fermentation_attachments WHERE id = :id"
+                            "SELECT storage_key, sha256 FROM fermentation_attachments WHERE id = :id"  # noqa: E501
                         ),
                         {"id": row_id},
                     )

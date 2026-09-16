@@ -1,4 +1,5 @@
 """Slice 6 closure: PostgreSQL lineage integrity, cycle rejection, recovery."""
+# ruff: noqa: F811 - test parameters intentionally shadow the fixture import
 
 from __future__ import annotations
 
@@ -89,7 +90,6 @@ def test_lineage_cycle_rejected_under_lock(started_fermentation):
 
 
 def test_concurrent_enrichment_one_winner(started_fermentation):
-    client = started_fermentation["client"]
     session_id = uuid.UUID(started_fermentation["fermentation_session_id"])
     with SessionLocal() as db:
         user = db.scalar(select(User).where(User.username == "brewer"))
@@ -153,7 +153,9 @@ def test_pitch_history_survives_reload(started_fermentation):
         fresh_client.headers["X-CSRF-Token"] = login.json()["csrf_token"]
         history = fresh_client.get("/api/v1/fermentation-sessions/pitch-history")
         assert history.status_code == 200
-        assert any(item["preparation_method_note"] == "rehydrated 15 minutes" for item in history.json())
+        assert any(
+            item["preparation_method_note"] == "rehydrated 15 minutes" for item in history.json()
+        )
 
 
 def test_history_rows_and_fk_integrity(started_fermentation):

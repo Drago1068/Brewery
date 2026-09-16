@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -18,7 +18,7 @@ from calculations.fermentation import (
 
 
 def _leaf(sg: str, hours: float, measurement_id: UUID | None = None) -> GravityLeaf:
-    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    base = datetime(2026, 1, 1, tzinfo=UTC)
     observed = base + timedelta(hours=hours)
     return GravityLeaf(
         measurement_id=measurement_id or uuid4(),
@@ -34,25 +34,19 @@ def test_stable_gravity_insufficient_with_two_observations():
 
 
 def test_stable_gravity_stable_equal_triple():
-    result = stable_gravity_evaluator(
-        [_leaf("1.012", 0), _leaf("1.012", 24), _leaf("1.012", 48)]
-    )
+    result = stable_gravity_evaluator([_leaf("1.012", 0), _leaf("1.012", 24), _leaf("1.012", 48)])
     assert result.status == StableGravityStatus.STABLE
     assert result.spread == Decimal("0")
 
 
 def test_stable_gravity_not_stable_spread_0_004():
-    result = stable_gravity_evaluator(
-        [_leaf("1.014", 0), _leaf("1.012", 24), _leaf("1.010", 48)]
-    )
+    result = stable_gravity_evaluator([_leaf("1.014", 0), _leaf("1.012", 24), _leaf("1.010", 48)])
     assert result.status == StableGravityStatus.NOT_STABLE
     assert result.spread == Decimal("0.004")
 
 
 def test_stable_gravity_boundary_spread_exactly_0_002():
-    result = stable_gravity_evaluator(
-        [_leaf("1.014", 0), _leaf("1.013", 24), _leaf("1.012", 48)]
-    )
+    result = stable_gravity_evaluator([_leaf("1.014", 0), _leaf("1.013", 24), _leaf("1.012", 48)])
     assert result.status == StableGravityStatus.STABLE
     assert result.spread == Decimal("0.002")
 
@@ -108,11 +102,20 @@ def test_canonicalize_gravity_plato_adapter():
 def test_apparent_attenuation_ratio_and_undefined():
     ratio = try_apparent_attenuation_ratio(Decimal("1.050"), Decimal("1.010"))
     assert ratio == Decimal("0.8")
-    assert try_apparent_attenuation_ratio(Decimal("1.050"), Decimal("0.990")) == CALCULATION_UNDEFINED
+    assert (
+        try_apparent_attenuation_ratio(Decimal("1.050"), Decimal("0.990")) == CALCULATION_UNDEFINED
+    )
     assert try_abv_percent(Decimal("1.050"), Decimal("1.010")) == Decimal("5.25")
 
 
 def test_fermentation_progress_clip_and_undefined():
-    assert fermentation_progress(Decimal("1.050"), Decimal("1.060"), Decimal("1.010")) == Decimal("0")
-    assert fermentation_progress(Decimal("1.050"), Decimal("1.000"), Decimal("1.010")) == Decimal("1")
-    assert fermentation_progress(Decimal("1.050"), Decimal("1.030"), Decimal("1.050")) == CALCULATION_UNDEFINED
+    assert fermentation_progress(Decimal("1.050"), Decimal("1.060"), Decimal("1.010")) == Decimal(
+        "0"
+    )
+    assert fermentation_progress(Decimal("1.050"), Decimal("1.000"), Decimal("1.010")) == Decimal(
+        "1"
+    )
+    assert (
+        fermentation_progress(Decimal("1.050"), Decimal("1.030"), Decimal("1.050"))
+        == CALCULATION_UNDEFINED
+    )

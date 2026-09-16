@@ -31,22 +31,14 @@ from brewing_api.platform.database import SessionLocal
 def _counts() -> dict[str, int]:
     with SessionLocal() as db:
         return {
-            "measurements": db.scalar(
-                select(func.count()).select_from(FermentationMeasurement)
-            )
+            "measurements": db.scalar(select(func.count()).select_from(FermentationMeasurement))
             or 0,
             "corrections": db.scalar(
                 select(func.count()).select_from(FermentationMeasurementCorrection)
             )
             or 0,
-            "operations": db.scalar(
-                select(func.count()).select_from(FermentationOperation)
-            )
-            or 0,
-            "journal": db.scalar(
-                select(func.count()).select_from(FermentationJournalEvent)
-            )
-            or 0,
+            "operations": db.scalar(select(func.count()).select_from(FermentationOperation)) or 0,
+            "journal": db.scalar(select(func.count()).select_from(FermentationJournalEvent)) or 0,
         }
 
 
@@ -295,9 +287,7 @@ def test_f005_plato_adapter_matches_shared_authority():
     assert plato_min < Decimal("0") < plato_max
     for sg in [Decimal("1.000"), Decimal("1.040"), Decimal("1.100"), Decimal("1.300")]:
         plato = specific_gravity_to_plato(sg)
-        assert (
-            abs(fermentation_calcs.plato_to_sg(plato) - sg) < Decimal("0.0000001")
-        )
+        assert abs(fermentation_calcs.plato_to_sg(plato) - sg) < Decimal("0.0000001")
         round_tripped = fermentation_calcs.plato_to_sg(plato)
         assert abs(specific_gravity_to_plato(round_tripped) - plato) < Decimal("0.0000001")
 

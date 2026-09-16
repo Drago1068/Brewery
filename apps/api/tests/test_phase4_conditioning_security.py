@@ -1,4 +1,5 @@
 """Slice 5 security and PostgreSQL concurrency for conditioning handoff."""
+# ruff: noqa: F811 - test parameters intentionally shadow the fixture import
 
 from __future__ import annotations
 
@@ -8,6 +9,14 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from phase4_fixtures import started_fermentation  # noqa: F401
+from phase4_lifecycle_helpers import (
+    reach_fermentation_complete,
+    set_plan_conditioning,
+)
+from phase4_lifecycle_helpers import (
+    start_conditioning as http_start_conditioning,
+)
 from sqlalchemy import select
 
 from brewing_api.application.auth import password_hash
@@ -16,13 +25,6 @@ from brewing_api.application.phase4.conditioning import ConditioningCommand, sta
 from brewing_api.domain.fermentation.models import FermentationSession, FermentationStageInstance
 from brewing_api.domain.identity.models import User
 from brewing_api.platform.database import SessionLocal
-
-from phase4_fixtures import started_fermentation  # noqa: F401
-from phase4_lifecycle_helpers import (
-    reach_fermentation_complete,
-    set_plan_conditioning,
-    start_conditioning as http_start_conditioning,
-)
 
 pytestmark = pytest.mark.integration
 
@@ -83,6 +85,7 @@ def test_mass_assignment_and_forged_fields_rejected(started_fermentation):
     assert detail.status_code == 200
     assert detail.json()["status"] == "FERMENTATION_COMPLETE"
     assert detail.json()["revision"] == before_revision
+
 
 @pytest.mark.skipif(
     os.environ.get("TEST_USE_POSTGRES") != "1",

@@ -1,21 +1,21 @@
 """Phase 4 final-acceptance cross-cutting campaigns (security / idempotency / AI / concurrency)."""
+# ruff: noqa: F811 - test parameters intentionally shadow the fixture import
 
 from __future__ import annotations
 
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from phase4_fixtures import started_fermentation  # noqa: F401
 from sqlalchemy import inspect
 
 from brewing_api.application.auth import password_hash
 from brewing_api.domain.identity.models import User
 from brewing_api.main import app
 from brewing_api.platform.database import SessionLocal, engine
-
-from phase4_fixtures import started_fermentation  # noqa: F401
 
 pytestmark = pytest.mark.integration
 
@@ -73,7 +73,7 @@ def test_fa_security_idor_nested_matrix(started_fermentation):
             "value": "18.0",
             "unit": "degC",
             "method": "PROBE",
-            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "observed_at": datetime.now(UTC).isoformat(),
             "stage_instance_id": stage_id,
             "expected_revision": revision,
             "source": "OBSERVED",

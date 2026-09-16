@@ -1,17 +1,19 @@
+# ruff: noqa: F811 - test parameters intentionally shadow the fixture import
+
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
+from phase4_fixtures import started_fermentation  # noqa: F401
 
 from brewing_api.application.auth import password_hash
 from brewing_api.domain.identity.models import User
 from brewing_api.platform.database import SessionLocal
 
-from phase4_fixtures import started_fermentation  # noqa: F401
-
 
 def test_cross_owner_measurement_access_returns_404(started_fermentation, client):
     owner_client = started_fermentation["client"]
     session_id = started_fermentation["fermentation_session_id"]
-    observed_at = datetime.now(timezone.utc).isoformat()
+    observed_at = datetime.now(UTC).isoformat()
     created = owner_client.post(
         f"/api/v1/fermentation-sessions/{session_id}/measurements",
         json={

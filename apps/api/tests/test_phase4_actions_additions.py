@@ -10,8 +10,10 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
+from phase4_lifecycle_helpers import reach_fermentation_complete, skip_conditioning
 from sqlalchemy import func, select
 
+from brewing_api.application.phase4.time_validation import _coerce_aware
 from brewing_api.domain.fermentation.models import (
     FermentationAction,
     FermentationAdditionEvent,
@@ -25,8 +27,6 @@ from brewing_api.domain.inventory.models import InventoryReservation, InventoryT
 from brewing_api.domain.recipes.models import RecipeIngredient
 from brewing_api.platform.database import SessionLocal
 from brewing_api.platform.time import utc_now
-from brewing_api.application.phase4.time_validation import _coerce_aware
-from phase4_lifecycle_helpers import reach_fermentation_complete, skip_conditioning
 
 pytestmark = pytest.mark.integration
 
@@ -110,12 +110,16 @@ def _reach_handoff_ready(client, started: dict) -> dict:
     return handoff.json()
 
 
-def _close(client, session_id: str, *, revision: int | None = None, operation_id: str | None = None):
+def _close(
+    client, session_id: str, *, revision: int | None = None, operation_id: str | None = None
+):
     return client.post(
         f"/api/v1/fermentation-sessions/{session_id}/commands/close",
         json={
             "operation_id": operation_id or str(uuid.uuid4()),
-            "expected_revision": revision if revision is not None else _revision(client, session_id),
+            "expected_revision": revision
+            if revision is not None
+            else _revision(client, session_id),
         },
     )
 
@@ -226,7 +230,9 @@ def test_ac032_runtime_repeat_denied(started_fermentation, completed_brew_with_p
     assert second.json()["code"] == "RUNTIME_REPEAT_DENIED"
 
 
-def test_ac033_and_fr070_zero_inventory_consumption(started_fermentation, completed_brew_with_pitch):
+def test_ac033_and_fr070_zero_inventory_consumption(
+    started_fermentation, completed_brew_with_pitch
+):
     """P4-AC-033 / P4-FR-070: addition execute/retry creates zero CONSUMPTION ledger rows."""
     client = completed_brew_with_pitch["client"]
     brew_session_id = completed_brew_with_pitch["session_id"]
@@ -261,9 +267,9 @@ def test_ac033_and_fr070_zero_inventory_consumption(started_fermentation, comple
         before_tx = db.scalar(select(func.count()).select_from(InventoryTransaction)) or 0
         before_cons = (
             db.scalar(
-                select(func.count()).select_from(InventoryTransaction).where(
-                    InventoryTransaction.transaction_type == "CONSUMPTION"
-                )
+                select(func.count())
+                .select_from(InventoryTransaction)
+                .where(InventoryTransaction.transaction_type == "CONSUMPTION")
             )
             or 0
         )
@@ -294,9 +300,9 @@ def test_ac033_and_fr070_zero_inventory_consumption(started_fermentation, comple
         after_tx = db.scalar(select(func.count()).select_from(InventoryTransaction)) or 0
         after_cons = (
             db.scalar(
-                select(func.count()).select_from(InventoryTransaction).where(
-                    InventoryTransaction.transaction_type == "CONSUMPTION"
-                )
+                select(func.count())
+                .select_from(InventoryTransaction)
+                .where(InventoryTransaction.transaction_type == "CONSUMPTION")
             )
             or 0
         )
@@ -343,9 +349,9 @@ def test_ac056_invalid_action_type_rejected(started_fermentation):
     with SessionLocal() as db:
         before = (
             db.scalar(
-                select(func.count()).select_from(FermentationAction).where(
-                    FermentationAction.fermentation_session_id == uuid.UUID(session_id)
-                )
+                select(func.count())
+                .select_from(FermentationAction)
+                .where(FermentationAction.fermentation_session_id == uuid.UUID(session_id))
             )
             or 0
         )
@@ -362,9 +368,9 @@ def test_ac056_invalid_action_type_rejected(started_fermentation):
     with SessionLocal() as db:
         after = (
             db.scalar(
-                select(func.count()).select_from(FermentationAction).where(
-                    FermentationAction.fermentation_session_id == uuid.UUID(session_id)
-                )
+                select(func.count())
+                .select_from(FermentationAction)
+                .where(FermentationAction.fermentation_session_id == uuid.UUID(session_id))
             )
             or 0
         )
@@ -426,8 +432,7 @@ def test_ac068_terminal_addition_boundaries_sqlite(started_fermentation):
         reqs = list(
             db.scalars(
                 select(FermentationAdditionRequirement).where(
-                    FermentationAdditionRequirement.fermentation_session_id
-                    == uuid.UUID(session_id)
+                    FermentationAdditionRequirement.fermentation_session_id == uuid.UUID(session_id)
                 )
             ).all()
         )
@@ -567,7 +572,9 @@ def test_ac068_terminal_addition_boundaries_sqlite(started_fermentation):
     with SessionLocal() as db:
         journal_count = (
             db.scalar(
-                select(func.count()).select_from(FermentationJournalEvent).where(
+                select(func.count())
+                .select_from(FermentationJournalEvent)
+                .where(
                     FermentationJournalEvent.fermentation_session_id == uuid.UUID(session_id),
                     FermentationJournalEvent.event_type == "FERMENTATION_ADDITION_RECORDED",
                     FermentationJournalEvent.operation_id == op_boundary,
@@ -652,7 +659,9 @@ def test_adv042_lost_response_replay_after_window(started_fermentation):
     with SessionLocal() as db:
         events = (
             db.scalar(
-                select(func.count()).select_from(FermentationAdditionEvent).where(
+                select(func.count())
+                .select_from(FermentationAdditionEvent)
+                .where(
                     FermentationAdditionEvent.fermentation_session_id == uuid.UUID(session_id),
                     FermentationAdditionEvent.planned.is_(False),
                 )
@@ -661,7 +670,9 @@ def test_adv042_lost_response_replay_after_window(started_fermentation):
         )
         journals = (
             db.scalar(
-                select(func.count()).select_from(FermentationJournalEvent).where(
+                select(func.count())
+                .select_from(FermentationJournalEvent)
+                .where(
                     FermentationJournalEvent.fermentation_session_id == uuid.UUID(session_id),
                     FermentationJournalEvent.event_type == "FERMENTATION_ADDITION_RECORDED",
                     FermentationJournalEvent.operation_id == op,

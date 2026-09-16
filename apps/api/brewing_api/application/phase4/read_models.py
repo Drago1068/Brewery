@@ -17,8 +17,8 @@ from brewing_api.application.phase4.completion import (
     serialize_assessment,
 )
 from brewing_api.application.phase4.conditioning import current_conditioning_assessment
-from brewing_api.application.phase4.deviations import list_session_deviations, serialize_deviation
 from brewing_api.application.phase4.derived_gravity import latest_derived_gravity
+from brewing_api.application.phase4.deviations import list_session_deviations, serialize_deviation
 from brewing_api.application.phase4.journal import merged_journal_events
 from brewing_api.application.phase4.measurements import serialize_measurement
 from brewing_api.application.phase4.media import list_session_attachments, serialize_attachment
@@ -88,9 +88,7 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
     handoff = current_handoff(db, session.id)
     journal = merged_journal_events(db, session)
     notes = [serialize_note(item) for item in list_session_notes(db, session.id)]
-    attachments = [
-        serialize_attachment(item) for item in list_session_attachments(db, session.id)
-    ]
+    attachments = [serialize_attachment(item) for item in list_session_attachments(db, session.id)]
     db.commit()
     pitch_rate_estimate = compute_pitch_rate_estimate(db, session, snapshot=snapshot, og=og)
     return {
@@ -106,7 +104,8 @@ def serialize_session(db: Session, user: User, fermentation_session_id: uuid.UUI
         "fermentation_current_completed_at": session.fermentation_current_completed_at,
         "conditioning_first_started_at": session.conditioning_first_started_at,
         "conditioning_started_at": session.conditioning_started_at,
-        "conditioning_current_activation_started_at": session.conditioning_current_activation_started_at,
+        "conditioning_current_activation_started_at":
+            session.conditioning_current_activation_started_at,
         "conditioning_first_completed_at": session.conditioning_first_completed_at,
         "conditioning_current_completed_at": session.conditioning_current_completed_at,
         "conditioning_completed_at": session.conditioning_completed_at,

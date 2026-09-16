@@ -42,9 +42,10 @@ def test_migration_head_and_immutability_are_enforced_by_postgres():
     measurement_id = uuid.uuid4()
     user_id = uuid.uuid4()
     with engine.connect() as connection, connection.begin():
+        # Canonical BICOS lineage migration head after `alembic upgrade head`.
         assert (
             connection.scalar(text("SELECT version_num FROM alembic_version"))
-            == "0003_phase3_brew_day_os"
+            == "0015_phase4_journal_media_export"
         )
         connection.execute(
             text(

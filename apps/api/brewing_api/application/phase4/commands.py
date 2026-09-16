@@ -6,8 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from brewing_api.application.events import audit
 from brewing_api.application.errors import ConflictError, DomainError
+from brewing_api.application.events import audit
 from brewing_api.application.phase4.child_effects import materialize_start_children
 from brewing_api.application.phase4.equipment import resolve_start_equipment
 from brewing_api.application.phase4.og_consumption import (
@@ -82,9 +82,7 @@ def start_fermentation_session(
         "command_name": "StartFermentationSession",
         "brew_session_id": str(brew_session_id),
         "expected_brew_revision": expected_brew_revision,
-        "equipment_profile_id": None
-        if equipment_profile_id is None
-        else str(equipment_profile_id),
+        "equipment_profile_id": None if equipment_profile_id is None else str(equipment_profile_id),
     }
     replay = replay_or_conflict(
         db,

@@ -12,9 +12,7 @@ from brewing_api.domain.identity.models import User
 from brewing_api.domain.recipes.models import RecipeVersion
 
 
-def _owned_equipment(
-    db: Session, user: User, equipment_profile_id: uuid.UUID
-) -> EquipmentProfile:
+def _owned_equipment(db: Session, user: User, equipment_profile_id: uuid.UUID) -> EquipmentProfile:
     equipment = db.get(EquipmentProfile, equipment_profile_id)
     if equipment is None or equipment.owner_id != user.id:
         raise NotFoundError("Equipment profile not found")

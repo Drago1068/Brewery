@@ -218,9 +218,7 @@ def _resolve_target(
                 code="WAIVER_PROHIBITED",
             )
         effect = (
-            "READINESS_R3_WAIVED"
-            if req_class == ORIGINAL_GRAVITY_KNOWN
-            else "CHECKPOINT_WAIVED"
+            "READINESS_R3_WAIVED" if req_class == ORIGINAL_GRAVITY_KNOWN else "CHECKPOINT_WAIVED"
         )
         return req_class, uuid.UUID(str(match["requirement_template_id"])), None, effect
 

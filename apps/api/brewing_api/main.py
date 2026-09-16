@@ -3,10 +3,10 @@ from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.encoders import jsonable_encoder
 
 from brewing_api.application.auth import ensure_bootstrap_user
 from brewing_api.application.errors import DomainError
@@ -22,7 +22,14 @@ from brewing_api.platform.metrics import (
     snapshot,
 )
 from brewing_api.presentation.dependencies import CurrentUser
-from brewing_api.presentation.routes import auth, brew_sessions, brewing_core, fermentation_sessions, health, recipes
+from brewing_api.presentation.routes import (
+    auth,
+    brew_sessions,
+    brewing_core,
+    fermentation_sessions,
+    health,
+    recipes,
+)
 
 configure_logging()
 log = structlog.get_logger()
